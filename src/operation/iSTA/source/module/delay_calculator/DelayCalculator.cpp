@@ -818,6 +818,17 @@ double DelayCalculator::calcParasiticDelay(Arc& arc, AnalysisType analysis_type,
     return resistance * (source_capacitance + sink_capacitance) * 0.5 * 1E-3;
   }
 
+  std::string source_pin_name = getPinNameByParasiticNodeName(source_node_name);
+  const bool source_is_input_port = database.get_pin_map().count(source_pin_name) > 0 && database.get_pin_map()[source_pin_name].get_is_port()
+                                    && (database.get_pin_map()[source_pin_name].get_direction() == PinDirection::kInput
+                                        || database.get_pin_map()[source_pin_name].get_direction() == PinDirection::kInout);
+  if (source_is_input_port) {
+    std::optional<double> input_port_delay = calcParasiticArnoldiInputPortDelay(parasitic_net, source_node_name, sink_node_name, analysis_type, trans_type);
+    if (input_port_delay) {
+      return *input_port_delay;
+    }
+  }
+
   std::optional<double> cached_wire_delay = getParasiticArnoldiCachedWireDelay(arc, analysis_type, trans_type, input_slew);
   if (cached_wire_delay) {
     return *cached_wire_delay;
@@ -826,11 +837,6 @@ double DelayCalculator::calcParasiticDelay(Arc& arc, AnalysisType analysis_type,
   if (cached_wire_delay) {
     return *cached_wire_delay;
   }
-  std::optional<double> input_port_delay = calcParasiticArnoldiInputPortDelay(parasitic_net, source_node_name, sink_node_name, analysis_type, trans_type);
-  if (input_port_delay) {
-    return *input_port_delay;
-  }
-
   buildParasiticDelayMap(parasitic_net, source_node_name, analysis_type, trans_type);
   if (_parasitic_delay_map_cache[parasitic_net.get_net_name()][analysis_type][trans_type].count(sink_node_name) == 0) {
     return 0.0;
@@ -2430,7 +2436,7 @@ ParasiticArnoldiModelKey DelayCalculator::getParasiticArnoldiModelKey(ParasiticN
 }
 
 ParasiticArnoldiModel DelayCalculator::buildParasiticArnoldiModel(ParasiticNet& parasitic_net, std::string& source_node_name,
-                                                                   AnalysisType analysis_type, TransType trans_type)
+                                                                   AnalysisType analysis_type, TransType trans_type, int32_t max_order)
 {
   ParasiticArnoldiModel arnoldi_model;
   std::vector<std::string> node_name_list;
@@ -2461,7 +2467,7 @@ ParasiticArnoldiModel DelayCalculator::buildParasiticArnoldiModel(ParasiticNet& 
   }
 
   updateParasiticArnoldiModel(arnoldi_model, parasitic_net, node_name_list, parent_idx_list, resistance_list, capacitance_list,
-                              term_point_idx_list);
+                              term_point_idx_list, max_order);
   return arnoldi_model;
 }
 
@@ -2548,7 +2554,7 @@ void DelayCalculator::initParasiticArnoldiTerm(ParasiticArnoldiModel& arnoldi_mo
 void DelayCalculator::updateParasiticArnoldiModel(ParasiticArnoldiModel& arnoldi_model, ParasiticNet& parasitic_net,
                                                    std::vector<std::string>& node_name_list, std::vector<int32_t>& parent_idx_list,
                                                    std::vector<double>& resistance_list, std::vector<double>& capacitance_list,
-                                                   std::vector<std::size_t>& term_point_idx_list)
+                                                   std::vector<std::size_t>& term_point_idx_list, int32_t max_order)
 {
   double total_capacitance = 0.0;
   for (double capacitance : capacitance_list) {
@@ -2559,7 +2565,9 @@ void DelayCalculator::updateParasiticArnoldiModel(ParasiticArnoldiModel& arnoldi
   }
 
   std::size_t node_num = capacitance_list.size();
-  int32_t max_order = 5;
+  // The tridiagonal eigensolver accepts at most 32 poles. A zero max_order
+  // requests the highest supported order for the ideal input-port path.
+  max_order = max_order <= 0 ? std::min(static_cast<int32_t>(node_num), 32) : max_order;
   int32_t order = std::min(static_cast<int32_t>(node_num), max_order);
   double sqrt_total_capacitance = std::sqrt(total_capacitance);
   std::vector<double> current_basis_list(node_num, 1.0 / sqrt_total_capacitance);
@@ -2740,15 +2748,32 @@ std::optional<double> DelayCalculator::calcParasiticArnoldiInputPortDelay(Parasi
 {
   Database& database = STADM.getDatabase();
   std::string source_pin_name = getPinNameByParasiticNodeName(source_node_name);
-  if (database.get_pin_map().count(source_pin_name) == 0 || !database.get_pin_map()[source_pin_name].get_is_port()) {
+  if (database.get_pin_map().count(source_pin_name) == 0 || !database.get_pin_map()[source_pin_name].get_is_port()
+      || (database.get_pin_map()[source_pin_name].get_direction() != PinDirection::kInput
+          && database.get_pin_map()[source_pin_name].get_direction() != PinDirection::kInout)) {
     return std::nullopt;
   }
-  ParasiticArnoldiModel& arnoldi_model = getParasiticArnoldiModel(parasitic_net, source_node_name, analysis_type, trans_type);
+  // Input ports are ideal voltage sources. Use a full-order projection for
+  // their step response so the crossing solver is not limited by the normal
+  // five-pole runtime approximation used for cell-driven nets.
+  ParasiticArnoldiModel arnoldi_model = buildParasiticArnoldiModel(parasitic_net, source_node_name, analysis_type, trans_type, 0);
   if (!arnoldi_model.get_is_valid() || arnoldi_model.get_term_index_map().count(sink_node_name) == 0) {
     return std::nullopt;
   }
-  double elmore = calcParasiticArnoldiElmore(arnoldi_model, sink_node_name);
-  return std::log(2.0) * elmore;
+  ParasiticArnoldiPoleResidue pole_residue = calcParasiticArnoldiPoleResidue(arnoldi_model, 0.0);
+  if (!pole_residue.get_is_valid()) {
+    return std::nullopt;
+  }
+  std::size_t term_idx = arnoldi_model.get_term_index_map()[sink_node_name];
+  if (term_idx >= pole_residue.get_residue_list().size()) {
+    return std::nullopt;
+  }
+  double delay = solveParasiticArnoldiStepWaveformTime(
+      pole_residue.get_pole_list(), pole_residue.get_residue_list()[term_idx], 0.5);
+  if (!std::isfinite(delay) || delay < 0.0) {
+    return std::nullopt;
+  }
+  return delay;
 }
 
 std::optional<double> DelayCalculator::calcParasiticArnoldiInputPortSlew(ParasiticNet& parasitic_net, std::string& source_node_name,
@@ -2757,17 +2782,53 @@ std::optional<double> DelayCalculator::calcParasiticArnoldiInputPortSlew(Parasit
 {
   Database& database = STADM.getDatabase();
   std::string source_pin_name = getPinNameByParasiticNodeName(source_node_name);
-  if (database.get_pin_map().count(source_pin_name) == 0 || !database.get_pin_map()[source_pin_name].get_is_port()) {
+  if (database.get_pin_map().count(source_pin_name) == 0 || !database.get_pin_map()[source_pin_name].get_is_port()
+      || (database.get_pin_map()[source_pin_name].get_direction() != PinDirection::kInput
+          && database.get_pin_map()[source_pin_name].get_direction() != PinDirection::kInout)) {
     return std::nullopt;
   }
-  ParasiticArnoldiModel& arnoldi_model = getParasiticArnoldiModel(parasitic_net, source_node_name, analysis_type, trans_type);
+  ParasiticArnoldiModel arnoldi_model = buildParasiticArnoldiModel(parasitic_net, source_node_name, analysis_type, trans_type, 0);
   if (!arnoldi_model.get_is_valid() || arnoldi_model.get_term_index_map().count(sink_node_name) == 0) {
     return std::nullopt;
   }
-  double elmore = calcParasiticArnoldiElmore(arnoldi_model, sink_node_name);
-  double abs_input_slew = std::abs(input_slew);
-  double output_slew = abs_input_slew + getParasiticArnoldiSlewScale(trans_type) * elmore;
-  if (input_slew < 0.0) {
+  ParasiticArnoldiPoleResidue pole_residue = calcParasiticArnoldiPoleResidue(arnoldi_model, 0.0);
+  if (!pole_residue.get_is_valid()) {
+    return std::nullopt;
+  }
+  std::size_t term_idx = arnoldi_model.get_term_index_map()[sink_node_name];
+  if (term_idx >= pole_residue.get_residue_list().size()) {
+    return std::nullopt;
+  }
+
+  double slew_derate = 1.0;
+  double lower_threshold = 0.1;
+  double upper_threshold = 0.9;
+  double voltage_log = 0.0;
+  double min_slew_factor = 0.0;
+  double x1 = 0.0;
+  double y1 = 0.0;
+  calcParasiticArnoldiThreshold(trans_type, slew_derate, lower_threshold, upper_threshold, voltage_log, min_slew_factor, x1, y1);
+
+  // The Arnoldi residue representation is a decaying waveform. For a logical
+  // rising transition, map the library thresholds to its complementary levels.
+  auto waveform_threshold = [trans_type](double threshold) {
+    return trans_type == TransType::kRise ? 1.0 - threshold : threshold;
+  };
+  double lower_time = solveParasiticArnoldiStepWaveformTime(
+      pole_residue.get_pole_list(), pole_residue.get_residue_list()[term_idx], waveform_threshold(lower_threshold));
+  double upper_time = solveParasiticArnoldiStepWaveformTime(
+      pole_residue.get_pole_list(), pole_residue.get_residue_list()[term_idx], waveform_threshold(upper_threshold));
+  if (!std::isfinite(lower_time) || !std::isfinite(upper_time) || !(slew_derate > 0.0)) {
+    return std::nullopt;
+  }
+  double output_slew = trans_type == TransType::kRise ? (upper_time - lower_time) / slew_derate
+                                                       : (lower_time - upper_time) / slew_derate;
+  if (!std::isfinite(output_slew) || output_slew < 0.0) {
+    return std::nullopt;
+  }
+  // Keep the existing signed-slew contract. The magnitude of input_slew is
+  // intentionally ignored because an input port is modeled as an ideal step.
+  if (input_slew < 0.0 || (input_slew == 0.0 && trans_type == TransType::kFall)) {
     return -output_slew;
   }
   return output_slew;
@@ -3422,7 +3483,9 @@ double DelayCalculator::calcParasiticArnoldiWaveformVoltage(double time, double 
     double pole_time = pole_list[pole_idx] * time;
     double pole_ramp = pole_list[pole_idx] * driver_ramp;
     double response = 0.0;
-    if (time < driver_ramp) {
+    if (driver_ramp <= STA_ERROR) {
+      response = std::exp(-pole_time);
+    } else if (time < driver_ramp) {
       response = 1.0 - time / driver_ramp + (1.0 - std::exp(-pole_time)) / pole_ramp;
     } else {
       response = std::exp(pole_ramp - pole_time) * (1.0 - std::exp(-pole_ramp)) / pole_ramp;
@@ -3443,7 +3506,10 @@ void DelayCalculator::calcParasiticArnoldiWaveformVoltageAndDerivative(double ti
     double pole_ramp = pole * driver_ramp;
     double response = 0.0;
     double response_derivative = 0.0;
-    if (time < driver_ramp) {
+    if (driver_ramp <= STA_ERROR) {
+      response = std::exp(-pole_time);
+      response_derivative = -pole * response;
+    } else if (time < driver_ramp) {
       double ramp_response = (1.0 - std::exp(-pole_time)) / pole_ramp;
       response = 1.0 - time / driver_ramp + ramp_response;
       response_derivative = -pole * ramp_response;
@@ -3454,6 +3520,86 @@ void DelayCalculator::calcParasiticArnoldiWaveformVoltageAndDerivative(double ti
     voltage += residue_list[pole_idx] * response;
     derivative += residue_list[pole_idx] * response_derivative;
   }
+}
+
+double DelayCalculator::calcParasiticArnoldiStepWaveformVoltage(double time, std::vector<double>& pole_list,
+                                                                 std::vector<double>& residue_list)
+{
+  if (time < 0.0 || pole_list.size() != residue_list.size()) {
+    return 0.0;
+  }
+  double voltage = 0.0;
+  for (std::size_t pole_idx = 0; pole_idx < pole_list.size(); pole_idx++) {
+    voltage += residue_list[pole_idx] * std::exp(-pole_list[pole_idx] * time);
+  }
+  return voltage;
+}
+
+double DelayCalculator::calcParasiticArnoldiStepWaveformDerivative(double time, std::vector<double>& pole_list,
+                                                                    std::vector<double>& residue_list)
+{
+  if (time < 0.0 || pole_list.size() != residue_list.size()) {
+    return 0.0;
+  }
+  double derivative = 0.0;
+  for (std::size_t pole_idx = 0; pole_idx < pole_list.size(); pole_idx++) {
+    double response = std::exp(-pole_list[pole_idx] * time);
+    derivative -= pole_list[pole_idx] * residue_list[pole_idx] * response;
+  }
+  return derivative;
+}
+
+double DelayCalculator::solveParasiticArnoldiStepWaveformTime(std::vector<double>& pole_list, std::vector<double>& residue_list,
+                                                               double voltage)
+{
+  if (pole_list.empty() || pole_list.size() != residue_list.size() || !(voltage > 0.0 && voltage < 1.0)) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+
+  double initial_voltage = calcParasiticArnoldiStepWaveformVoltage(0.0, pole_list, residue_list);
+  if (!std::isfinite(initial_voltage) || initial_voltage < voltage) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+  constexpr double kStepVoltageTolerance = 1E-12;
+  if (std::abs(initial_voltage - voltage) <= kStepVoltageTolerance) {
+    return 0.0;
+  }
+
+  double upper_time = 0.0;
+  for (double pole : pole_list) {
+    if (pole > 0.0 && std::isfinite(pole)) {
+      upper_time = std::max(upper_time, pole);
+    }
+  }
+  upper_time = std::max(1.0, upper_time);
+  double upper_voltage = calcParasiticArnoldiStepWaveformVoltage(upper_time, pole_list, residue_list);
+  for (int32_t iteration = 0; iteration < kMaxRootIteration && std::isfinite(upper_voltage) && upper_voltage > voltage; iteration++) {
+    upper_time *= 2.0;
+    upper_voltage = calcParasiticArnoldiStepWaveformVoltage(upper_time, pole_list, residue_list);
+  }
+  if (!std::isfinite(upper_voltage) || upper_voltage > voltage) {
+    return std::numeric_limits<double>::quiet_NaN();
+  }
+
+  double lower_time = 0.0;
+  for (int32_t iteration = 0; iteration < kMaxRootIteration * 4; iteration++) {
+    double result_time = 0.5 * (lower_time + upper_time);
+    double result_voltage = calcParasiticArnoldiStepWaveformVoltage(result_time, pole_list, residue_list);
+    if (!std::isfinite(result_voltage)) {
+      return std::numeric_limits<double>::quiet_NaN();
+    }
+    double time_tolerance = 1E-12 * std::max(1.0, std::abs(result_time));
+    if (std::abs(result_voltage - voltage) <= kStepVoltageTolerance || upper_time - lower_time <= time_tolerance) {
+      return result_time;
+    }
+    if (result_voltage > voltage) {
+      lower_time = result_time;
+    } else {
+      upper_time = result_time;
+      upper_voltage = result_voltage;
+    }
+  }
+  return 0.5 * (lower_time + upper_time);
 }
 
 double DelayCalculator::solveParasiticArnoldiBracketedTime(double driver_ramp, std::vector<double>& pole_list,
@@ -3664,6 +3810,18 @@ double DelayCalculator::calcParasiticSlew(Arc& arc, AnalysisType analysis_type, 
     return input_slew;
   }
 
+  std::string source_pin_name = getPinNameByParasiticNodeName(source_node_name);
+  const bool source_is_input_port = database.get_pin_map().count(source_pin_name) > 0 && database.get_pin_map()[source_pin_name].get_is_port()
+                                    && (database.get_pin_map()[source_pin_name].get_direction() == PinDirection::kInput
+                                        || database.get_pin_map()[source_pin_name].get_direction() == PinDirection::kInout);
+  if (source_is_input_port) {
+    std::optional<double> input_port_slew
+        = calcParasiticArnoldiInputPortSlew(parasitic_net, source_node_name, sink_node_name, analysis_type, trans_type, input_slew);
+    if (input_port_slew) {
+      return *input_port_slew;
+    }
+  }
+
   std::optional<double> cached_load_slew = getParasiticArnoldiCachedLoadSlew(arc, analysis_type, trans_type, input_slew);
   if (cached_load_slew) {
     return *cached_load_slew;
@@ -3672,12 +3830,6 @@ double DelayCalculator::calcParasiticSlew(Arc& arc, AnalysisType analysis_type, 
   if (cached_load_slew) {
     return *cached_load_slew;
   }
-  std::optional<double> input_port_slew
-      = calcParasiticArnoldiInputPortSlew(parasitic_net, source_node_name, sink_node_name, analysis_type, trans_type, input_slew);
-  if (input_port_slew) {
-    return *input_port_slew;
-  }
-
   buildParasiticDelayMap(parasitic_net, source_node_name, analysis_type, trans_type);
   if (_parasitic_impulse_map_cache[parasitic_net.get_net_name()][analysis_type][trans_type].count(sink_node_name) == 0) {
     return input_slew;

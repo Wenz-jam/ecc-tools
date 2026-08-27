@@ -274,7 +274,7 @@ class DelayCalculator
   ParasiticArnoldiModelKey getParasiticArnoldiModelKey(ParasiticNet& parasitic_net, std::string& source_node_name,
                                                         AnalysisType analysis_type, TransType trans_type);
   ParasiticArnoldiModel buildParasiticArnoldiModel(ParasiticNet& parasitic_net, std::string& source_node_name, AnalysisType analysis_type,
-                                                   TransType trans_type);
+                                                   TransType trans_type, int32_t max_order = 5);
   void initParasiticArnoldiTree(ParasiticNet& parasitic_net, std::string& source_node_name, AnalysisType analysis_type, TransType trans_type,
                                 std::vector<std::string>& node_name_list, std::vector<int32_t>& parent_idx_list,
                                 std::vector<double>& resistance_list, std::vector<double>& capacitance_list);
@@ -282,7 +282,7 @@ class DelayCalculator
   void updateParasiticArnoldiModel(ParasiticArnoldiModel& arnoldi_model, ParasiticNet& parasitic_net,
                                    std::vector<std::string>& node_name_list, std::vector<int32_t>& parent_idx_list,
                                    std::vector<double>& resistance_list, std::vector<double>& capacitance_list,
-                                   std::vector<std::size_t>& term_point_idx_list);
+                                   std::vector<std::size_t>& term_point_idx_list, int32_t max_order = 5);
   void updateParasiticArnoldiProjection(ParasiticArnoldiModel& arnoldi_model, std::vector<double>& basis_list,
                                         std::vector<std::size_t>& term_point_idx_list, std::size_t order_idx);
   double calcParasiticArnoldiElmore(ParasiticArnoldiModel& arnoldi_model, std::string& sink_node_name);
@@ -291,6 +291,9 @@ class DelayCalculator
                                                           std::string& sink_node_name, AnalysisType analysis_type, TransType trans_type);
   std::optional<double> calcParasiticArnoldiInputPortSlew(ParasiticNet& parasitic_net, std::string& source_node_name, std::string& sink_node_name,
                                                          AnalysisType analysis_type, TransType trans_type, double input_slew);
+  double calcParasiticArnoldiStepWaveformVoltage(double time, std::vector<double>& pole_list, std::vector<double>& residue_list);
+  double calcParasiticArnoldiStepWaveformDerivative(double time, std::vector<double>& pole_list, std::vector<double>& residue_list);
+  double solveParasiticArnoldiStepWaveformTime(std::vector<double>& pole_list, std::vector<double>& residue_list, double voltage);
   double getParasiticArnoldiSlewScale(TransType trans_type);
   ParasiticArnoldiPoleResidue calcParasiticArnoldiPoleResidue(ParasiticArnoldiModel& arnoldi_model, double drive_resistance);
   bool solveParasiticArnoldiTridiagonalEigen(std::vector<double>& diagonal_list, std::vector<double>& off_diagonal_list,
