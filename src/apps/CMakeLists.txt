@@ -23,3 +23,12 @@ add_executable(ecc_bin
 )
 
 target_link_libraries(ecc_bin flow ecc_logger)
+
+add_executable(update_verilog_specify
+    update_verilog_specify_main.cpp
+)
+
+target_link_libraries(update_verilog_specify
+    PRIVATE
+        liberty
+)
