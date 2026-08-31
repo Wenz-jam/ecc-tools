@@ -53,10 +53,10 @@ class TAPanel;
 class PlanarCoord;
 }  // namespace izh
 
-namespace ieda_feature {
+namespace ecc_feature {
 class ZHSummary;
 class FeatureManager;
-}  // namespace ieda_feature
+}  // namespace ecc_feature
 
 #endif
 
@@ -73,7 +73,6 @@ class ZHInterface
 #if 1  // 外部调用ZH的API
 
 #if 1  // izh
-  void fixFanout(std::map<std::string, std::any> config_map);
   void insertFiller(std::map<std::string, std::any> config_map);
   void insertMetal(std::map<std::string, std::any> config_map);
   void checkAntenna(std::map<std::string, std::any> config_map);

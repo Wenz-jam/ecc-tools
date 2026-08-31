@@ -73,8 +73,8 @@ bool IdbDie::set_bounding_box()
 {
   int32_t llx = INT32_MAX;
   int32_t lly = INT32_MAX;
-  int32_t urx = 0;
-  int32_t ury = 0;
+  int32_t urx = INT32_MIN;
+  int32_t ury = INT32_MIN;
 
   for (auto pt : _points) {
     llx = std::min(llx, pt->get_x());
@@ -98,7 +98,7 @@ void IdbDie::print()
   vector<IdbCoordinate<int32_t>*>::iterator it = _points.begin();
   for (; it != _points.end(); ++it) {
     IdbCoordinate<int32_t>* point = *it;
-    IEDALOG.info(ieda::Loc::current(), point->get_x(), "  ", point->get_y());
+    ECCLOG.info(ecc::Loc::current(), point->get_x(), "  ", point->get_y());
   }
 }
 

@@ -84,7 +84,7 @@ void IdbLayer::set_type(string type)
 
 void IdbLayer::print()
 {
-  IEDALOG.info(ieda::Loc::current(), "name =  ", _name);
+  ECCLOG.info(ecc::Loc::current(), "name =  ", _name);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -172,7 +172,7 @@ IdbLayer* IdbLayers::set_layer(string layer_name, string type)
     _z_order++;
   }
 
-  // IEDALOG.info(ieda::Loc::current(), "Routing layer idx = ", _routing_layer_index);
+  // ECCLOG.info(ecc::Loc::current(), "Routing layer idx = ", _routing_layer_index);
 
   return layer_find;
 }  // namespace idb
@@ -197,7 +197,7 @@ IdbLayer* IdbLayers::find_layer(const string& src_name, bool new_layer)
   }
 
   //   if (!new_layer) {
-  //     IEDALOG.warn(ieda::Loc::current(), "[IdbLayer Error] : can not find layer = ", src_name);
+  //     ECCLOG.warn(ecc::Loc::current(), "[IdbLayer Error] : can not find layer = ", src_name);
   //   }
 
   return nullptr;
@@ -273,7 +273,7 @@ IdbLayer* IdbLayers::find_layer_by_order(uint8_t order)
     }
   }
 
-  IEDALOG.warn(ieda::Loc::current(), "[IdbLayer Error] : can not find layer with order = ", order);
+  ECCLOG.warn(ecc::Loc::current(), "[IdbLayer Error] : can not find layer with order = ", order);
 
   return nullptr;
 }
@@ -293,7 +293,7 @@ vector<IdbLayerCut*> IdbLayers::find_cut_layer_list(string layer_name_1, string 
   int32_t order_max = std::max(layer_1->get_order(), layer_2->get_order());
   for (int i = order_min + 1; i < order_max; i++) {
     IdbLayer* layer_find = find_layer_by_order(i);
-    if (layer_find->is_cut()) {
+    if (layer_find != nullptr && layer_find->is_cut()) {
       cut_layer_list.emplace_back(dynamic_cast<IdbLayerCut*>(layer_find));
     }
   }
@@ -337,8 +337,12 @@ int32_t IdbParallelSpacingTable::get_spacing(int32_t width, int32_t parallel_len
     return r;
   };
 
-  ssize_t iwidth = search(_width, width);
-  ssize_t ilength = search(_parallel_run_length, parallel_length);
+  ssize_t iwidth = std::max<ssize_t>(0, search(_width, width));
+  ssize_t ilength = std::max<ssize_t>(0, search(_parallel_run_length, parallel_length));
+  if (static_cast<size_t>(iwidth) >= _spacing.size()
+      || static_cast<size_t>(ilength) >= _spacing.at(iwidth).size()) {
+    return 0;
+  }
   return _spacing.at(iwidth).at(ilength);
 }
 

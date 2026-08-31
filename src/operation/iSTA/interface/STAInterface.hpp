@@ -158,7 +158,7 @@ class STAInterface
   TimingLeakagePower wrapTimingLeakagePower(idb::LibLeakagePower* lib_leakage_power);
   LogicExpression wrapLogicExpression(std::string& expression_string);
   void wrapLogicExpressionTermList(LogicExpression& logic_expression, LibertyExpr* liberty_expr);
-  LogicOperationType wrapLogicOperationType(const int32_t liberty_expr_op);
+  LogicOperationType wrapLogicOperationType(int32_t liberty_expr_op);
   void wrapTimingCellArc(TimingCell& timing_cell, idb::LibArcSet* lib_arc_set);
   bool isSDFDelayArc(idb::LibArc* lib_arc);
   bool isSDFCheckArc(idb::LibArc* lib_arc);
@@ -221,7 +221,6 @@ class STAInterface
   ~STAInterface() = default;
   STAInterface& operator=(const STAInterface& other) = delete;
   STAInterface& operator=(STAInterface&& other) = delete;
-  // function
 };
 
 }  // namespace ista

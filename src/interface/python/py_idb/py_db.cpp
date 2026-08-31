@@ -124,6 +124,12 @@ bool initVerilog(const std::string& verilog_path, const std::string& top_module)
   return dmInst->readVerilog(verilog_path, top_module);
 }
 
+bool initLvsVerilog(const std::string& verilog_path, const std::string& top_module)
+{
+  dmInst->get_config().set_verilog_path(verilog_path);
+  return dmInst->addVerilog(verilog_path, top_module);
+}
+
 bool initLib(const std::vector<std::string>& lib_paths)
 {
   dmInst->get_config().set_lib_paths(lib_paths);
@@ -181,7 +187,7 @@ bool saveViewJson(const std::string& output_dir, const std::string& json_format,
 {
   idb::ViewJsonWriteOptions options;
   if (!idb::parseViewJsonFormat(json_format, options.format)) {
-    IEDALOG.warn(ieda::Loc::current(), "Save view json failed: unsupported json_format `", json_format, "`, expected `pretty` or `compact`.");
+    ECCLOG.warn(ecc::Loc::current(), "Save view json failed: unsupported json_format `", json_format, "`, expected `pretty` or `compact`.");
     return false;
   }
   options.compress = compress;
