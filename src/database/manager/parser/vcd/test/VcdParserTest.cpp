@@ -14,8 +14,11 @@
 //
 // See the Mulan PSL v2 for more details.
 // ***************************************************************************************
+#include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <string>
+#include <vector>
 
 #include "VcdParser.hh"
 
@@ -49,5 +52,65 @@ int main()
   assert(std::fabs(signal_activity_map["top/ret_x"].get_static_probability() - 2.0 / 3.0) < 1E-9);
   assert(std::fabs(signal_activity_map["top/chg_x"].get_transition_density() - 1.0 / 30.0) < 1E-9);
   assert(std::fabs(signal_activity_map["top/lead_x"].get_transition_density() - 1.0 / 30.0) < 1E-9);
+
+  // Windowed read: the file spans 30ns, so a 10ns window splits it into three
+  // windows of (10, 20], (20, 30] and (30, 40].
+  vcd::VcdWindowReader window_reader;
+  assert(window_reader.open(VCD_TEST_FILE_PATH, 10.0));
+
+  std::vector<std::string> signal_name_list;
+  std::vector<double> sum_rise_list;
+  std::vector<double> sum_fall_list;
+  std::vector<double> sum_high_list;
+  std::vector<double> a_rise_list;
+  std::vector<double> a_probability_list;
+  std::size_t a_index = 0;
+  std::size_t window_num = 0;
+  double total_duration = 0.0;
+  while (window_reader.advance_window()) {
+    const vcd::VcdWindowSignalActivity& window_activity = window_reader.get_window_activity();
+    if (window_num == 0) {
+      signal_name_list = window_activity.get_signal_name_list();
+      sum_rise_list.assign(signal_name_list.size(), 0.0);
+      sum_fall_list.assign(signal_name_list.size(), 0.0);
+      sum_high_list.assign(signal_name_list.size(), 0.0);
+      a_index = std::find(signal_name_list.begin(), signal_name_list.end(), "top/a") - signal_name_list.begin();
+    }
+    assert(window_activity.get_signal_name_list() == signal_name_list);
+    const double window_duration = window_activity.get_window_duration();
+    assert(std::fabs(window_duration - 10.0) < 1E-9);
+    total_duration += window_duration;
+    for (std::size_t signal_index = 0; signal_index < signal_name_list.size(); signal_index++) {
+      sum_rise_list[signal_index] += window_activity.get_rise_transition_density(signal_index) * window_duration;
+      sum_fall_list[signal_index] += window_activity.get_fall_transition_density(signal_index) * window_duration;
+      sum_high_list[signal_index] += window_activity.get_static_probability(signal_index) * window_duration;
+    }
+    a_rise_list.push_back(window_activity.get_rise_transition_density(a_index));
+    a_probability_list.push_back(window_activity.get_static_probability(a_index));
+    window_num++;
+  }
+  assert(window_num == 3);
+  assert(total_duration == 30.0);
+
+  // An event that lands exactly on a boundary belongs to the window on its left,
+  // otherwise the transition at the end of the file would be dropped.
+  assert(std::fabs(a_rise_list[0] - 1.0 / 10.0) < 1E-9);
+  assert(std::fabs(a_probability_list[0] - 0.0) < 1E-9);
+  assert(std::fabs(a_rise_list[1] - 0.0) < 1E-9);
+  assert(std::fabs(a_probability_list[1] - 1.0) < 1E-9);
+  assert(std::fabs(a_rise_list[2] - 0.0) < 1E-9);
+  assert(std::fabs(a_probability_list[2] - 0.0) < 1E-9);
+
+  // Summing the windows back up has to reproduce the whole-run numbers.
+  for (std::size_t signal_index = 0; signal_index < signal_name_list.size(); signal_index++) {
+    const std::string& signal_name = signal_name_list[signal_index];
+    if (signal_activity_map.count(signal_name) == 0) {
+      continue;
+    }
+    const double global_transition_density = signal_activity_map[signal_name].get_transition_density();
+    const double global_static_probability = signal_activity_map[signal_name].get_static_probability();
+    assert(std::fabs(global_transition_density * total_duration - (sum_rise_list[signal_index] + sum_fall_list[signal_index])) < 1E-9);
+    assert(std::fabs(global_static_probability * total_duration - sum_high_list[signal_index]) < 1E-9);
+  }
   return 0;
 }

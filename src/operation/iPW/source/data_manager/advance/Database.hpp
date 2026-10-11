@@ -22,6 +22,7 @@
 #include "Net.hpp"
 #include "NetPower.hpp"
 #include "ParasiticNet.hpp"
+#include "PeakPowerSummary.hpp"
 #include "Pin.hpp"
 #include "PowerActivity.hpp"
 #include "PowerSummary.hpp"
@@ -53,6 +54,7 @@ class Database
   std::map<std::string, InstancePower>& get_instance_power_map() { return _instance_power_map; }
   std::map<std::string, NetPower>& get_net_power_map() { return _net_power_map; }
   PowerSummary& get_power_summary() { return _power_summary; }
+  PeakPowerSummary& get_peak_power_summary() { return _peak_power_summary; }
   TimingLibrary& get_timing_library() { return _timing_library; }
   std::map<std::string, ParasiticNet>& get_parasitic_net_map() { return _parasitic_net_map; }
   TimingConstraint& get_timing_constraint() { return _timing_constraint; }
@@ -76,6 +78,7 @@ class Database
   std::map<std::string, InstancePower> _instance_power_map;
   std::map<std::string, NetPower> _net_power_map;
   PowerSummary _power_summary;
+  PeakPowerSummary _peak_power_summary;
   TimingLibrary _timing_library;
   std::map<std::string, ParasiticNet> _parasitic_net_map;
   TimingConstraint _timing_constraint;

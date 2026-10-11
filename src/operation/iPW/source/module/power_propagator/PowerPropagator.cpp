@@ -175,6 +175,66 @@ void PowerPropagator::seedVcdActivity()
   PWLOG.info(Loc::current(), "Annotated ", annotated_pin_num, " power activities from VCD.");
 }
 
+std::size_t PowerPropagator::annotateVcdActivity(const std::map<std::string, vcd::VcdSignalActivity>& signal_activity_map)
+{
+  PWDM.getDatabase().get_vcd_activity_map().clear();
+  std::size_t matched_net_num = 0;
+  for (const std::pair<const std::string, vcd::VcdSignalActivity>& activity_pair : signal_activity_map) {
+    PowerActivity activity;
+    activity.set_transition_density(activity_pair.second.get_transition_density());
+    activity.set_static_probability(activity_pair.second.get_static_probability());
+    if (annotateVcdSignal(activity_pair.first, activity)) {
+      matched_net_num++;
+    }
+  }
+  return matched_net_num;
+}
+
+std::size_t PowerPropagator::annotateVcdActivity(const vcd::VcdWindowSignalActivity& window_activity)
+{
+  PWDM.getDatabase().get_vcd_activity_map().clear();
+  const std::vector<std::string>& signal_name_list = window_activity.get_signal_name_list();
+  std::size_t matched_net_num = 0;
+  for (std::size_t signal_index = 0; signal_index < signal_name_list.size(); signal_index++) {
+    PowerActivity activity;
+    activity.set_rise_transition_density(window_activity.get_rise_transition_density(signal_index));
+    activity.set_fall_transition_density(window_activity.get_fall_transition_density(signal_index));
+    activity.set_static_probability(window_activity.get_static_probability(signal_index));
+    if (annotateVcdSignal(signal_name_list[signal_index], activity)) {
+      matched_net_num++;
+    }
+  }
+  return matched_net_num;
+}
+
+bool PowerPropagator::annotateVcdSignal(const std::string& vcd_signal_name, PowerActivity& activity)
+{
+  Database& database = PWDM.getDatabase();
+  std::string net_name = wrapVcdPinName(vcd_signal_name);
+  if (net_name.empty() || database.get_net_map().count(net_name) == 0) {
+    return false;
+  }
+  activity.set_origin(PowerActivityOrigin::kVcd);
+  activity.set_is_valid(true);
+  for (std::string& pin_name : database.get_net_map()[net_name].get_pin_name_list()) {
+    database.get_vcd_activity_map()[pin_name] = activity;
+  }
+  return true;
+}
+
+std::string PowerPropagator::wrapVcdPinName(const std::string& vcd_signal_name)
+{
+  Database& database = PWDM.getDatabase();
+  std::string top_scope_path = database.get_design_name() + "/";
+  std::size_t top_scope_pos = vcd_signal_name.find(top_scope_path);
+  if (top_scope_pos == std::string::npos || (top_scope_pos != 0 && vcd_signal_name[top_scope_pos - 1] != '/')) {
+    return "";
+  }
+  std::string pin_name = vcd_signal_name.substr(top_scope_pos + top_scope_path.size());
+  std::replace(pin_name.begin(), pin_name.end(), '/', ':');
+  return pin_name;
+}
+
 bool PowerPropagator::setPinActivity(std::string& pin_name, PowerActivity& activity)
 {
   Database& database = PWDM.getDatabase();

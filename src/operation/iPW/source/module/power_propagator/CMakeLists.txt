@@ -6,6 +6,7 @@ target_link_libraries(ipw_power_propagator
     PUBLIC
     ipw_data_manager
     ipw_toolkit
+    vcd
 )
 
 target_include_directories(ipw_power_propagator
