@@ -30,6 +30,8 @@ class PeakPowerSummary
   bool get_is_enabled() const { return _is_enabled; }
   PeakPowerValue& get_total_peak_value() { return _total_peak_value; }
   std::map<std::string, PeakPowerValue>& get_instance_peak_value_map() { return _instance_peak_value_map; }
+  const PeakPowerValue& get_total_peak_value() const { return _total_peak_value; }
+  const std::map<std::string, PeakPowerValue>& get_instance_peak_value_map() const { return _instance_peak_value_map; }
   // setter
   void set_is_enabled(const bool is_enabled) { _is_enabled = is_enabled; }
   // function

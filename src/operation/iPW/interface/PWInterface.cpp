@@ -444,6 +444,7 @@ void PWInterface::wrapTimingLibrary()
 {
   Monitor monitor;
   PWLOG.info(Loc::current(), "Starting...");
+  LogicExpression::invalidateThreadBddCache();
   auto liberty_generation = dmInst->get_liberty_generation();
   std::vector<idb::LibLibrary*> lib_list;
   if (liberty_generation != nullptr) {

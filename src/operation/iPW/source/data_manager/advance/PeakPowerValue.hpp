@@ -45,6 +45,18 @@ class PeakPowerValue
     _window_index = window_index;
   }
 
+  // Window results are merged in any order, so an equal power keeps the earliest window.
+  void merge(const PeakPowerValue& other)
+  {
+    if (other._power_value.get_total_power() < _power_value.get_total_power()) {
+      return;
+    }
+    if (other._power_value.get_total_power() == _power_value.get_total_power() && other._window_index >= _window_index) {
+      return;
+    }
+    *this = other;
+  }
+
  private:
   PowerValue _power_value;
   double _begin_time = 0.0;

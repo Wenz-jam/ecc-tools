@@ -16,6 +16,7 @@
 // ***************************************************************************************
 #pragma once
 
+#include "Database.hpp"
 #include "PWHeader.hpp"
 #include "VcdParser.hh"
 
@@ -33,6 +34,17 @@ class PeakPowerEngine
   void run(const std::string& vcd_file_path);
 
  private:
+  // Windows are handed out round-robin, so every worker walks the waveform but analyzes only its
+  // own windows. The merge of the per-worker peaks keeps the earliest window on a tie.
+  struct WindowWorkerResult
+  {
+    std::size_t window_num = 0;
+    std::size_t truncated_window_num = 0;
+    std::size_t last_window_index = 0;
+    bool has_window = false;
+    bool is_open = false;
+  };
+
   // self
   static PeakPowerEngine* _pe_instance;
 
@@ -45,6 +57,11 @@ class PeakPowerEngine
   // function
   double check(const std::string& vcd_file_path);
   double resolveWindowLength();
+  int32_t resolveThreadNum();
+  WindowWorkerResult analyzeWindows(const std::string& vcd_file_path, const double window_length, const int32_t worker_id, const int32_t worker_num,
+                                    Database::PowerWorkspace& workspace);
+  void mergeWorkerResults(const std::vector<WindowWorkerResult>& worker_result_list, const std::vector<Database::PowerWorkspace>& workspace_list,
+                          std::size_t& window_num, std::size_t& truncated_window_num);
   void updatePeakPower(const vcd::VcdWindowSignalActivity& window_activity);
 };
 
