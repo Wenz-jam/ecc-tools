@@ -16,8 +16,8 @@
 // ***************************************************************************************
 #pragma once
 
-#include "Logger.hpp"
 #include "LVSHeader.hpp"
+#include "Logger.hpp"
 
 namespace ilvs {
 
@@ -91,10 +91,7 @@ class Utility
     return digit_string;
   }
   static std::string getIOName(const std::string& pin_name) { return "PIN/" + pin_name; }
-  static std::string getInstancePinName(const std::string& instance_name, const std::string& pin_name)
-  {
-    return instance_name + "/" + pin_name;
-  }
+  static std::string getInstancePinName(const std::string& instance_name, const std::string& pin_name) { return instance_name + "/" + pin_name; }
   static bool isIOName(const std::string& terminal_name) { return terminal_name.rfind("PIN/", 0) == 0; }
   static std::string getIOPinName(const std::string& terminal_name)
   {
@@ -138,6 +135,18 @@ class Utility
 
   template <typename TValue>
   static std::vector<std::string> getSortedKeyNameList(const std::map<std::string, TValue>& value_map)
+  {
+    std::vector<std::string> name_list;
+    name_list.reserve(value_map.size());
+    for (const auto& [name, value] : value_map) {
+      (void) value;
+      name_list.push_back(name);
+    }
+    return getSortedUniqueList(std::move(name_list));
+  }
+
+  template <typename TValue>
+  static std::vector<std::string> getSortedKeyNameList(const std::unordered_map<std::string, TValue>& value_map)
   {
     std::vector<std::string> name_list;
     name_list.reserve(value_map.size());

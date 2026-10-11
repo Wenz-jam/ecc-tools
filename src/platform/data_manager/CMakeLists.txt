@@ -1,3 +1,5 @@
+find_package(Threads REQUIRED)
+
 add_library(idm
     idm.cpp
     idm_init.cpp
@@ -20,13 +22,12 @@ add_library(idm
 target_link_libraries(idm
     PUBLIC
     IdbBuilder
-    flow
     liberty
     spef
     vcd
-    # file_manager_drc
-    tool_manager
     ecc_logger
+    PRIVATE
+    Threads::Threads
     )
 
 target_include_directories(idm
@@ -35,12 +36,6 @@ target_include_directories(idm
         ${CMAKE_CURRENT_SOURCE_DIR}/config
         ${CMAKE_CURRENT_SOURCE_DIR}/checker
 
-        ${HOME_PLATFORM}/flow
-        ${HOME_PLATFORM}/flow/config
-
-        ${HOME_PLATFORM}/tool_manager
-
-        ${HOME_PLATFORM}/file_manager
         ${HOME_DATABASE}/manager/parser
 
         ##json

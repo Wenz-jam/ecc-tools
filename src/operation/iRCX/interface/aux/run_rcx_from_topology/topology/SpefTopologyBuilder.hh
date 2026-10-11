@@ -16,11 +16,11 @@
 // ***************************************************************************************
 /**
  * @file SpefTopologyBuilder.hh
- * @brief Build iRCX topology from StarRC SPEF connectivity and annotations.
+ * @brief Build iRCX topology from reference SPEF connectivity and annotations.
  */
 #pragma once
 
-#include <string>
+#include "RCXHeader.hpp"
 
 namespace ircx {
 

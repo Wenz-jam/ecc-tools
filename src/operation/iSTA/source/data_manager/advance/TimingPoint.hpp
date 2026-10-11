@@ -22,11 +22,21 @@
 #include "TimingPathState.hpp"
 #include "TransType.hpp"
 
-#include <vector>
-#include <string>
-#include <string_view>
-
 namespace ista {
+
+struct TimingClockPointState
+{
+  std::map<AnalysisType, std::map<TransType, double>> arrival_map;
+  std::map<AnalysisType, std::map<TransType, double>> slew_map;
+  std::map<AnalysisType, std::map<TransType, double>> physical_arrival_map;
+  std::map<AnalysisType, std::map<TransType, double>> physical_slew_map;
+  std::map<AnalysisType, std::map<TransType, std::string>> predecessor_map;
+  std::map<AnalysisType, std::map<TransType, double>> predecessor_arc_delay_map;
+  std::map<AnalysisType, std::map<TransType, TransType>> predecessor_trans_type_map;
+  std::map<AnalysisType, std::map<TransType, std::string>> physical_predecessor_map;
+  std::map<AnalysisType, std::map<TransType, double>> physical_predecessor_arc_delay_map;
+  std::map<AnalysisType, std::map<TransType, TransType>> physical_predecessor_trans_type_map;
+};
 
 class TimingPoint
 {
@@ -36,6 +46,7 @@ class TimingPoint
   // getter
   double get_arrival() const { return _arrival; }
   double get_required() const { return _required; }
+  double get_setup_check_time() const { return _setup_check_time; }
   double get_slack() const { return _slack; }
   double get_launch_time() const { return _launch_time; }
   int32_t get_level() const { return _level; }
@@ -51,14 +62,8 @@ class TimingPoint
   std::map<AnalysisType, std::map<TransType, double>>& get_clock_predecessor_arc_delay_map() { return _clock_predecessor_arc_delay_map; }
   std::map<AnalysisType, std::map<TransType, TransType>>& get_clock_predecessor_trans_type_map() { return _clock_predecessor_trans_type_map; }
   std::map<AnalysisType, std::map<TransType, std::string>>& get_physical_clock_predecessor_map() { return _physical_clock_predecessor_map; }
-  std::map<AnalysisType, std::map<TransType, double>>& get_physical_clock_predecessor_arc_delay_map()
-  {
-    return _physical_clock_predecessor_arc_delay_map;
-  }
-  std::map<AnalysisType, std::map<TransType, TransType>>& get_physical_clock_predecessor_trans_type_map()
-  {
-    return _physical_clock_predecessor_trans_type_map;
-  }
+  std::map<AnalysisType, std::map<TransType, double>>& get_physical_clock_predecessor_arc_delay_map() { return _physical_clock_predecessor_arc_delay_map; }
+  std::map<AnalysisType, std::map<TransType, TransType>>& get_physical_clock_predecessor_trans_type_map() { return _physical_clock_predecessor_trans_type_map; }
   std::map<AnalysisType, std::map<TransType, double>>& get_data_slew_map() { return _data_slew_map; }
   // The innermost key is the launch clock name, not the individual startpoint.
   std::map<AnalysisType, std::map<PathSourceType, std::map<TransType, std::map<std::string, TimingPathState>>>>& get_path_state_map()
@@ -66,9 +71,19 @@ class TimingPoint
     return _path_state_map;
   }
   bool get_is_clock_point() const { return _is_clock_point; }
+  bool has_clock_state(std::string_view clock_name) const { return _clock_state_map.contains(std::string(clock_name)); }
+  TimingClockPointState& get_clock_state(std::string_view clock_name) { return _clock_state_map[std::string(clock_name)]; }
+  const TimingClockPointState* find_clock_state(std::string_view clock_name) const
+  {
+    const auto state = _clock_state_map.find(std::string(clock_name));
+    return state == _clock_state_map.end() ? nullptr : &state->second;
+  }
+  const std::map<std::string, TimingClockPointState>& get_clock_state_map() const { return _clock_state_map; }
+  void clear_clock_state_map() { _clock_state_map.clear(); }
   // setter
   void set_arrival(const double arrival) { _arrival = arrival; }
   void set_required(const double required) { _required = required; }
+  void set_setup_check_time(const double setup_check_time) { _setup_check_time = setup_check_time; }
   void set_slack(const double slack) { _slack = slack; }
   void set_launch_time(const double launch_time) { _launch_time = launch_time; }
   void set_level(const int32_t level) { _level = level; }
@@ -81,10 +96,7 @@ class TimingPoint
   {
     _physical_clock_arrival_map = clock_arrival_map;
   }
-  void set_physical_clock_slew_map(const std::map<AnalysisType, std::map<TransType, double>>& clock_slew_map)
-  {
-    _physical_clock_slew_map = clock_slew_map;
-  }
+  void set_physical_clock_slew_map(const std::map<AnalysisType, std::map<TransType, double>>& clock_slew_map) { _physical_clock_slew_map = clock_slew_map; }
   void set_clock_predecessor_map(const std::map<AnalysisType, std::map<TransType, std::string>>& clock_predecessor_map)
   {
     _clock_predecessor_map = clock_predecessor_map;
@@ -105,14 +117,12 @@ class TimingPoint
   {
     _physical_clock_predecessor_arc_delay_map = clock_predecessor_arc_delay_map;
   }
-  void set_physical_clock_predecessor_trans_type_map(
-      const std::map<AnalysisType, std::map<TransType, TransType>>& clock_predecessor_trans_type_map)
+  void set_physical_clock_predecessor_trans_type_map(const std::map<AnalysisType, std::map<TransType, TransType>>& clock_predecessor_trans_type_map)
   {
     _physical_clock_predecessor_trans_type_map = clock_predecessor_trans_type_map;
   }
   void set_data_slew_map(const std::map<AnalysisType, std::map<TransType, double>>& data_slew_map) { _data_slew_map = data_slew_map; }
-  void set_path_state_map(
-      const std::map<AnalysisType, std::map<PathSourceType, std::map<TransType, std::map<std::string, TimingPathState>>>>& path_state_map)
+  void set_path_state_map(const std::map<AnalysisType, std::map<PathSourceType, std::map<TransType, std::map<std::string, TimingPathState>>>>& path_state_map)
   {
     _path_state_map = path_state_map;
   }
@@ -122,6 +132,7 @@ class TimingPoint
  private:
   double _arrival = -std::numeric_limits<double>::infinity();
   double _required = std::numeric_limits<double>::infinity();
+  double _setup_check_time = 0.0;
   double _slack = 0.0;
   double _launch_time = 0.0;
   int32_t _level = 0;
@@ -142,6 +153,7 @@ class TimingPoint
   std::map<AnalysisType, std::map<TransType, double>> _data_slew_map;
   std::map<AnalysisType, std::map<PathSourceType, std::map<TransType, std::map<std::string, TimingPathState>>>> _path_state_map;
   bool _is_clock_point = false;
+  std::map<std::string, TimingClockPointState> _clock_state_map;
 };
 
 }  // namespace ista

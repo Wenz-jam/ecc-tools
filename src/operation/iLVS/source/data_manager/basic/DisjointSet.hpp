@@ -22,10 +22,7 @@ namespace ilvs {
 class DisjointSet
 {
  public:
-  explicit DisjointSet(const int32_t size) : _parent(size), _rank(size, 0)
-  {
-    std::iota(_parent.begin(), _parent.end(), 0);
-  }
+  explicit DisjointSet(const int32_t size) : _parent(size), _rank(size, 0) { std::iota(_parent.begin(), _parent.end(), 0); }
   ~DisjointSet() = default;
   // function
   int32_t find(const int32_t node)
@@ -54,7 +51,7 @@ class DisjointSet
 
  private:
   std::vector<int32_t> _parent;
-  std::vector<int32_t> _rank;
+  std::vector<uint8_t> _rank;
 };
 
 }  // namespace ilvs

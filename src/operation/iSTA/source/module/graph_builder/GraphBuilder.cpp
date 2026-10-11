@@ -253,8 +253,7 @@ bool GraphBuilder::isFloatingInoutPin(Pin& pin)
   return pin.get_net_name().empty() && inferInoutPinDirectionByTimingCell(pin) == PinDirection::kNone;
 }
 
-PinDirection GraphBuilder::inferInoutPinDirection(const std::string& pin_name, Pin& pin,
-                                                  std::map<std::string, PinDirection>& inout_pin_direction_map)
+PinDirection GraphBuilder::inferInoutPinDirection(const std::string& pin_name, Pin& pin, std::map<std::string, PinDirection>& inout_pin_direction_map)
 {
   PinDirection timing_cell_direction = inferInoutPinDirectionByTimingCell(pin);
   if (timing_cell_direction != PinDirection::kNone) {
@@ -356,8 +355,7 @@ PinDirection GraphBuilder::inferInoutPinDirectionByNet(Pin& pin, std::map<std::s
   }
   if (driver_pin_num > 1) {
     std::vector<std::string> driver_pin_list = getDriverPinList(*net, inout_pin_direction_map);
-    STALOG.error(Loc::current(), "The net has multiple driver pins: net=", net->get_net_name(),
-                 " drivers=", getPinNameListString(driver_pin_list));
+    STALOG.error(Loc::current(), "The net has multiple driver pins: net=", net->get_net_name(), " drivers=", getPinNameListString(driver_pin_list));
   }
   return PinDirection::kNone;
 }
@@ -470,8 +468,7 @@ void GraphBuilder::makeNetDriverLoad(Net& net)
   }
 
   if (net.get_driver_pin_list().size() > 1) {
-    STALOG.error(Loc::current(), "The net has multiple driver pins: net=", net.get_net_name(),
-                 " drivers=", getPinNameListString(net.get_driver_pin_list()));
+    STALOG.error(Loc::current(), "The net has multiple driver pins: net=", net.get_net_name(), " drivers=", getPinNameListString(net.get_driver_pin_list()));
   }
 }
 
@@ -544,8 +541,7 @@ bool GraphBuilder::shouldDisableNetArc(const std::string& source_pin, const std:
     return false;
   }
   TimingCell& source_cell = timing_cell_map[source_instance.get_cell_name()];
-  return source_cell.get_is_sequential() && !source_cell.get_is_clock_gating() && !source_cell.get_is_macro()
-         && sink_pin == sink_instance.get_clock_pin_name();
+  return source_cell.get_is_sequential() && !source_cell.get_is_clock_gating() && !source_cell.get_is_macro() && sink_pin == sink_instance.get_clock_pin_name();
 }
 
 bool GraphBuilder::isDisableArc(Arc& arc)
@@ -689,8 +685,7 @@ std::size_t GraphBuilder::breakLoopArcFromStart()
   return disabled_loop_num;
 }
 
-bool GraphBuilder::traverseDataPath(std::string& pin_name, bool is_forward, std::map<std::string, GBColorType>& color_map,
-                                    std::size_t& disabled_loop_num)
+bool GraphBuilder::traverseDataPath(std::string& pin_name, bool is_forward, std::map<std::string, GBColorType>& color_map, std::size_t& disabled_loop_num)
 {
   Database& database = STADM.getDatabase();
   if (stopTraverse(pin_name, is_forward) || isBlack(color_map, pin_name)) {
@@ -701,8 +696,7 @@ bool GraphBuilder::traverseDataPath(std::string& pin_name, bool is_forward, std:
   }
 
   color_map[pin_name] = GBColorType::kGray;
-  std::vector<std::size_t>& arc_idx_list
-      = is_forward ? database.get_outgoing_arc_list_map()[pin_name] : database.get_incoming_arc_list_map()[pin_name];
+  std::vector<std::size_t>& arc_idx_list = is_forward ? database.get_outgoing_arc_list_map()[pin_name] : database.get_incoming_arc_list_map()[pin_name];
   for (std::size_t arc_idx : arc_idx_list) {
     Arc& arc = database.get_arc_list()[arc_idx];
     if (isDisableArc(arc)) {
@@ -755,6 +749,9 @@ bool GraphBuilder::disableLoopArc(Arc& arc)
     return false;
   }
   arc.set_is_loop_disable(true);
+  STALOG.warn(Loc::current(), "Static timing-loop cut: ", arc.get_source_pin(), " -> ", arc.get_sink_pin(),
+              ", type=", GetArcTypeName()(arc.get_type()), ", owner=", arc.get_owner_name(),
+              ". Timing propagation skips this arc; paths through it are not analyzed.");
   return true;
 }
 
@@ -787,13 +784,44 @@ std::size_t GraphBuilder::breakLoopArcFromFloating()
   return disabled_loop_num;
 }
 
-void GraphBuilder::traverseFloatingDataPath(std::string& pin_name, std::map<std::string, GBColorType>& color_map,
-                                            std::size_t& disabled_loop_num)
+void GraphBuilder::traverseFloatingDataPath(std::string& pin_name, std::map<std::string, GBColorType>& color_map, std::size_t& disabled_loop_num)
 {
   if (isBlack(color_map, pin_name)) {
     return;
   }
-  (void) traverseDataPath(pin_name, true, color_map, disabled_loop_num);
+  // Topological ordering includes every enabled arc, including arcs crossing
+  // data start/end points. The final cleanup must cover that same graph.
+  // Use explicit frames so a deep floating component cannot exhaust the stack.
+  struct Frame
+  {
+    std::string pin;
+    std::size_t next_arc = 0;
+  };
+  Database& database = STADM.getDatabase();
+  std::vector<Frame> stack{{pin_name}};
+  color_map[pin_name] = GBColorType::kGray;
+  while (!stack.empty()) {
+    Frame& frame = stack.back();
+    const auto& outgoing = database.get_outgoing_arc_list_map()[frame.pin];
+    if (frame.next_arc == outgoing.size()) {
+      color_map[frame.pin] = GBColorType::kBlack;
+      stack.pop_back();
+      continue;
+    }
+    Arc& arc = database.get_arc_list()[outgoing[frame.next_arc++]];
+    if (isDisableArc(arc)) {
+      continue;
+    }
+    std::string& next_pin = arc.get_sink_pin();
+    if (isGray(color_map, next_pin)) {
+      if (disableLoopArc(arc)) {
+        ++disabled_loop_num;
+      }
+    } else if (!isBlack(color_map, next_pin)) {
+      color_map[next_pin] = GBColorType::kGray;
+      stack.push_back({next_pin});
+    }
+  }
 }
 
 void GraphBuilder::buildTimingOrder()
@@ -869,9 +897,11 @@ void GraphBuilder::updateSinkIndegree(Arc& arc, std::map<std::string, std::size_
 void GraphBuilder::printLoopInfo()
 {
   Database& database = STADM.getDatabase();
-  std::size_t loop_pin_num = database.get_timing_point_map().size() - database.get_timing_order_list().size();
-  if (loop_pin_num > 0) {
-    STALOG.warn(Loc::current(), "Detected ", loop_pin_num, " vertex(es) in combinational loop or unresolved dependency.");
+  const std::size_t point_num = database.get_timing_point_map().size();
+  const std::size_t order_num = database.get_timing_order_list().size();
+  if (point_num != order_num) {
+    STALOG.error(Loc::current(), "Invalid timing order after loop cleanup: ordered=", order_num, ", total=", point_num,
+                 ". Timing propagation requires every timing point; inspect graph dependencies and loop-cut diagnostics.");
   }
 }
 

@@ -25,7 +25,6 @@ class RoutingCheck
 {
  public:
   RoutingCheck() = default;
-  ~RoutingCheck() = default;
   // getter
   std::string& get_net_name() { return _net_name; }
   std::string& get_driver_terminal_name() { return _driver_terminal_name; }
@@ -43,10 +42,7 @@ class RoutingCheck
   {
     _disconnected_terminal_name_list = disconnected_terminal_name_list;
   }
-  void set_disconnected_shape_list(const std::vector<Shape>& disconnected_shape_list)
-  {
-    _disconnected_shape_list = disconnected_shape_list;
-  }
+  void set_disconnected_shape_list(const std::vector<Shape>& disconnected_shape_list) { _disconnected_shape_list = disconnected_shape_list; }
 
  private:
   std::string _net_name;

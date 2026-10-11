@@ -74,8 +74,9 @@ ECModel EntityChecker::initECModel()
   ec_model.set_netlist_io_name_list(getComparedIONameList(netlist_data));
   ec_model.set_def_io_name_list(getComparedIONameList(def_data));
   ec_model.set_netlist_instance_name_list(
-      std::vector<std::string>(netlist_data.get_instance_name_set().begin(), netlist_data.get_instance_name_set().end()));
-  ec_model.set_def_instance_name_list(std::vector<std::string>(def_data.get_instance_name_set().begin(), def_data.get_instance_name_set().end()));
+      LVSUTIL.getSortedUniqueList(std::vector<std::string>(netlist_data.get_instance_name_set().begin(), netlist_data.get_instance_name_set().end())));
+  ec_model.set_def_instance_name_list(
+      LVSUTIL.getSortedUniqueList(std::vector<std::string>(def_data.get_instance_name_set().begin(), def_data.get_instance_name_set().end())));
   ec_model.set_netlist_net_name_list(LVSUTIL.getSortedKeyNameList(netlist_data.get_net_map()));
   ec_model.set_def_net_name_list(LVSUTIL.getSortedKeyNameList(def_data.get_net_map()));
   return ec_model;
@@ -94,7 +95,7 @@ std::vector<std::string> EntityChecker::getComparedIONameList(const DesignData& 
 
 bool EntityChecker::isPowerGroundIO(const DesignData& design_data, const std::string& io_terminal_name)
 {
-  const std::map<std::string, ConnectType>& terminal_connect_type_map = design_data.get_terminal_connect_type_map();
+  const std::unordered_map<std::string, ConnectType>& terminal_connect_type_map = design_data.get_terminal_connect_type_map();
   std::vector<std::string> candidate_terminal_name_list = {io_terminal_name};
   if (LVSUTIL.isIOName(io_terminal_name)) {
     candidate_terminal_name_list.push_back(LVSUTIL.getIOPinName(io_terminal_name));
@@ -136,8 +137,7 @@ void EntityChecker::checkIO(ECModel& ec_model)
   }
 }
 
-std::vector<std::string> EntityChecker::getDifference(const std::vector<std::string>& first_name_list,
-                                                       const std::vector<std::string>& second_name_list)
+std::vector<std::string> EntityChecker::getDifference(const std::vector<std::string>& first_name_list, const std::vector<std::string>& second_name_list)
 {
   std::vector<std::string> difference_name_list;
   std::set_difference(first_name_list.begin(), first_name_list.end(), second_name_list.begin(), second_name_list.end(),
@@ -197,8 +197,7 @@ void EntityChecker::checkNet(ECModel& ec_model)
     if (def_net_iter == def_data.get_net_map().end()) {
       continue;
     }
-    std::vector<std::string> netlist_terminal_name_list =
-        LVSUTIL.getSortedUniqueList(netlist_data.get_net_map().at(net_name).get_terminal_name_list());
+    std::vector<std::string> netlist_terminal_name_list = LVSUTIL.getSortedUniqueList(netlist_data.get_net_map().at(net_name).get_terminal_name_list());
     std::vector<std::string> def_terminal_name_list = LVSUTIL.getSortedUniqueList(def_net_iter->second.get_terminal_name_list());
     if (netlist_terminal_name_list == def_terminal_name_list) {
       continue;

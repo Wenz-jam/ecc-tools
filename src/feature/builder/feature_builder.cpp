@@ -32,7 +32,6 @@
 
 #include <map>
 
-#include "flow_config.h"
 #include "idm.h"
 
 namespace ecc_feature {
@@ -64,12 +63,8 @@ SummaryInfo FeatureBuilder::buildSummaryInfo()
   SummaryInfo info;
 
   info.eda_tool = "ecc";
-  info.eda_version = iplf::flowConfigInst->get_env_info_software_version();
   info.design_name = dmInst->get_idb_design()->get_design_name();
   info.design_version = dmInst->get_idb_design()->get_version();
-  info.flow_stage = iplf::flowConfigInst->get_status_stage();
-  info.flow_runtime = iplf::flowConfigInst->get_status_runtime_string();
-  info.flow_memory = iplf::flowConfigInst->get_status_memmory_string();
 
   return info;
 }
@@ -292,8 +287,20 @@ SummaryLayers FeatureBuilder::buildSummaryLayers()
       for (auto special_segment : special_wire->get_segment_list()) {
         if (special_segment->is_via()) {
           auto via = special_segment->get_via();
+          if (via == nullptr) {
+            ECCLOG.warn(ecc::Loc::current(), "Skip malformed special via segment on net ", special_net->get_net_name(), ": missing via object.");
+            continue;
+          }
+
           auto layer_shape = via->get_cut_layer_shape();
-          int order = layer_shape.get_layer()->get_order();
+          auto* layer = layer_shape.get_layer();
+          if (layer == nullptr || layer_shape.get_rect_list_num() == 0) {
+            ECCLOG.warn(ecc::Loc::current(), "Skip malformed special via segment on net ", special_net->get_net_name(),
+                        ": missing cut-layer shape.");
+            continue;
+          }
+
+          int order = layer->get_order();
           cut_layer_map[order].via_num += 1;
 
           via_total += 1;
