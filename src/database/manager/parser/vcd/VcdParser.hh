@@ -111,7 +111,8 @@ class VcdReader
 // 按时间窗读 VCD：open() 后反复 advance_window() 直到返回 false，每窗结果从
 // get_window_activity() 取（reader 持有，下一次 advance_window() 覆盖）。
 // window_length 单位为 ns，窗口是从文件第一个时间戳起算的
-// (k * window_length, (k + 1) * window_length]，正好落在边界上的事件归左窗。
+// [k * window_length, (k + 1) * window_length)，正好落在边界上的事件归右窗，
+// 与 PrimeTime PX time_based 波形的 cycle 定义对齐（采样点 t 覆盖 [t, t+cycle)）。
 class VcdWindowReader
 {
  public:

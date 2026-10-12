@@ -74,7 +74,9 @@ void PeakPowerEngine::run(const std::string& vcd_file_path)
     return;
   }
   Database& database = PWDM.getDatabase();
-  database.get_peak_power_summary().set_is_enabled(true);
+  PeakPowerSummary& peak_power_summary = database.get_peak_power_summary();
+  peak_power_summary.reset();
+  peak_power_summary.set_is_enabled(true);
 
   const int32_t thread_num = resolveThreadNum();
   PWLOG.info(Loc::current(), "Window analysis runs on ", thread_num, " thread(s).");
@@ -240,7 +242,12 @@ void PeakPowerEngine::mergeWorkerResults(const std::vector<WindowWorkerResult>& 
     for (const std::pair<const std::string, PeakPowerValue>& instance_peak_pair : workspace.peak_power_summary.get_instance_peak_value_map()) {
       peak_power_summary.get_instance_peak_value_map()[instance_peak_pair.first].merge(instance_peak_pair.second);
     }
+    const std::vector<PeakPowerWindow>& worker_window_list = workspace.peak_power_summary.get_window_list();
+    peak_power_summary.get_window_list().insert(peak_power_summary.get_window_list().end(), worker_window_list.begin(), worker_window_list.end());
   }
+  std::vector<PeakPowerWindow>& window_list = peak_power_summary.get_window_list();
+  std::sort(window_list.begin(), window_list.end(),
+            [](const PeakPowerWindow& left_window, const PeakPowerWindow& right_window) { return left_window.window_index < right_window.window_index; });
 }
 
 void PeakPowerEngine::updatePeakPower(const vcd::VcdWindowSignalActivity& window_activity)
@@ -251,6 +258,8 @@ void PeakPowerEngine::updatePeakPower(const vcd::VcdWindowSignalActivity& window
   const std::size_t window_index = window_activity.get_window_index();
 
   PeakPowerSummary& peak_power_summary = database.get_peak_power_summary();
+  peak_power_summary.get_window_list().push_back({window_index, window_begin_time, window_end_time,
+                                                  database.get_power_summary().get_total_power_value().get_total_power()});
   peak_power_summary.get_total_peak_value().update(database.get_power_summary().get_total_power_value(), window_begin_time,
                                                    window_end_time, window_index);
   for (std::pair<const std::string, InstancePower>& instance_power_pair : database.get_instance_power_map()) {

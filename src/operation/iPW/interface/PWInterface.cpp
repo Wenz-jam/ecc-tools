@@ -223,6 +223,18 @@ void PWInterface::reportNetPower(const std::string& directory_path, const int32_
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
 
+void PWInterface::reportPeakPowerWaveform(const std::string& file_path)
+{
+  Monitor monitor;
+  PWLOG.info(Loc::current(), "Starting...");
+
+  PowerReporter::initInst();
+  PWPR.reportPeakPowerWaveform(file_path);
+  PowerReporter::destroyInst();
+
+  PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
+}
+
 #endif
 
 #endif

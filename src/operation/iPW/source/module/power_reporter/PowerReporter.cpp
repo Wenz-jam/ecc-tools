@@ -135,13 +135,41 @@ void PowerReporter::reportNetPower(const std::string& directory_path, const int3
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
 
+void PowerReporter::reportPeakPowerWaveform(const std::string& file_path)
+{
+  Monitor monitor;
+
+  const PeakPowerSummary& peak_power_summary = PWDM.getDatabase().get_peak_power_summary();
+  if (!peak_power_summary.get_is_enabled() || peak_power_summary.get_window_list().empty()) {
+    PWLOG.error(Loc::current(), "No peak power waveform data found, run_pw -peak first!");
+    return;
+  }
+
+  const std::string waveform_file_path
+      = file_path.empty() 
+      ? PWUTIL.getString(PWDM.getConfig().pr_temp_directory_path, "peak_windows.tsv") 
+      : file_path;
+  std::ofstream* waveform_file = PWUTIL.getOutputFileStream(waveform_file_path);
+  (*waveform_file) << "# iPW_PEAK_WINDOW_V1\n";
+  (*waveform_file) << "window_index\tbegin_time_ns\tend_time_ns\tpower_w\n";
+  (*waveform_file) << std::setprecision(17);
+  for (const PeakPowerWindow& window : peak_power_summary.get_window_list()) {
+    (*waveform_file) << window.window_index << '\t' << window.begin_time << '\t' << window.end_time << '\t' << window.power << '\n';
+  }
+  PWUTIL.closeFileStream(waveform_file);
+
+  PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
+}
+
 // private
 
 PowerReporter* PowerReporter::_pr_instance = nullptr;
 
 void PowerReporter::outputPowerReport()
 {
-  std::ofstream* power_report_file = PWUTIL.getOutputFileStream(PWUTIL.getString(PWDM.getConfig().pr_temp_directory_path, "power.rpt"));
+  std::ofstream* power_report_file = PWUTIL.getOutputFileStream(
+    PWUTIL.getString(PWDM.getConfig().pr_temp_directory_path, "power.rpt")
+  );
   outputPowerDesignInfo(power_report_file);
   outputPowerUnitInfo(power_report_file);
   if (PWDM.getDatabase().get_peak_power_summary().get_is_enabled()) {
@@ -157,9 +185,12 @@ void PowerReporter::outputPowerReport()
 void PowerReporter::outputPeakPower(std::ofstream* power_report_file)
 {
   PeakPowerValue& total_peak_value = PWDM.getDatabase().get_peak_power_summary().get_total_peak_value();
-  (*power_report_file) << "Peak Power             = " << std::scientific << std::setprecision(5) << total_peak_value.get_power()
+  (*power_report_file) << "Peak Power             = " 
+                       << std::scientific << std::setprecision(5) 
+                       << total_peak_value.get_power()
                        << std::defaultfloat << " W\n";
-  (*power_report_file) << "Peak Time              = " << total_peak_value.get_begin_time() << " ns\n";
+  (*power_report_file) << "Peak Time              = " 
+                       << total_peak_value.get_begin_time() << " ns\n";
 }
 
 void PowerReporter::outputPowerDesignInfo(std::ofstream* power_report_file)
@@ -167,13 +198,16 @@ void PowerReporter::outputPowerDesignInfo(std::ofstream* power_report_file)
   Database& database = PWDM.getDatabase();
   TimingLibrary& timing_library = database.get_timing_library();
   (*power_report_file) << "Design : " << database.get_design_name() << "\n";
-  (*power_report_file) << "Global Operating Voltage = " << std::setprecision(4) << timing_library.get_nom_voltage() << "\n\n";
+  (*power_report_file) << "Global Operating Voltage = " << std::setprecision(4) 
+                       << timing_library.get_nom_voltage() << "\n\n";
 }
 
 void PowerReporter::outputPowerUnitInfo(std::ofstream* power_report_file)
 {
   TimingLibrary& timing_library = PWDM.getDatabase().get_timing_library();
-  std::string leakage_power_unit = timing_library.get_leakage_power_unit() ? *timing_library.get_leakage_power_unit() : "1mW";
+  std::string leakage_power_unit = timing_library.get_leakage_power_unit() 
+                                 ? *timing_library.get_leakage_power_unit() 
+                                 : "1mW";
   (*power_report_file) << "Dynamic Power Units = 1mW\n";
   (*power_report_file) << "Leakage Power Units = " << leakage_power_unit << "\n\n";
 }

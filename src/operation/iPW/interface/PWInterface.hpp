@@ -94,6 +94,7 @@ class PWInterface
   void destroyPW();
   void reportCellPower(const std::string& directory_path, const int32_t top_num, const bool is_all);
   void reportNetPower(const std::string& directory_path, const int32_t top_num, const bool is_all);
+  void reportPeakPowerWaveform(const std::string& file_path);
 #endif
 
 #endif

@@ -34,27 +34,27 @@ int main()
   assert(signal_activity_map.count("top/u0/bus[0]") == 1);
   assert(signal_activity_map.count("top/u0/hexbus[3]") == 1);
 
-  assert(std::fabs(signal_activity_map["top/a"].get_transition_density() - 2.0 / 30.0) < 1E-9);
-  assert(std::fabs(signal_activity_map["top/a"].get_static_probability() - 1.0 / 3.0) < 1E-9);
-  assert(std::fabs(signal_activity_map["top/alias_a"].get_transition_density() - 2.0 / 30.0) < 1E-9);
-  assert(std::fabs(signal_activity_map["top/alias_a"].get_static_probability() - 1.0 / 3.0) < 1E-9);
-  assert(std::fabs(signal_activity_map["top/u0/bus[1]"].get_transition_density() - 1.0 / 30.0) < 1E-9);
-  assert(std::fabs(signal_activity_map["top/u0/bus[0]"].get_static_probability() - 2.0 / 3.0) < 1E-9);
-  assert(std::fabs(signal_activity_map["top/u0/hexbus[3]"].get_transition_density() - 2.0 / 30.0) < 1E-9);
-  assert(std::fabs(signal_activity_map["top/u0/hexbus[3]"].get_static_probability() - 2.0 / 3.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/a"].get_transition_density() - 2.0 / 35.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/a"].get_static_probability() - 10.0 / 35.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/alias_a"].get_transition_density() - 2.0 / 35.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/alias_a"].get_static_probability() - 10.0 / 35.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/u0/bus[1]"].get_transition_density() - 1.0 / 35.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/u0/bus[0]"].get_static_probability() - 20.0 / 35.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/u0/hexbus[3]"].get_transition_density() - 2.0 / 35.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/u0/hexbus[3]"].get_static_probability() - 20.0 / 35.0) < 1E-9);
 
   // Unknown excursions are weighted once, when the signal returns to a defined
   // value: a return-type excursion weighs the derate factor, a change-type
   // excursion weighs one whole transition, and an unknown state that is never
   // left (top/u0/bus[1] stays at z) or that the dump starts in (top/lead_x)
   // weighs nothing.
-  assert(std::fabs(signal_activity_map["top/ret_x"].get_transition_density() - 0.5 / 30.0) < 1E-9);
-  assert(std::fabs(signal_activity_map["top/ret_x"].get_static_probability() - 2.0 / 3.0) < 1E-9);
-  assert(std::fabs(signal_activity_map["top/chg_x"].get_transition_density() - 1.0 / 30.0) < 1E-9);
-  assert(std::fabs(signal_activity_map["top/lead_x"].get_transition_density() - 1.0 / 30.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/ret_x"].get_transition_density() - 0.5 / 35.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/ret_x"].get_static_probability() - 25.0 / 35.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/chg_x"].get_transition_density() - 1.0 / 35.0) < 1E-9);
+  assert(std::fabs(signal_activity_map["top/lead_x"].get_transition_density() - 1.0 / 35.0) < 1E-9);
 
-  // Windowed read: the file spans 30ns, so a 10ns window splits it into three
-  // windows of (10, 20], (20, 30] and (30, 40].
+  // Windowed read: the file spans 35ns, so 10ns windows split it into
+  // [10, 20), [20, 30), [30, 40) and the trailing partial window [40, 45).
   vcd::VcdWindowReader window_reader;
   assert(window_reader.open(VCD_TEST_FILE_PATH, 10.0));
 
@@ -63,7 +63,9 @@ int main()
   std::vector<double> sum_fall_list;
   std::vector<double> sum_high_list;
   std::vector<double> a_rise_list;
+  std::vector<double> a_fall_list;
   std::vector<double> a_probability_list;
+  std::vector<double> duration_list;
   std::size_t a_index = 0;
   std::size_t window_num = 0;
   double total_duration = 0.0;
@@ -78,7 +80,7 @@ int main()
     }
     assert(window_activity.get_signal_name_list() == signal_name_list);
     const double window_duration = window_activity.get_window_duration();
-    assert(std::fabs(window_duration - 10.0) < 1E-9);
+    duration_list.push_back(window_duration);
     total_duration += window_duration;
     for (std::size_t signal_index = 0; signal_index < signal_name_list.size(); signal_index++) {
       sum_rise_list[signal_index] += window_activity.get_rise_transition_density(signal_index) * window_duration;
@@ -86,20 +88,30 @@ int main()
       sum_high_list[signal_index] += window_activity.get_static_probability(signal_index) * window_duration;
     }
     a_rise_list.push_back(window_activity.get_rise_transition_density(a_index));
+    a_fall_list.push_back(window_activity.get_fall_transition_density(a_index));
     a_probability_list.push_back(window_activity.get_static_probability(a_index));
     window_num++;
   }
-  assert(window_num == 3);
-  assert(total_duration == 30.0);
+  assert(window_num == 4);
+  const std::vector<double> expected_duration_list = {10.0, 10.0, 10.0, 5.0};
+  assert(duration_list.size() == expected_duration_list.size());
+  for (std::size_t window_index = 0; window_index < duration_list.size(); window_index++) {
+    assert(std::fabs(duration_list[window_index] - expected_duration_list[window_index]) < 1E-9);
+  }
+  assert(total_duration == 35.0);
 
-  // An event that lands exactly on a boundary belongs to the window on its left,
-  // otherwise the transition at the end of the file would be dropped.
-  assert(std::fabs(a_rise_list[0] - 1.0 / 10.0) < 1E-9);
+  // An event that lands exactly on a boundary belongs to the window on its right:
+  // 'a' rises at 20ns, so [20, 30) is the window that owns the rise, and the
+  // x -> 0 change-type transition at 40ns lands in the last window [40, 45).
+  assert(std::fabs(a_rise_list[0] - 0.0) < 1E-9);
   assert(std::fabs(a_probability_list[0] - 0.0) < 1E-9);
-  assert(std::fabs(a_rise_list[1] - 0.0) < 1E-9);
+  assert(std::fabs(a_rise_list[1] - 1.0 / 10.0) < 1E-9);
   assert(std::fabs(a_probability_list[1] - 1.0) < 1E-9);
   assert(std::fabs(a_rise_list[2] - 0.0) < 1E-9);
   assert(std::fabs(a_probability_list[2] - 0.0) < 1E-9);
+  assert(std::fabs(a_rise_list[3] - 0.0) < 1E-9);
+  assert(std::fabs(a_fall_list[3] - 1.0 / 5.0) < 1E-9);
+  assert(std::fabs(a_probability_list[3] - 0.0) < 1E-9);
 
   // Summing the windows back up has to reproduce the whole-run numbers.
   for (std::size_t signal_index = 0; signal_index < signal_name_list.size(); signal_index++) {

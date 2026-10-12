@@ -483,11 +483,13 @@ class VcdFileParser
     }
   }
 
-  // 用严格的 ">"：正好落在右边界上的事件归左窗，否则文件末尾正好停在边界上的
-  // 那次翻转会掉进不存在的窗口里丢掉。
-  bool isWindowComplete() const { return _current_time > _window.end; }
+  // 窗口是左闭右开 [k * length, (k + 1) * length)：正好落在边界上的事件归右窗，
+  // 也就是"第 k 个时钟沿之后那一个周期"，和 PrimeTime PX time_based 波形里
+  // 采样点 t 覆盖 [t, t + cycle) 的定义一致（边界事件算在采样点自己的周期里）。
+  bool isWindowComplete() const { return _current_time >= _window.end; }
 
-  // 文件末尾不足一窗的余量也要吐出去。
+  // 文件末尾不足一窗的余量也要吐出去；正好停在边界上时最后那个时间点的翻转会
+  // 落进一个零长窗口，引擎侧按截断窗跳过（文档里说明的行为）。
   bool hasPendingWindow() const { return _window.begin < _end_time; }
 
   // 结算 [max(_last_time, 窗口左边界), to_time) 这段高电平；左边界之前已在上一窗结算。
