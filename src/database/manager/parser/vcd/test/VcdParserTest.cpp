@@ -53,6 +53,52 @@ int main()
   assert(std::fabs(signal_activity_map["top/chg_x"].get_transition_density() - 1.0 / 35.0) < 1E-9);
   assert(std::fabs(signal_activity_map["top/lead_x"].get_transition_density() - 1.0 / 35.0) < 1E-9);
 
+  // Activity models: the same value change is weighted differently by the averaged
+  // and the time_based rule (PrimeTime PX UG 6-8 ~ 6-9 defines the X/Z handling in
+  // the time_based chapter).  (last_value, value, last_defined_value) -> weight.
+  {
+    vcd::ActivityModelOptions averaged;
+    vcd::ActivityModelOptions time_based;
+    time_based.model = vcd::ActivityModel::kTimeBased;
+    struct TransitionCase
+    {
+      char last_value;
+      char value;
+      char last_defined_value;
+      double averaged_weight;
+      double time_based_weight;
+    };
+    const TransitionCase transition_case_list[] = {
+        {'0', '1', '0', 1.0, 1.0},    // plain 0 -> 1
+        {'0', 'x', '0', 0.0, 0.5},    // leaving a defined value into X
+        {'1', 'x', '1', 0.0, 0.5},
+        {'x', '1', '0', 1.0, 0.5},    // X -> a different value
+        {'x', '1', '1', 0.5, 0.5},    // X -> the previous value
+        {'x', '0', '\0', 0.0, 0.0},  // initial X -> known: ignored by default
+        {'0', 'z', '0', 0.0, 0.0},    // entering Z consumes no power
+        {'z', '1', '0', 1.0, 1.0},    // 0 -> Z -> 1 is one full transition
+        {'z', '1', '1', 0.5, 0.0},    // 1 -> Z -> 1 is not a transition
+    };
+    for (const TransitionCase& transition_case : transition_case_list) {
+      const double averaged_weight = vcd::evaluateTransition(averaged, transition_case.last_value, transition_case.value,
+                                                             transition_case.last_defined_value);
+      const double time_based_weight = vcd::evaluateTransition(time_based, transition_case.last_value, transition_case.value,
+                                                               transition_case.last_defined_value);
+      assert(std::fabs(averaged_weight - transition_case.averaged_weight) < 1E-9);
+      assert(std::fabs(time_based_weight - transition_case.time_based_weight) < 1E-9);
+    }
+
+    // The option has to reach the parser: top/ret_x is 1 -> X -> 1, which the
+    // time_based rule counts as one transition instead of the averaged 0.5.
+    vcd::ActivityModelOptions time_based_read;
+    time_based_read.model = vcd::ActivityModel::kTimeBased;
+    vcd::VcdReader time_based_reader;
+    assert(time_based_reader.read(VCD_TEST_FILE_PATH, time_based_read));
+    std::map<std::string, vcd::VcdSignalActivity>& time_based_activity_map = time_based_reader.get_signal_activity_map();
+    assert(std::fabs(time_based_activity_map["top/ret_x"].get_transition_density() - 1.0 / 35.0) < 1E-9);
+    assert(std::fabs(time_based_activity_map["top/a"].get_transition_density() - 2.0 / 35.0) < 1E-9);
+  }
+
   // Windowed read: the file spans 35ns, so 10ns windows split it into
   // [10, 20), [20, 30), [30, 40) and the trailing partial window [40, 45).
   vcd::VcdWindowReader window_reader;

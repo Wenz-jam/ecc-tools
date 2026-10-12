@@ -30,15 +30,13 @@ namespace vcd {
 
 namespace {
 
-constexpr double kXTransitionDerateFactor = 0.5;
-
 class SignalState
 {
  public:
   SignalState() = default;
   ~SignalState() = default;
 
-  void update(int64_t time, char value, bool use_window)
+  void update(int64_t time, char value, bool use_window, const ActivityModelOptions& options)
   {
     value = getCanonicalValue(value);
     if (_has_value) {
@@ -46,9 +44,9 @@ class SignalState
       if (duration > 0 && _last_value == '1') {
         _high_duration += static_cast<double>(duration);
       }
-      countTransition(value, duration > 0, use_window);
+      countTransition(value, duration > 0, use_window, options);
     }
-    if (!isUnknown(value)) {
+    if (!isUnknownValue(value)) {
       _last_defined_value = value;
     }
     _last_time = time;
@@ -101,26 +99,13 @@ class SignalState
     return 'x';
   }
 
-  bool isUnknown(char value) const { return value == 'x' || value == 'z'; }
-
-  // 从 X/Z 回到已知值时，翻转权重按"是否回到上一个已知值"打折。
-  double getTransitionWeight(char value) const
+  // 折算规则统一由 vcd::evaluateTransition() 给出（averaged / time_based 两套口径）。
+  void countTransition(char value, bool is_weighted, bool use_window, const ActivityModelOptions& options)
   {
-    if (!isUnknown(_last_value)) {
-      return 1.0;
-    }
-    if (_last_defined_value == '\0') {
-      return 0.0;
-    }
-    return value == _last_defined_value ? kXTransitionDerateFactor : 1.0;
-  }
-
-  void countTransition(char value, bool is_weighted, bool use_window)
-  {
-    if (!is_weighted || value == _last_value || isUnknown(value)) {
+    if (!is_weighted || value == _last_value) {
       return;
     }
-    const double weight = getTransitionWeight(value);
+    const double weight = evaluateTransition(options, _last_value, value, _last_defined_value);
     if (weight <= 0.0) {
       return;
     }
@@ -153,8 +138,9 @@ class VcdFileParser
   VcdFileParser() = default;
   ~VcdFileParser() = default;
 
-  bool read(const std::string& file_path, std::map<std::string, VcdSignalActivity>& signal_activity_map)
+  bool read(const std::string& file_path, const ActivityModelOptions& options, std::map<std::string, VcdSignalActivity>& signal_activity_map)
   {
+    _options = options;
     if (!openFile(file_path)) {
       return false;
     }
@@ -163,8 +149,9 @@ class VcdFileParser
     return true;
   }
 
-  bool openWindow(const std::string& file_path, double window_length)
+  bool openWindow(const std::string& file_path, double window_length, const ActivityModelOptions& options)
   {
+    _options = options;
     _window = WindowState();
     if (window_length <= 0.0) {
       return false;
@@ -509,7 +496,7 @@ class VcdFileParser
     if (_window.is_active) {
       settleWindowHigh(state, time);
     }
-    state.update(time, value, _window.is_active);
+    state.update(time, value, _window.is_active, _options);
   }
 
   void settleSignalWindow(SignalState& state, std::size_t signal_index, int64_t window_end, double window_duration,
@@ -752,6 +739,7 @@ class VcdFileParser
   std::map<std::string, SignalState> _signal_state_map;
   std::string _zero_time_token = "#0";
   int64_t _start_time = 0;
+  ActivityModelOptions _options;
   int64_t _current_time = 0;
   int64_t _end_time = 0;
   bool _has_time = false;
@@ -763,10 +751,10 @@ class VcdFileParser
 
 }  // namespace
 
-bool VcdReader::read(const std::string& file_path)
+bool VcdReader::read(const std::string& file_path, const ActivityModelOptions& options)
 {
   VcdFileParser parser;
-  return parser.read(file_path, _signal_activity_map);
+  return parser.read(file_path, options, _signal_activity_map);
 }
 
 class VcdWindowReader::Impl
@@ -781,11 +769,11 @@ VcdWindowReader::VcdWindowReader() : _impl(std::make_unique<Impl>())
 
 VcdWindowReader::~VcdWindowReader() = default;
 
-bool VcdWindowReader::open(const std::string& file_path, double window_length)
+bool VcdWindowReader::open(const std::string& file_path, double window_length, const ActivityModelOptions& options)
 {
   _impl = std::make_unique<Impl>();
   _window_activity = VcdWindowSignalActivity();
-  if (!_impl->_parser.openWindow(file_path, window_length)) {
+  if (!_impl->_parser.openWindow(file_path, window_length, options)) {
     return false;
   }
   _window_activity.set_signal_name_list(_impl->_parser.get_window_signal_name_list());

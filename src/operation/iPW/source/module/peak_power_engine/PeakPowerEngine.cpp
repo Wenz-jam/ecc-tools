@@ -78,6 +78,10 @@ void PeakPowerEngine::run(const std::string& vcd_file_path)
   peak_power_summary.reset();
   peak_power_summary.set_is_enabled(true);
 
+  const vcd::ActivityModelOptions activity_options = buildActivityModelOptions();
+  PWLOG.info(Loc::current(), "Activity model = time_based (X transition derate = ", activity_options.x_transition_derate_factor,
+             ", include initial X transitions = ", activity_options.include_initial_x_transitions ? "true" : "false", ")");
+
   const int32_t thread_num = resolveThreadNum();
   PWLOG.info(Loc::current(), "Window analysis runs on ", thread_num, " thread(s).");
   std::vector<Database::PowerWorkspace> workspace_list(thread_num);
@@ -174,7 +178,7 @@ PeakPowerEngine::WindowWorkerResult PeakPowerEngine::analyzeWindows(const std::s
   database.set_workspace(&workspace);
 
   vcd::VcdWindowReader window_reader;
-  if (!window_reader.open(vcd_file_path, window_length)) {
+  if (!window_reader.open(vcd_file_path, window_length, buildActivityModelOptions())) {
     database.set_workspace(nullptr);
     return result;
   }
@@ -248,6 +252,16 @@ void PeakPowerEngine::mergeWorkerResults(const std::vector<WindowWorkerResult>& 
   std::vector<PeakPowerWindow>& window_list = peak_power_summary.get_window_list();
   std::sort(window_list.begin(), window_list.end(),
             [](const PeakPowerWindow& left_window, const PeakPowerWindow& right_window) { return left_window.window_index < right_window.window_index; });
+}
+
+// 峰值流程固定使用 time_based 口径；折算系数与初始 X 处理从配置读取，默认值与 PTPX 一致。
+vcd::ActivityModelOptions PeakPowerEngine::buildActivityModelOptions() const
+{
+  vcd::ActivityModelOptions options;
+  options.model = vcd::ActivityModel::kTimeBased;
+  options.x_transition_derate_factor = PWDM.getConfig().x_transition_derate_factor;
+  options.include_initial_x_transitions = PWDM.getConfig().include_initial_x_transitions;
+  return options;
 }
 
 void PeakPowerEngine::updatePeakPower(const vcd::VcdWindowSignalActivity& window_activity)

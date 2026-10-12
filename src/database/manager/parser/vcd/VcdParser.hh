@@ -22,6 +22,8 @@
 #include <string>
 #include <vector>
 
+#include "VcdTransitionModel.hh"
+
 namespace vcd {
 
 class VcdSignalActivity
@@ -102,7 +104,8 @@ class VcdReader
   std::map<std::string, VcdSignalActivity>& get_signal_activity_map() { return _signal_activity_map; }
   // setter
   // function
-  bool read(const std::string& file_path);
+  // options 默认 kAveraged，保持既有调用点行为不变。
+  bool read(const std::string& file_path, const ActivityModelOptions& options = {});
 
  private:
   std::map<std::string, VcdSignalActivity> _signal_activity_map;
@@ -113,6 +116,7 @@ class VcdReader
 // window_length 单位为 ns，窗口是从文件第一个时间戳起算的
 // [k * window_length, (k + 1) * window_length)，正好落在边界上的事件归右窗，
 // 与 PrimeTime PX time_based 波形的 cycle 定义对齐（采样点 t 覆盖 [t, t+cycle)）。
+// 活动口径由 open() 的 ActivityModelOptions 决定（峰值流程用 kTimeBased）。
 class VcdWindowReader
 {
  public:
@@ -123,7 +127,8 @@ class VcdWindowReader
   VcdWindowReader& operator=(const VcdWindowReader& other) = delete;
   VcdWindowReader& operator=(VcdWindowReader&& other) = delete;
   // function
-  bool open(const std::string& file_path, double window_length);
+  // options 默认 kAveraged；峰值（time_based）流程显式传 ActivityModel::kTimeBased。
+  bool open(const std::string& file_path, double window_length, const ActivityModelOptions& options = {});
   bool advance_window();
   const VcdWindowSignalActivity& get_window_activity() const { return _window_activity; }
 
