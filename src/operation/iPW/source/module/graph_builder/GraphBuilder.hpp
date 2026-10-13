@@ -53,6 +53,7 @@ class GraphBuilder
   bool updateEffectiveCaseValue(TimingConstraint& constraint, const std::string& pin_name, TimingCaseValue value);
   void disableCaseInsensitiveArc();
   void buildSignalPointList();
+  void buildPinOutputFlagMap();
   void normalizePinDirectionByTimingCell();
   void buildCellArcs();
   bool buildLibraryCellArcs(Instance& instance);

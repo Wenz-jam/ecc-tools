@@ -16,6 +16,8 @@
 // ***************************************************************************************
 #pragma once
 
+#include <unordered_map>
+
 #include "Arc.hpp"
 #include "Instance.hpp"
 #include "InstancePower.hpp"
@@ -54,6 +56,10 @@ class Database
   std::string& get_design_name() { return _design_name; }
   std::map<std::string, Instance>& get_instance_map() { return _instance_map; }
   std::map<std::string, Pin>& get_pin_map() { return _pin_map; }
+  // Precomputed by GraphBuilder: does the pin drive an output port of its
+  // timing cell? Power propagation probes this once per signal, so the answer
+  // is cached here instead of re-walking pin/instance/cell maps every time.
+  std::unordered_map<std::string, bool>& get_pin_is_output_map() { return _pin_is_output_map; }
   std::map<std::string, Net>& get_net_map() { return _net_map; }
   std::vector<Arc>& get_arc_list() { return _arc_list; }
   std::map<std::string, std::vector<std::size_t>>& get_outgoing_arc_list_map() { return _outgoing_arc_list_map; }
@@ -86,6 +92,7 @@ class Database
   std::string _design_name;
   std::map<std::string, Instance> _instance_map;
   std::map<std::string, Pin> _pin_map;
+  std::unordered_map<std::string, bool> _pin_is_output_map;
   std::map<std::string, Net> _net_map;
   std::vector<Arc> _arc_list;
   std::map<std::string, std::vector<std::size_t>> _outgoing_arc_list_map;

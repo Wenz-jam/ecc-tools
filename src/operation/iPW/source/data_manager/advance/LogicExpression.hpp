@@ -74,7 +74,9 @@ class LogicExpression
       return std::nullopt;
     }
     bool is_valid = true;
-    std::map<int32_t, double> static_probability_map;
+    // Reuse the memo table per thread; get_bdd_* fills it from empty on entry.
+    static thread_local std::map<int32_t, double> static_probability_map;
+    static_probability_map.clear();
     double probability = get_bdd_static_probability(
         cached_bdd.model,
         cached_bdd.root_node_idx,
@@ -92,7 +94,9 @@ class LogicExpression
       return PowerActivity();
     }
     bool is_valid = true;
-    std::map<int32_t, double> static_probability_map;
+    // Reuse the memo table per thread; get_bdd_* fills it from empty on entry.
+    static thread_local std::map<int32_t, double> static_probability_map;
+    static_probability_map.clear();
     double static_probability = get_bdd_static_probability(
         cached_bdd.model,
         cached_bdd.root_node_idx,
@@ -155,7 +159,9 @@ class LogicExpression
       }
     }
     bool is_valid = true;
-    std::map<int32_t, double> static_probability_map;
+    // Reuse the memo table per thread; get_bdd_* fills it from empty on entry.
+    static thread_local std::map<int32_t, double> static_probability_map;
+    static_probability_map.clear();
     double sensitivity_probability = get_bdd_static_probability(
         cached_bdd.model,
         target_node_idx,

@@ -258,12 +258,10 @@ int getLibraries(ClientData, Tcl_Interp* interp, int objc, Tcl_Obj* const objv[]
     return TCL_ERROR;
   }
   const char* pattern = objc == 2 ? Tcl_GetString(objv[1]) : "*";
-  std::set<std::string> library_name_set;
-  for (std::pair<const std::string, TimingCell>& cell_pair : PWDM.getDatabase().get_timing_library().get_cell_map()) {
-    library_name_set.insert(cell_pair.second.get_library_name());
-  }
+  // cell_map 只装设计用到的 cell（惰性 wrap），库名从 wrap 阶段记录的列表取（已排序去重）。
+  std::vector<std::string>& library_name_list = PWDM.getDatabase().get_timing_library().get_library_name_list();
   Tcl_Obj* result = Tcl_NewListObj(0, nullptr);
-  for (const std::string& library_name : library_name_set) {
+  for (const std::string& library_name : library_name_list) {
     if (Tcl_StringMatch(library_name.c_str(), pattern) != 0) {
       Tcl_ListObjAppendElement(
           interp,
@@ -896,12 +894,14 @@ unsigned TclSetDrivingCell::exec()
 
   Database& database = PWDM.getDatabase();
   const std::string cell_name = cell_option->getStringVal();
-  std::map<std::string, TimingCell>& cell_map = database.get_timing_library().get_cell_map();
-  if (cell_name.empty() || !cell_map.contains(cell_name)) {
+  // 惰性 wrap 只覆盖设计实例用到的 cell；SDC 引用的其它库 cell 在这里按需 wrap。
+  TimingCell* timing_cell_ptr
+      = cell_name.empty() ? nullptr : database.get_timing_library().findOrWrapCell(cell_name);
+  if (timing_cell_ptr == nullptr) {
     setTclError("set_driving_cell library cell does not exist: " + cell_name);
     return 0;
   }
-  TimingCell& timing_cell = cell_map.at(cell_name);
+  TimingCell& timing_cell = *timing_cell_ptr;
 
   ecc::TclOption* library_option = getOptionOrArg("-library");
   if (library_option->is_set_val() && timing_cell.get_library_name() != library_option->getStringVal()) {

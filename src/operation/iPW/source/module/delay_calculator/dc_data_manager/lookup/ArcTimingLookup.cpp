@@ -391,11 +391,12 @@ double ArcTimingLookup::calcTimingArcDelayByLoad(
     double output_load
 )
 {
-  if (timing_arc.get_delay_table_map().count(output_trans_type) == 0) {
+  auto delay_table_iter = timing_arc.get_delay_table_map().find(output_trans_type);
+  if (delay_table_iter == timing_arc.get_delay_table_map().end()) {
     return 0.0;
   }
   double converted_output_load = convertOutputLoad(timing_arc, output_load);
-  double delay = timing_arc.get_delay_table_map()[output_trans_type].findValue(
+  double delay = delay_table_iter->second.findValue(
       input_slew * timing_arc.get_time_unit_scale(),
       converted_output_load
   );
@@ -409,11 +410,12 @@ double ArcTimingLookup::calcTimingArcSlewByLoad(
     double output_load
 )
 {
-  if (timing_arc.get_slew_table_map().count(output_trans_type) == 0) {
+  auto slew_table_iter = timing_arc.get_slew_table_map().find(output_trans_type);
+  if (slew_table_iter == timing_arc.get_slew_table_map().end()) {
     return input_slew;
   }
   double converted_output_load = convertOutputLoad(timing_arc, output_load);
-  double slew = timing_arc.get_slew_table_map()[output_trans_type].findValue(
+  double slew = slew_table_iter->second.findValue(
       input_slew * timing_arc.get_time_unit_scale(),
       converted_output_load
   );
@@ -423,7 +425,7 @@ double ArcTimingLookup::calcTimingArcSlewByLoad(
 double ArcTimingLookup::calcNetArcSlew(Arc& arc, AnalysisType analysis_type, TransType trans_type, double input_slew)
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_parasitic_net_map().count(arc.get_owner_name()) > 0) {
+  if (database.get_parasitic_net_map().find(arc.get_owner_name()) != database.get_parasitic_net_map().end()) {
     return calcParasiticSlew(arc, analysis_type, trans_type, input_slew);
   }
   return input_slew;
@@ -432,7 +434,11 @@ double ArcTimingLookup::calcNetArcSlew(Arc& arc, AnalysisType analysis_type, Tra
 double ArcTimingLookup::calcParasiticSlew(Arc& arc, AnalysisType analysis_type, TransType trans_type, double input_slew)
 {
   Database& database = PWDM.getDatabase();
-  ParasiticNet& parasitic_net = database.get_parasitic_net_map()[arc.get_owner_name()];
+  auto parasitic_net_iter = database.get_parasitic_net_map().find(arc.get_owner_name());
+  if (parasitic_net_iter == database.get_parasitic_net_map().end()) {
+    return input_slew;
+  }
+  ParasiticNet& parasitic_net = parasitic_net_iter->second;
   std::string source_node_name = getParasiticNodeName(parasitic_net, arc.get_source_pin());
   std::string sink_node_name = getParasiticNodeName(parasitic_net, arc.get_sink_pin());
   if (source_node_name.empty() || sink_node_name.empty()) {

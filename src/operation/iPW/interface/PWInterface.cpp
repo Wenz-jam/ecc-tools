@@ -16,7 +16,9 @@
 // ***************************************************************************************
 #include "PWInterface.hpp"
 
+#include <algorithm>
 #include <cassert>
+#include <unordered_set>
 
 #ifdef __GLIBC__
 #include <malloc.h>
@@ -479,6 +481,21 @@ void PWInterface::wrapTimingLibrary()
   }
   wrapTimingCellMap(lib_list);
   wrapTimingLibraryInfo(lib_list);
+  // 记忆库列表 + 注册按需 wrap 回调（SDC 可能引用未实例化的库 cell）。
+  _lib_list = lib_list;
+  std::vector<std::string> library_name_list;
+  for (idb::LibLibrary* lib : lib_list) {
+    if (lib != nullptr && !lib->get_cells().empty()) {
+      library_name_list.push_back(lib->get_lib_name());
+    }
+  }
+  std::sort(library_name_list.begin(), library_name_list.end());
+  library_name_list.erase(std::unique(library_name_list.begin(), library_name_list.end()), library_name_list.end());
+  TimingLibrary& timing_library = PWDM.getDatabase().get_timing_library();
+  timing_library.set_library_name_list(library_name_list);
+  timing_library.set_cell_wrap_resolver([this](const std::string& cell_name) {
+    return wrapTimingCellByName(cell_name);
+  });
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
 
@@ -486,11 +503,39 @@ void PWInterface::wrapTimingCellMap(const std::vector<idb::LibLibrary*>& lib_lis
 {
   Database& database = PWDM.getDatabase();
   database.get_timing_library().get_cell_map().clear();
+  // 3 个库共上千个 cell，设计通常只用其中几十~几百个；只 wrap 实例真正用到的
+  // cell，其余（多数）直接跳过，避免为每个 case 白做大量转换。
+  std::unordered_set<std::string> used_cell_name_set;
+  used_cell_name_set.reserve(database.get_instance_map().size());
+  for (std::pair<const std::string, Instance>& instance_pair : database.get_instance_map()) {
+    used_cell_name_set.insert(instance_pair.second.get_cell_name());
+  }
   for (idb::LibLibrary* lib : lib_list) {
     for (std::unique_ptr<idb::LibCell>& lib_cell : lib->get_cells()) {
+      if (used_cell_name_set.find(lib_cell->get_cell_name()) == used_cell_name_set.end()) {
+        continue;
+      }
       wrapTimingCell(lib_cell.get());
     }
   }
+}
+
+bool PWInterface::wrapTimingCellByName(const std::string& cell_name)
+{
+  Database& database = PWDM.getDatabase();
+  TimingLibrary& timing_library = database.get_timing_library();
+  if (timing_library.get_cell_map().count(cell_name) > 0) {
+    return true;
+  }
+  // 只在 SDC 解析等单线程阶段被调用（峰值窗口并行时不会新增 wrap）。
+  for (idb::LibLibrary* lib : _lib_list) {
+    idb::LibCell* lib_cell = lib->findCell(cell_name.c_str());
+    if (lib_cell != nullptr) {
+      wrapTimingCell(lib_cell);
+      return true;
+    }
+  }
+  return false;
 }
 
 void PWInterface::wrapTimingLibraryInfo(const std::vector<idb::LibLibrary*>& lib_list)

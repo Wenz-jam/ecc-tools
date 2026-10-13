@@ -102,6 +102,10 @@ void PowerAnalyzer::initPowerSummary()
 
 InstancePower PowerAnalyzer::analyzeInstancePower(Instance& instance, PAInstanceModel& pa_instance_model)
 {
+  // Build the per-instance port activity cache once, so the per-arc
+  // getPortActivity() calls below hit the map instead of rebuilding
+  // "<instance>:<port>" names and re-walking the pin database.
+  getPortActivityMap(instance, pa_instance_model);
   InstancePower instance_power;
   instance_power.set_power_group_type(getPowerGroupType(instance));
   instance_power.set_voltage(getInstanceVoltage(instance));
@@ -125,10 +129,11 @@ void PowerAnalyzer::analyzeInternalPower(
 )
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) == 0) {
+  auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
+  if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
     return;
   }
-  TimingCell& timing_cell = database.get_timing_library().get_cell_map()[instance.get_cell_name()];
+  TimingCell& timing_cell = timing_cell_iter->second;
   buildOutputTimingPowerArcWeightMap(instance, timing_cell, pa_instance_model);
   for (TimingPowerArc& timing_power_arc : timing_cell.get_power_arc_list()) {
     double internal_power = getTimingPowerArcPower(instance, timing_power_arc, pa_instance_model);
@@ -288,10 +293,11 @@ double PowerAnalyzer::getOutputTimingPowerArcConditionProbability(
 )
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) == 0) {
+  auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
+  if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
     return 0.0;
   }
-  TimingCell& timing_cell = database.get_timing_library().get_cell_map()[instance.get_cell_name()];
+  TimingCell& timing_cell = timing_cell_iter->second;
   auto output_port_iter = timing_cell.get_port_map().find(timing_power_arc.get_sink_port());
   if (output_port_iter == timing_cell.get_port_map().end()) {
     return 0.0;
@@ -342,12 +348,13 @@ double PowerAnalyzer::getTimingPowerArcEnergy(
     TransType trans_type
 )
 {
-  if (timing_power_arc.get_energy_table_map().count(trans_type) == 0) {
+  auto energy_table_iter = timing_power_arc.get_energy_table_map().find(trans_type);
+  if (energy_table_iter == timing_power_arc.get_energy_table_map().end()) {
     return 0.0;
   }
   double input_slew = getTimingPowerArcInputSlew(instance, timing_power_arc, trans_type);
   double output_load = getTimingPowerArcOutputLoad(instance, timing_power_arc, trans_type);
-  TimingTable& energy_table = timing_power_arc.get_energy_table_map()[trans_type];
+  TimingTable& energy_table = energy_table_iter->second;
   return energy_table.findValue(
       input_slew * timing_power_arc.get_time_unit_scale(),
       output_load * timing_power_arc.get_cap_unit_scale()
@@ -381,10 +388,11 @@ double PowerAnalyzer::getTimingPowerArcInputSlew(
 TimingArcSense PowerAnalyzer::getTimingPowerArcSense(Instance& instance, TimingPowerArc& timing_power_arc)
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) == 0) {
+  auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
+  if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
     return TimingArcSense::kNone;
   }
-  TimingCell& timing_cell = database.get_timing_library().get_cell_map()[instance.get_cell_name()];
+  TimingCell& timing_cell = timing_cell_iter->second;
   for (TimingCellArc& timing_cell_arc : timing_cell.get_cell_arc_list()) {
     if (timing_cell_arc.get_source_port() != timing_power_arc.get_source_port()
         || timing_cell_arc.get_sink_port() != timing_power_arc.get_sink_port()) {
@@ -478,10 +486,11 @@ void PowerAnalyzer::analyzeSwitchingPower(
 )
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) == 0) {
+  auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
+  if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
     return;
   }
-  TimingCell& timing_cell = database.get_timing_library().get_cell_map()[instance.get_cell_name()];
+  TimingCell& timing_cell = timing_cell_iter->second;
   double voltage = getInstanceVoltage(instance);
   for (std::pair<const std::string, TimingCellPort>& port_pair : timing_cell.get_port_map()) {
     TimingCellPort& timing_cell_port = port_pair.second;
@@ -533,10 +542,11 @@ void PowerAnalyzer::recordNetPower(
 void PowerAnalyzer::analyzeLeakagePower(Instance& instance, PowerValue& power_value, PAInstanceModel& pa_instance_model)
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) == 0) {
+  auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
+  if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
     return;
   }
-  TimingCell& timing_cell = database.get_timing_library().get_cell_map()[instance.get_cell_name()];
+  TimingCell& timing_cell = timing_cell_iter->second;
   if (timing_cell.get_leakage_power_list().empty()) {
     power_value.add_leakage_power(timing_cell.get_cell_leakage_power());
     return;
@@ -602,11 +612,12 @@ std::map<std::string, PowerActivity>& PowerAnalyzer::getPortActivityMap(
   }
 
   Database& database = PWDM.getDatabase();
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) == 0) {
+  auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
+  if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
     pa_instance_model.set_is_port_activity_map_built(true);
     return port_activity_map;
   }
-  TimingCell& timing_cell = database.get_timing_library().get_cell_map()[instance.get_cell_name()];
+  TimingCell& timing_cell = timing_cell_iter->second;
   for (std::pair<const std::string, TimingCellPort>& port_pair : timing_cell.get_port_map()) {
     std::string pin_name = instance.get_instance_name() + ":" + port_pair.first;
     port_activity_map[port_pair.first] = getPinActivity(pin_name);
@@ -654,8 +665,9 @@ double PowerAnalyzer::getPinSlew(const std::string& pin_name, TransType trans_ty
 double PowerAnalyzer::getInstanceVoltage(Instance& instance)
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) > 0) {
-    double voltage = database.get_timing_library().get_cell_map()[instance.get_cell_name()].get_nom_voltage();
+  auto cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
+  if (cell_iter != database.get_timing_library().get_cell_map().end()) {
+    double voltage = cell_iter->second.get_nom_voltage();
     if (voltage > PW_ERROR) {
       return voltage;
     }
@@ -672,10 +684,11 @@ PowerGroupType PowerAnalyzer::getPowerGroupType(Instance& instance)
   if (instance.get_is_io_cell()) {
     return PowerGroupType::kIOPad;
   }
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) == 0) {
+  auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
+  if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
     return PowerGroupType::kBlackBox;
   }
-  TimingCell& timing_cell = database.get_timing_library().get_cell_map()[instance.get_cell_name()];
+  TimingCell& timing_cell = timing_cell_iter->second;
   if (timing_cell.get_is_macro()) {
     return PowerGroupType::kMemory;
   }
@@ -717,16 +730,17 @@ bool PowerAnalyzer::isClockNetwork(Instance& instance)
   Database& database = PWDM.getDatabase();
   bool has_output_pin = false;
   for (std::string& pin_name : instance.get_pin_name_list()) {
-    if (database.get_pin_map().count(pin_name) == 0) {
+    auto pin_iter = database.get_pin_map().find(pin_name);
+    if (pin_iter == database.get_pin_map().end()) {
       continue;
     }
-    Pin& pin = database.get_pin_map()[pin_name];
+    Pin& pin = pin_iter->second;
     if (pin.get_direction() != PinDirection::kOutput && pin.get_direction() != PinDirection::kInout) {
       continue;
     }
     has_output_pin = true;
-    if (database.get_timing_point_map().count(pin_name) == 0
-        || !database.get_timing_point_map()[pin_name].get_is_clock_point()) {
+    auto point_iter = database.get_timing_point_map().find(pin_name);
+    if (point_iter == database.get_timing_point_map().end() || !point_iter->second.get_is_clock_point()) {
       return false;
     }
   }

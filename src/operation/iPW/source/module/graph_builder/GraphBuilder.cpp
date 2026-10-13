@@ -66,6 +66,7 @@ void GraphBuilder::build()
   // so we can save the full graph scan
   breakLoopArcList();
   buildSignalOrder();
+  buildPinOutputFlagMap();
   applyCaseAnalysis();
   printLoopInfo();
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
@@ -247,6 +248,33 @@ void GraphBuilder::disableCaseInsensitiveArc()
 // private
 
 GraphBuilder* GraphBuilder::_gb_instance = nullptr;
+
+// Mirrors PowerPropagator::isOutputPin(): the flag only depends on the input
+// database, so it is computed once here and read as a hash lookup in the
+// propagation loop (which runs per signal, and per window in the peak flow).
+void GraphBuilder::buildPinOutputFlagMap()
+{
+  Database& database = PWDM.getDatabase();
+  std::unordered_map<std::string, bool>& pin_is_output_map = database.get_pin_is_output_map();
+  pin_is_output_map.clear();
+  pin_is_output_map.reserve(database.get_pin_map().size());
+  for (std::pair<const std::string, Pin>& pin_pair : database.get_pin_map()) {
+    Pin& pin = pin_pair.second;
+    bool is_output_pin = false;
+    if (!pin.get_is_port()) {
+      auto instance_iter = database.get_instance_map().find(pin.get_instance_name());
+      if (instance_iter != database.get_instance_map().end()) {
+        auto cell_iter = database.get_timing_library().get_cell_map().find(instance_iter->second.get_cell_name());
+        if (cell_iter != database.get_timing_library().get_cell_map().end()) {
+          auto port_iter = cell_iter->second.get_port_map().find(pin.get_pin_name());
+          is_output_pin
+              = port_iter != cell_iter->second.get_port_map().end() && port_iter->second.get_is_output();
+        }
+      }
+    }
+    pin_is_output_map.emplace(pin_pair.first, is_output_pin);
+  }
+}
 
 void GraphBuilder::buildSignalPointList()
 {

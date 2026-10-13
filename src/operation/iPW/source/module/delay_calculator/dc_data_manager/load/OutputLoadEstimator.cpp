@@ -39,31 +39,42 @@ namespace ipw {
 double getPinCapacitance(std::string& pin_name, AnalysisType analysis_type, TransType trans_type)
 {
   Database& database = PWDM.getDatabase();
-  Pin& pin = database.get_pin_map()[pin_name];
+  auto pin_iter = database.get_pin_map().find(pin_name);
+  if (pin_iter == database.get_pin_map().end()) {
+    return 0.0;
+  }
+  Pin& pin = pin_iter->second;
   if (pin.get_is_port()) {
     std::map<std::string, TimingPortConstraint>& port_constraint_map
         = database.get_timing_constraint().get_port_constraint_map();
-    if (port_constraint_map.count(pin_name) > 0 && port_constraint_map[pin_name].get_has_load()) {
-      return port_constraint_map[pin_name].get_load(analysis_type, trans_type);
+    auto port_constraint_iter = port_constraint_map.find(pin_name);
+    if (port_constraint_iter != port_constraint_map.end() && port_constraint_iter->second.get_has_load()) {
+      return port_constraint_iter->second.get_load(analysis_type, trans_type);
     }
     return 0.0;
   }
-  if (database.get_instance_map().count(pin.get_instance_name()) == 0) {
+  auto instance_iter = database.get_instance_map().find(pin.get_instance_name());
+  if (instance_iter == database.get_instance_map().end()) {
     return 0.0;
   }
-  Instance& instance = database.get_instance_map()[pin.get_instance_name()];
+  Instance& instance = instance_iter->second;
   std::map<std::string, TimingCell>& timing_cell_map = database.get_timing_library().get_cell_map();
-  if (timing_cell_map.count(instance.get_cell_name()) == 0) {
+  auto timing_cell_iter = timing_cell_map.find(instance.get_cell_name());
+  if (timing_cell_iter == timing_cell_map.end()) {
     return 0.0;
   }
-  TimingCell& timing_cell = timing_cell_map[instance.get_cell_name()];
-  if (timing_cell.get_port_map().count(pin.get_pin_name()) == 0) {
+  TimingCell& timing_cell = timing_cell_iter->second;
+  auto port_iter = timing_cell.get_port_map().find(pin.get_pin_name());
+  if (port_iter == timing_cell.get_port_map().end()) {
     return 0.0;
   }
-  TimingCellPort& timing_cell_port = timing_cell.get_port_map()[pin.get_pin_name()];
-  if (timing_cell_port.get_trans_capacitance_map().count(analysis_type) > 0
-      && timing_cell_port.get_trans_capacitance_map()[analysis_type].count(trans_type) > 0) {
-    return timing_cell_port.get_trans_capacitance_map()[analysis_type][trans_type];
+  TimingCellPort& timing_cell_port = port_iter->second;
+  auto capacitance_iter = timing_cell_port.get_trans_capacitance_map().find(analysis_type);
+  if (capacitance_iter != timing_cell_port.get_trans_capacitance_map().end()) {
+    auto trans_iter = capacitance_iter->second.find(trans_type);
+    if (trans_iter != capacitance_iter->second.end()) {
+      return trans_iter->second;
+    }
   }
   return timing_cell_port.get_capacitance();
 }
@@ -75,16 +86,16 @@ double getParasiticNodeLoad(
     TransType trans_type
 )
 {
-  Database& database = PWDM.getDatabase();
   double node_load = 0.0;
-  if (parasitic_net.get_node_capacitance_map().count(node_name) > 0) {
-    node_load += parasitic_net.get_node_capacitance_map()[node_name];
+  auto capacitance_iter = parasitic_net.get_node_capacitance_map().find(node_name);
+  if (capacitance_iter != parasitic_net.get_node_capacitance_map().end()) {
+    node_load += capacitance_iter->second;
   }
 
+  // getPinCapacitance() returns 0.0 for unknown pins, so the former pin_map
+  // membership probe here was a third lookup of the same key.
   std::string pin_name = getPinNameByParasiticNodeName(node_name);
-  if (database.get_pin_map().count(pin_name) > 0) {
-    node_load += getPinCapacitance(pin_name, analysis_type, trans_type);
-  }
+  node_load += getPinCapacitance(pin_name, analysis_type, trans_type);
   return node_load;
 }
 
@@ -92,28 +103,38 @@ double getArcOutputLoad(Arc& arc, AnalysisType analysis_type, TransType output_t
 {
   Database& database = PWDM.getDatabase();
   std::string& sink_pin_name = arc.get_sink_pin();
-  if (database.get_pin_map().count(sink_pin_name) == 0) {
+  auto sink_pin_iter = database.get_pin_map().find(sink_pin_name);
+  if (sink_pin_iter == database.get_pin_map().end()) {
     return 0.0;
   }
-  Pin& sink_pin = database.get_pin_map()[sink_pin_name];
-  if (sink_pin.get_net_name().empty() || database.get_net_map().count(sink_pin.get_net_name()) == 0) {
+  Pin& sink_pin = sink_pin_iter->second;
+  if (sink_pin.get_net_name().empty()) {
     return 0.0;
   }
-  Net& net = database.get_net_map()[sink_pin.get_net_name()];
+  auto net_iter = database.get_net_map().find(sink_pin.get_net_name());
+  if (net_iter == database.get_net_map().end()) {
+    return 0.0;
+  }
+  Net& net = net_iter->second;
   return getNetOutputLoad(sink_pin.get_net_name(), net, analysis_type, output_trans_type);
 }
 
 double getOutputPinLoad(std::string& output_pin, AnalysisType analysis_type, TransType output_trans_type)
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_pin_map().count(output_pin) == 0) {
+  auto pin_iter = database.get_pin_map().find(output_pin);
+  if (pin_iter == database.get_pin_map().end()) {
     return 0.0;
   }
-  Pin& pin = database.get_pin_map()[output_pin];
-  if (pin.get_net_name().empty() || database.get_net_map().count(pin.get_net_name()) == 0) {
+  Pin& pin = pin_iter->second;
+  if (pin.get_net_name().empty()) {
     return 0.0;
   }
-  Net& net = database.get_net_map()[pin.get_net_name()];
+  auto net_iter = database.get_net_map().find(pin.get_net_name());
+  if (net_iter == database.get_net_map().end()) {
+    return 0.0;
+  }
+  Net& net = net_iter->second;
   return getNetOutputLoad(pin.get_net_name(), net, analysis_type, output_trans_type);
 }
 
@@ -130,8 +151,9 @@ double getNetOutputLoad(const std::string& net_name, Net& net, AnalysisType anal
   }
 
   double output_load = 0.0;
-  if (database.get_parasitic_net_map().count(net_name) > 0) {
-    ParasiticNet& parasitic_net = database.get_parasitic_net_map()[net_name];
+  auto parasitic_net_iter = database.get_parasitic_net_map().find(net_name);
+  if (parasitic_net_iter != database.get_parasitic_net_map().end()) {
+    ParasiticNet& parasitic_net = parasitic_net_iter->second;
     output_load = getParasiticNetOutputLoad(net, parasitic_net, analysis_type, output_trans_type);
   } else {
     for (std::string& load_pin_name : net.get_load_pin_list()) {

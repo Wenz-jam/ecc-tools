@@ -16,6 +16,7 @@
 #include "PowerPropagator.hpp"
 
 #include <bit>
+#include <cstdint>
 #include <cstdlib>
 
 #include "DataManager.hpp"
@@ -216,12 +217,16 @@ bool PowerPropagator::annotateVcdSignal(const std::string& vcd_signal_name, Powe
 {
   Database& database = PWDM.getDatabase();
   std::string net_name = wrapVcdPinName(vcd_signal_name);
-  if (net_name.empty() || database.get_net_map().count(net_name) == 0) {
+  if (net_name.empty()) {
+    return false;
+  }
+  auto net_iter = database.get_net_map().find(net_name);
+  if (net_iter == database.get_net_map().end()) {
     return false;
   }
   activity.set_origin(PowerActivityOrigin::kVcd);
   activity.set_is_valid(true);
-  for (std::string& pin_name : database.get_net_map()[net_name].get_pin_name_list()) {
+  for (std::string& pin_name : net_iter->second.get_pin_name_list()) {
     database.get_vcd_activity_map()[pin_name] = activity;
   }
   return true;
@@ -230,7 +235,12 @@ bool PowerPropagator::annotateVcdSignal(const std::string& vcd_signal_name, Powe
 std::string PowerPropagator::wrapVcdPinName(const std::string& vcd_signal_name)
 {
   Database& database = PWDM.getDatabase();
-  std::string top_scope_path = database.get_design_name() + "/";
+  // The design-scope prefix never changes during a run: build it once per thread
+  // instead of concatenating it for every signal of every window.
+  static thread_local std::string top_scope_path;
+  if (top_scope_path.empty()) {
+    top_scope_path = database.get_design_name() + "/";
+  }
   std::size_t top_scope_pos = vcd_signal_name.find(top_scope_path);
   if (top_scope_pos == std::string::npos || (top_scope_pos != 0 && vcd_signal_name[top_scope_pos - 1] != '/')) {
     return "";
@@ -244,11 +254,12 @@ bool PowerPropagator::setPinActivity(std::string& pin_name, PowerActivity& activ
 {
   Database& database = PWDM.getDatabase();
   limitTransitionDensity(pin_name, activity);
-  if (database.get_power_activity_map().count(pin_name) == 0) {
-    database.get_power_activity_map()[pin_name] = activity;
+  auto [activity_iter, is_inserted] = database.get_power_activity_map().try_emplace(pin_name);
+  if (is_inserted) {
+    activity_iter->second = activity;
     return true;
   }
-  PowerActivity& current_activity = database.get_power_activity_map()[pin_name];
+  PowerActivity& current_activity = activity_iter->second;
   if (getActivityPriority(current_activity.get_origin()) > getActivityPriority(activity.get_origin())) {
     return false;
   }
@@ -278,10 +289,11 @@ void PowerPropagator::limitTransitionDensity(std::string& pin_name, PowerActivit
 double PowerPropagator::getMinimumSlew(std::string& pin_name)
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_timing_point_map().count(pin_name) == 0) {
+  auto timing_point_iter = database.get_timing_point_map().find(pin_name);
+  if (timing_point_iter == database.get_timing_point_map().end()) {
     return 0.0;
   }
-  TimingPoint& timing_point = database.get_timing_point_map()[pin_name];
+  TimingPoint& timing_point = timing_point_iter->second;
   double data_minimum_slew = getMinimumSlew(timing_point.get_data_slew_map());
   double clock_minimum_slew = getMinimumSlew(timing_point.get_clock_slew_map());
   if (data_minimum_slew <= PW_ERROR) {
@@ -297,11 +309,16 @@ double PowerPropagator::getMinimumSlew(std::map<AnalysisType, std::map<TransType
 {
   double minimum_slew = std::numeric_limits<double>::infinity();
   for (AnalysisType analysis_type : {AnalysisType::kMax, AnalysisType::kMin}) {
-    if (slew_map.count(analysis_type) == 0 || slew_map[analysis_type].count(TransType::kRise) == 0
-        || slew_map[analysis_type].count(TransType::kFall) == 0) {
+    auto analysis_iter = slew_map.find(analysis_type);
+    if (analysis_iter == slew_map.end()) {
       continue;
     }
-    double average_slew = (slew_map[analysis_type][TransType::kRise] + slew_map[analysis_type][TransType::kFall]) / 2.0;
+    auto rise_iter = analysis_iter->second.find(TransType::kRise);
+    auto fall_iter = analysis_iter->second.find(TransType::kFall);
+    if (rise_iter == analysis_iter->second.end() || fall_iter == analysis_iter->second.end()) {
+      continue;
+    }
+    double average_slew = (rise_iter->second + fall_iter->second) / 2.0;
     if (average_slew > PW_ERROR) {
       minimum_slew = std::min(minimum_slew, average_slew);
     }
@@ -515,9 +532,13 @@ PowerActivity PowerPropagator::getPropagatedActivity(PowerActivity source_activi
 void PowerPropagator::propagateOutputActivity(std::string& pin_name, PPModel& pp_model)
 {
   Database& database = PWDM.getDatabase();
-  Pin& pin = database.get_pin_map()[pin_name];
-  if (database.get_instance_map().count(pin.get_instance_name()) > 0
-      && isSequentialForPower(database.get_instance_map()[pin.get_instance_name()])) {
+  auto pin_iter = database.get_pin_map().find(pin_name);
+  if (pin_iter == database.get_pin_map().end()) {
+    return;
+  }
+  Pin& pin = pin_iter->second;
+  auto instance_iter = database.get_instance_map().find(pin.get_instance_name());
+  if (instance_iter != database.get_instance_map().end() && isSequentialForPower(instance_iter->second)) {
     return;
   }
   PowerActivity activity = getOutputActivity(pin_name, pp_model);
@@ -529,22 +550,26 @@ void PowerPropagator::propagateOutputActivity(std::string& pin_name, PPModel& pp
 PowerActivity PowerPropagator::getOutputActivity(std::string& pin_name, PPModel& pp_model)
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_pin_map().count(pin_name) == 0) {
+  auto pin_iter = database.get_pin_map().find(pin_name);
+  if (pin_iter == database.get_pin_map().end()) {
     return PowerActivity();
   }
-  Pin& pin = database.get_pin_map()[pin_name];
-  if (database.get_instance_map().count(pin.get_instance_name()) == 0) {
+  Pin& pin = pin_iter->second;
+  auto instance_iter = database.get_instance_map().find(pin.get_instance_name());
+  if (instance_iter == database.get_instance_map().end()) {
     return getFallbackInputActivity(pin_name);
   }
-  Instance& instance = database.get_instance_map()[pin.get_instance_name()];
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) == 0) {
+  Instance& instance = instance_iter->second;
+  auto cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
+  if (cell_iter == database.get_timing_library().get_cell_map().end()) {
     return getFallbackInputActivity(pin_name);
   }
-  TimingCell& timing_cell = database.get_timing_library().get_cell_map()[instance.get_cell_name()];
-  if (timing_cell.get_port_map().count(pin.get_pin_name()) == 0) {
+  TimingCell& timing_cell = cell_iter->second;
+  auto port_iter = timing_cell.get_port_map().find(pin.get_pin_name());
+  if (port_iter == timing_cell.get_port_map().end()) {
     return getFallbackInputActivity(pin_name);
   }
-  TimingCellPort& timing_cell_port = timing_cell.get_port_map()[pin.get_pin_name()];
+  TimingCellPort& timing_cell_port = port_iter->second;
   if (!timing_cell_port.get_function_expression().get_is_empty()) {
     std::map<std::string, PowerActivity> input_activity_map = getInputActivityMap(instance);
     PowerActivity activity = timing_cell_port.get_function_expression().evaluate_activity(input_activity_map);
@@ -854,20 +879,31 @@ PowerActivity PowerPropagator::getPinActivity(std::string& pin_name)
 bool PowerPropagator::isOutputPin(std::string& pin_name)
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_pin_map().count(pin_name) == 0) {
+  // Fast path: GraphBuilder precomputed the flag for every pin.
+  const std::unordered_map<std::string, bool>& pin_is_output_map = database.get_pin_is_output_map();
+  if (!pin_is_output_map.empty()) {
+    auto is_output_pin_iter = pin_is_output_map.find(pin_name);
+    return is_output_pin_iter != pin_is_output_map.end() && is_output_pin_iter->second;
+  }
+  auto pin_iter = database.get_pin_map().find(pin_name);
+  if (pin_iter == database.get_pin_map().end()) {
     return false;
   }
-  Pin& pin = database.get_pin_map()[pin_name];
-  if (pin.get_is_port() || database.get_instance_map().count(pin.get_instance_name()) == 0) {
+  Pin& pin = pin_iter->second;
+  if (pin.get_is_port()) {
     return false;
   }
-  Instance& instance = database.get_instance_map()[pin.get_instance_name()];
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) == 0) {
+  auto instance_iter = database.get_instance_map().find(pin.get_instance_name());
+  if (instance_iter == database.get_instance_map().end()) {
     return false;
   }
-  TimingCell& timing_cell = database.get_timing_library().get_cell_map()[instance.get_cell_name()];
-  return timing_cell.get_port_map().count(pin.get_pin_name()) > 0
-         && timing_cell.get_port_map()[pin.get_pin_name()].get_is_output();
+  auto cell_iter = database.get_timing_library().get_cell_map().find(instance_iter->second.get_cell_name());
+  if (cell_iter == database.get_timing_library().get_cell_map().end()) {
+    return false;
+  }
+  TimingCell& timing_cell = cell_iter->second;
+  auto port_iter = timing_cell.get_port_map().find(pin.get_pin_name());
+  return port_iter != timing_cell.get_port_map().end() && port_iter->second.get_is_output();
 }
 
 bool PowerPropagator::isClockSource(std::string& pin_name)
@@ -943,6 +979,11 @@ class Simulator
   Word randomWord();
   Word randomMask(double probability);
   Word randomSubset(Word available, int count);
+  // Case-analysis constants: -1 = not constant, 0/1 = constant value. A flat
+  // vector indexed by node id replaces the former std::map lookups in settle().
+  void setConstant(std::size_t id, bool value);
+  bool isConstant(std::size_t id) const { return id < _constants.size() && _constants[id] >= 0; }
+  bool getConstantValue(std::size_t id) const { return _constants[id] != 0; }
 
   Database& _database;
   double _period, _step;
@@ -956,9 +997,17 @@ class Simulator
   std::vector<Sequential> _sequentials;
   std::vector<Word> _next_state;
   std::vector<Root> _roots;
-  std::map<std::size_t, bool> _constants;
+  std::vector<std::int8_t> _constants;
   uint64_t _random_state = 0x4d595df4d0f33173ULL;
 };
+
+void Simulator::setConstant(std::size_t id, bool value)
+{
+  if (_constants.size() <= id) {
+    _constants.resize(id + 1, -1);
+  }
+  _constants[id] = value ? 1 : 0;
+}
 
 std::size_t Simulator::node(const std::string& name)
 {
@@ -1179,7 +1228,7 @@ bool Simulator::build()
     if (pin == _pin_nodes.end())
       continue;
     const bool constant = value == TimingCaseValue::kOne;
-    _constants[pin->second] = constant;
+    setConstant(pin->second, constant);
     PowerActivity activity;
     activity.set_is_valid(true);
     activity.set_static_probability(constant ? 1.0 : 0.0);
@@ -1214,7 +1263,7 @@ bool Simulator::build()
         activity.set_fall_transition_density(rise);
       }
       auto existing = root_activity.find(gate.output);
-      if (_constants.count(gate.output)
+      if (isConstant(gate.output)
           || (existing != root_activity.end() && existing->second.get_origin() == PowerActivityOrigin::kClock))
         activity = existing->second;
       root_activity[gate.output] = activity;
@@ -1302,12 +1351,14 @@ void Simulator::orderGates()
 
 void Simulator::settle()
 {
-  for (auto& [id, value] : _constants)
-    _values[id] = value ? kOnes : 0;
+  for (std::size_t id = 0; id < _constants.size() && id < _values.size(); id++) {
+    if (_constants[id] >= 0) {
+      _values[id] = _constants[id] ? kOnes : 0;
+    }
+  }
   for (auto idx : _gate_order) {
     auto& gate = _gates[idx];
-    auto constant = _constants.find(gate.output);
-    _values[gate.output] = constant == _constants.end() ? evaluate(gate.function) : (constant->second ? kOnes : 0);
+    _values[gate.output] = isConstant(gate.output) ? (getConstantValue(gate.output) ? kOnes : 0) : evaluate(gate.function);
   }
 }
 
@@ -1495,8 +1546,8 @@ bool Simulator::run()
     activity.set_origin(PowerActivityOrigin::kPropagated);
     if (annotated.count(id))
       activity = annotated[id];
-    if (_constants.count(id)) {
-      activity.set_static_probability(_constants[id] ? 1.0 : 0.0);
+    if (isConstant(id)) {
+      activity.set_static_probability(getConstantValue(id) ? 1.0 : 0.0);
       activity.set_transition_density(0.0);
       activity.set_origin(PowerActivityOrigin::kConstant);
     }

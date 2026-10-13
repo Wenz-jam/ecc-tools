@@ -130,6 +130,10 @@ class PWInterface
   void wrapNetToDatabase(const std::string& net_name, Net& net);
   void wrapTimingLibrary();
   void wrapTimingCellMap(const std::vector<idb::LibLibrary*>& lib_list);
+  // 按需 wrap 一个库 cell（惰性 wrap 的兜底路径，供 SDC 命令使用）。
+  bool wrapTimingCellByName(const std::string& cell_name);
+  // 最近一次 wrapTimingLibrary 用到的库列表，供按需 wrap 反查。
+  std::vector<idb::LibLibrary*> _lib_list;
   void wrapTimingLibraryInfo(const std::vector<idb::LibLibrary*>& lib_list);
   idb::LibLibrary* wrapReferenceLib(const std::vector<idb::LibLibrary*>& lib_list);
   void wrapTimingCell(idb::LibCell* lib_cell);
