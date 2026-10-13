@@ -52,6 +52,7 @@ class Arc
   void set_is_disable_arc(const bool is_disable_arc) { _is_disable_arc = is_disable_arc; }
   void set_is_case_analysis_disable(const bool value) { _is_case_analysis_disable = value; }
   void set_is_loop_disable(const bool is_loop_disable) { _is_loop_disable = is_loop_disable; }
+
  private:
   std::string _source_pin;
   std::string _sink_pin;

@@ -122,7 +122,8 @@ void SignalPropagator::seedSignalSlew(std::string& source_pin, AnalysisType anal
   }
   TimingPoint& timing_point = database.get_timing_point_map()[source_pin];
   if (isSequentialClockPin(source_pin) && hasIncomingPhysicalSlewArc(source_pin)
-      && (timing_point.get_clock_slew_map().count(analysis_type) == 0 || timing_point.get_clock_slew_map()[analysis_type].count(trans_type) == 0)) {
+      && (timing_point.get_clock_slew_map().count(analysis_type) == 0
+          || timing_point.get_clock_slew_map()[analysis_type].count(trans_type) == 0)) {
     return;
   }
   timing_point.get_data_slew_map()[analysis_type][trans_type] = getSourcePinSlew(source_pin, analysis_type, trans_type);
@@ -133,7 +134,8 @@ double SignalPropagator::getSourcePinSlew(std::string& source_pin, AnalysisType 
   Database& database = PWDM.getDatabase();
   Pin& pin = database.get_pin_map()[source_pin];
   if (pin.get_is_port()) {
-    std::map<std::string, TimingPortConstraint>& port_constraint_map = database.get_timing_constraint().get_port_constraint_map();
+    std::map<std::string, TimingPortConstraint>& port_constraint_map
+        = database.get_timing_constraint().get_port_constraint_map();
     if (port_constraint_map.count(source_pin) == 0) {
       return 0.0;
     }
@@ -177,10 +179,15 @@ double SignalPropagator::getSourcePinSlew(std::string& source_pin, AnalysisType 
   return 0.0;
 }
 
-std::optional<double> SignalPropagator::getDrivingCellSlew(std::string& source_pin, AnalysisType analysis_type, TransType trans_type)
+std::optional<double> SignalPropagator::getDrivingCellSlew(
+    std::string& source_pin,
+    AnalysisType analysis_type,
+    TransType trans_type
+)
 {
   Database& database = PWDM.getDatabase();
-  std::map<std::string, TimingPortConstraint>& port_constraint_map = database.get_timing_constraint().get_port_constraint_map();
+  std::map<std::string, TimingPortConstraint>& port_constraint_map
+      = database.get_timing_constraint().get_port_constraint_map();
   if (!port_constraint_map.contains(source_pin)) {
     return std::nullopt;
   }
@@ -197,12 +204,20 @@ std::optional<double> SignalPropagator::getDrivingCellSlew(std::string& source_p
     return std::nullopt;
   }
   for (TimingCellArc& timing_cell_arc : timing_cell.get_cell_arc_list()) {
-    if (timing_cell_arc.get_source_port() != driving_cell->get_from_pin() || timing_cell_arc.get_sink_port() != driving_cell->get_to_pin()) {
+    if (timing_cell_arc.get_source_port() != driving_cell->get_from_pin()
+        || timing_cell_arc.get_sink_port() != driving_cell->get_to_pin()) {
       continue;
     }
     double output_slew = 0.0;
-    if (PWDC.calculateDrivingCell(source_pin, timing_cell_arc, analysis_type, trans_type, driving_cell->get_input_transition_rise(),
-                                   driving_cell->get_input_transition_fall(), output_slew)) {
+    if (PWDC.calculateDrivingCell(
+            source_pin,
+            timing_cell_arc,
+            analysis_type,
+            trans_type,
+            driving_cell->get_input_transition_rise(),
+            driving_cell->get_input_transition_fall(),
+            output_slew
+        )) {
       return output_slew;
     }
   }
@@ -228,7 +243,8 @@ double SignalPropagator::getClockSlew(std::string& pin_name, AnalysisType analys
     return 0.0;
   }
   TimingPoint& timing_point = database.get_timing_point_map()[pin_name];
-  if (timing_point.get_clock_slew_map().count(analysis_type) == 0 || timing_point.get_clock_slew_map()[analysis_type].count(trans_type) == 0) {
+  if (timing_point.get_clock_slew_map().count(analysis_type) == 0
+      || timing_point.get_clock_slew_map()[analysis_type].count(trans_type) == 0) {
     return 0.0;
   }
   return timing_point.get_clock_slew_map()[analysis_type][trans_type];
@@ -255,7 +271,11 @@ void SignalPropagator::propagateSignalSlewArc(std::size_t arc_idx)
   propagateSignalSlewArc(arc_idx, AnalysisType::kMin, TransType::kFall);
 }
 
-void SignalPropagator::propagateSignalSlewArc(std::size_t arc_idx, AnalysisType analysis_type, TransType input_trans_type)
+void SignalPropagator::propagateSignalSlewArc(
+    std::size_t arc_idx,
+    AnalysisType analysis_type,
+    TransType input_trans_type
+)
 {
   Database& database = PWDM.getDatabase();
   Arc& arc = database.get_arc_list()[arc_idx];
@@ -276,8 +296,14 @@ void SignalPropagator::propagateSignalSlewArc(std::size_t arc_idx, AnalysisType 
   }
 }
 
-void SignalPropagator::updateSignalSlew(Arc& arc, TimingPoint& source_point, TimingPoint& sink_point, AnalysisType analysis_type,
-                                        TransType input_trans_type, TransType output_trans_type)
+void SignalPropagator::updateSignalSlew(
+    Arc& arc,
+    TimingPoint& source_point,
+    TimingPoint& sink_point,
+    AnalysisType analysis_type,
+    TransType input_trans_type,
+    TransType output_trans_type
+)
 {
   DCTask dc_task;
   dc_task.set_arc(&arc);
@@ -295,7 +321,12 @@ void SignalPropagator::updateSignalSlew(Arc& arc, TimingPoint& source_point, Tim
   updateSignalSlew(sink_point, analysis_type, output_trans_type, dc_task.get_output_slew());
 }
 
-void SignalPropagator::updateSignalSlew(TimingPoint& timing_point, AnalysisType analysis_type, TransType trans_type, double signal_slew)
+void SignalPropagator::updateSignalSlew(
+    TimingPoint& timing_point,
+    AnalysisType analysis_type,
+    TransType trans_type,
+    double signal_slew
+)
 {
   if (!hasSignalSlew(timing_point, analysis_type, trans_type)
       || isBetterSlew(signal_slew, timing_point.get_data_slew_map()[analysis_type][trans_type], analysis_type)) {
@@ -305,7 +336,8 @@ void SignalPropagator::updateSignalSlew(TimingPoint& timing_point, AnalysisType 
 
 bool SignalPropagator::hasSignalSlew(TimingPoint& timing_point, AnalysisType analysis_type, TransType trans_type)
 {
-  return timing_point.get_data_slew_map().count(analysis_type) > 0 && timing_point.get_data_slew_map()[analysis_type].count(trans_type) > 0;
+  return timing_point.get_data_slew_map().count(analysis_type) > 0
+         && timing_point.get_data_slew_map()[analysis_type].count(trans_type) > 0;
 }
 
 double SignalPropagator::getSignalSlew(TimingPoint& timing_point, AnalysisType analysis_type, TransType trans_type)

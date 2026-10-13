@@ -60,10 +60,19 @@ class PeakPowerEngine
   vcd::ActivityModelOptions buildActivityModelOptions() const;
   double resolveWindowLength();
   int32_t resolveThreadNum();
-  WindowWorkerResult analyzeWindows(const std::string& vcd_file_path, const double window_length, const int32_t worker_id, const int32_t worker_num,
-                                    Database::PowerWorkspace& workspace);
-  void mergeWorkerResults(const std::vector<WindowWorkerResult>& worker_result_list, const std::vector<Database::PowerWorkspace>& workspace_list,
-                          std::size_t& window_num, std::size_t& truncated_window_num);
+  WindowWorkerResult analyzeWindows(
+      const std::string& vcd_file_path,
+      const double window_length,
+      const int32_t worker_id,
+      const int32_t worker_num,
+      Database::PowerWorkspace& workspace
+  );
+  void mergeWorkerResults(
+      const std::vector<WindowWorkerResult>& worker_result_list,
+      const std::vector<Database::PowerWorkspace>& workspace_list,
+      std::size_t& window_num,
+      std::size_t& truncated_window_num
+  );
   void updatePeakPower(const vcd::VcdWindowSignalActivity& window_activity);
 };
 

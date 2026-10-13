@@ -30,26 +30,39 @@ class DCModel
   DCModel() = default;
   ~DCModel() = default;
   // getter
-  std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, double>>>>& get_parasitic_resistor_map_cache()
+  std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, double>>>>&
+  get_parasitic_resistor_map_cache()
   {
     return _parasitic_resistor_map_cache;
   }
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>& get_parasitic_load_map_cache()
+  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>&
+  get_parasitic_load_map_cache()
   {
     return _parasitic_load_map_cache;
   }
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>& get_parasitic_delay_map_cache()
+  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>&
+  get_parasitic_delay_map_cache()
   {
     return _parasitic_delay_map_cache;
   }
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>& get_parasitic_impulse_map_cache()
+  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>&
+  get_parasitic_impulse_map_cache()
   {
     return _parasitic_impulse_map_cache;
   }
   std::map<std::string, ParasiticDmpModel>& get_parasitic_dmp_model_cache() { return _parasitic_dmp_model_cache; }
-  std::map<std::string, ParasiticDelayResult>& get_parasitic_dmp_timing_result_cache() { return _parasitic_dmp_timing_result_cache; }
-  std::map<std::string, ParasiticDelayResult>& get_parasitic_dmp_driver_result_cache() { return _parasitic_dmp_driver_result_cache; }
-  std::map<ParasiticArnoldiModelKey, ParasiticArnoldiModel>& get_parasitic_arnoldi_model_cache() { return _parasitic_arnoldi_model_cache; }
+  std::map<std::string, ParasiticDelayResult>& get_parasitic_dmp_timing_result_cache()
+  {
+    return _parasitic_dmp_timing_result_cache;
+  }
+  std::map<std::string, ParasiticDelayResult>& get_parasitic_dmp_driver_result_cache()
+  {
+    return _parasitic_dmp_driver_result_cache;
+  }
+  std::map<ParasiticArnoldiModelKey, ParasiticArnoldiModel>& get_parasitic_arnoldi_model_cache()
+  {
+    return _parasitic_arnoldi_model_cache;
+  }
   std::map<ParasiticArnoldiTimingResultKey, ParasiticDelayResult>& get_parasitic_arnoldi_timing_result_cache()
   {
     return _parasitic_arnoldi_timing_result_cache;
@@ -79,10 +92,14 @@ class DCModel
   }
 
  private:
-  std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, double>>>> _parasitic_resistor_map_cache;
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>> _parasitic_load_map_cache;
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>> _parasitic_delay_map_cache;
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>> _parasitic_impulse_map_cache;
+  std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, double>>>>
+      _parasitic_resistor_map_cache;
+  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>
+      _parasitic_load_map_cache;
+  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>
+      _parasitic_delay_map_cache;
+  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>
+      _parasitic_impulse_map_cache;
   std::map<std::string, ParasiticDmpModel> _parasitic_dmp_model_cache;
   std::map<std::string, ParasiticDelayResult> _parasitic_dmp_timing_result_cache;
   std::map<std::string, ParasiticDelayResult> _parasitic_dmp_driver_result_cache;

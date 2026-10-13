@@ -254,7 +254,8 @@ void PWInterface::input(std::map<std::string, std::any>& config_map)
 void PWInterface::wrapConfig(std::map<std::string, std::any>& config_map)
 {
   /////////////////////////////////////////////
-  PWDM.getConfig().temp_directory_path = PWUTIL.getConfigValue<std::string>(config_map, "-temp_directory_path", "./pw_temp_directory");
+  PWDM.getConfig().temp_directory_path
+      = PWUTIL.getConfigValue<std::string>(config_map, "-temp_directory_path", "./pw_temp_directory");
   PWDM.getConfig().thread_number = PWUTIL.getConfigValue<int32_t>(config_map, "-thread_number", 128);
   PWDM.getConfig().min_slew_degradation = 1;
   PWDM.getConfig().sdc_file_path = dmInst->get_config().get_sdc_path();
@@ -280,8 +281,16 @@ void PWInterface::wrapVcdActivity()
     return;
   }
   std::size_t matched_net_num = PowerPropagator::annotateVcdActivity(vcd_reader->get_signal_activity_map());
-  PWLOG.info(Loc::current(), "Matched ", matched_net_num, " net(s) from ", vcd_reader->get_signal_activity_map().size(),
-             " VCD signal(s); annotated ", PWDM.getDatabase().get_vcd_activity_map().size(), " pin(s).");
+  PWLOG.info(
+      Loc::current(),
+      "Matched ",
+      matched_net_num,
+      " net(s) from ",
+      vcd_reader->get_signal_activity_map().size(),
+      " VCD signal(s); annotated ",
+      PWDM.getDatabase().get_vcd_activity_map().size(),
+      " pin(s)."
+  );
 }
 
 void PWInterface::wrapDBInfo()
@@ -331,8 +340,9 @@ void PWInterface::wrapInstancePin(idb::IdbInstance* idb_instance, idb::IdbPin* i
 
 bool PWInterface::wrapSignalConnectType(idb::IdbConnectType connect_type)
 {
-  return connect_type == idb::IdbConnectType::kNone || connect_type == idb::IdbConnectType::kSignal || connect_type == idb::IdbConnectType::kClock
-         || connect_type == idb::IdbConnectType::kReset || connect_type == idb::IdbConnectType::kScan || connect_type == idb::IdbConnectType::kTieOff;
+  return connect_type == idb::IdbConnectType::kNone || connect_type == idb::IdbConnectType::kSignal
+         || connect_type == idb::IdbConnectType::kClock || connect_type == idb::IdbConnectType::kReset
+         || connect_type == idb::IdbConnectType::kScan || connect_type == idb::IdbConnectType::kTieOff;
 }
 
 std::string PWInterface::wrapInstancePinName(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin)
@@ -595,7 +605,8 @@ void PWInterface::wrapTimingCellPort(TimingCell& timing_cell, idb::LibPort* lib_
     for (idb::TransType trans_type : {idb::TransType::kRise, idb::TransType::kFall}) {
       std::optional<double> port_cap = lib_port->get_port_cap(analysis_mode, trans_type);
       if (port_cap) {
-        AnalysisType sta_analysis_type = analysis_mode == idb::AnalysisMode::kMin ? AnalysisType::kMin : AnalysisType::kMax;
+        AnalysisType sta_analysis_type
+            = analysis_mode == idb::AnalysisMode::kMin ? AnalysisType::kMin : AnalysisType::kMax;
         TransType sta_trans_type = trans_type == idb::TransType::kFall ? TransType::kFall : TransType::kRise;
         timing_cell_port.get_trans_capacitance_map()[sta_analysis_type][sta_trans_type] = *port_cap;
       }
@@ -622,8 +633,12 @@ void PWInterface::wrapTimingCellSequential(TimingCell& timing_cell, const idb::L
       timing_sequential.set_inverted_state_port(state_variables[1]);
     }
     timing_sequential.set_is_latch(lib_sequential.is_latch);
-    timing_sequential.set_data(wrapLogicExpression(lib_sequential.get_attribute(timing_sequential.get_is_latch() ? "data_in" : "next_state")));
-    timing_sequential.set_clock(wrapLogicExpression(lib_sequential.get_attribute(timing_sequential.get_is_latch() ? "enable" : "clocked_on")));
+    timing_sequential.set_data(
+        wrapLogicExpression(lib_sequential.get_attribute(timing_sequential.get_is_latch() ? "data_in" : "next_state"))
+    );
+    timing_sequential.set_clock(
+        wrapLogicExpression(lib_sequential.get_attribute(timing_sequential.get_is_latch() ? "enable" : "clocked_on"))
+    );
     timing_sequential.set_clear(wrapLogicExpression(lib_sequential.get_attribute("clear")));
     timing_sequential.set_preset(wrapLogicExpression(lib_sequential.get_attribute("preset")));
     timing_cell.get_sequentials().push_back(std::move(timing_sequential));
@@ -641,14 +656,18 @@ void PWInterface::wrapTimingCellPower(TimingCell& timing_cell, idb::LibCell* lib
   for (std::unique_ptr<idb::LibPort>& lib_port : lib_cell->get_cell_ports()) {
     std::string port_name = lib_port->get_port_name();
     for (std::unique_ptr<idb::LibInternalPowerInfo>& internal_power_info : lib_port->get_internal_powers()) {
-      timing_cell.get_power_arc_list().push_back(wrapTimingPortPowerArc(internal_power_info.get(), port_name, lib_library));
+      timing_cell.get_power_arc_list().push_back(
+          wrapTimingPortPowerArc(internal_power_info.get(), port_name, lib_library)
+      );
     }
   }
   for (std::unique_ptr<idb::LibPortBus>& lib_bus : lib_cell->get_cell_buses()) {
     for (std::unique_ptr<idb::LibPort>& lib_port : lib_bus->get_ports()) {
       std::string port_name = lib_port->get_port_name();
       for (std::unique_ptr<idb::LibInternalPowerInfo>& internal_power_info : lib_port->get_internal_powers()) {
-        timing_cell.get_power_arc_list().push_back(wrapTimingPortPowerArc(internal_power_info.get(), port_name, lib_library));
+        timing_cell.get_power_arc_list().push_back(
+            wrapTimingPortPowerArc(internal_power_info.get(), port_name, lib_library)
+        );
       }
     }
   }
@@ -700,7 +719,8 @@ TimingPowerArc PWInterface::wrapTimingPowerArc(idb::LibPowerArc* lib_power_arc)
   idb::LibArc* matched_arc = nullptr;
   for (std::unique_ptr<idb::LibArcSet>& lib_arc_set : lib_power_arc->get_owner_cell()->get_cell_arcs()) {
     for (std::unique_ptr<idb::LibArc>& lib_arc : lib_arc_set->get_arcs()) {
-      if (timing_power_arc.get_source_port() != lib_arc->get_src_port() || timing_power_arc.get_sink_port() != lib_arc->get_snk_port()) {
+      if (timing_power_arc.get_source_port() != lib_arc->get_src_port()
+          || timing_power_arc.get_sink_port() != lib_arc->get_snk_port()) {
         continue;
       }
       if (matched_arc == nullptr || lib_arc->get_when() == when_string) {
@@ -729,7 +749,11 @@ TimingPowerArc PWInterface::wrapTimingPowerArc(idb::LibPowerArc* lib_power_arc)
   return timing_power_arc;
 }
 
-TimingPowerArc PWInterface::wrapTimingPortPowerArc(idb::LibInternalPowerInfo* internal_power_info, std::string& port_name, idb::LibLibrary* lib_library)
+TimingPowerArc PWInterface::wrapTimingPortPowerArc(
+    idb::LibInternalPowerInfo* internal_power_info,
+    std::string& port_name,
+    idb::LibLibrary* lib_library
+)
 {
   TimingPowerArc timing_power_arc;
   timing_power_arc.set_sink_port(port_name);
@@ -747,8 +771,10 @@ void PWInterface::wrapTimingPowerArcTable(TimingPowerArc& timing_power_arc, idb:
   if (power_table_model == nullptr || !power_table_model->isPowerModel()) {
     return;
   }
-  idb::LibTable* rise_power_table = power_table_model->getTable(CAST_POWER_TYPE_TO_INDEX(idb::LibTable::TableType::kRisePower));
-  idb::LibTable* fall_power_table = power_table_model->getTable(CAST_POWER_TYPE_TO_INDEX(idb::LibTable::TableType::kFallPower));
+  idb::LibTable* rise_power_table
+      = power_table_model->getTable(CAST_POWER_TYPE_TO_INDEX(idb::LibTable::TableType::kRisePower));
+  idb::LibTable* fall_power_table
+      = power_table_model->getTable(CAST_POWER_TYPE_TO_INDEX(idb::LibTable::TableType::kFallPower));
   if (rise_power_table != nullptr) {
     timing_power_arc.get_energy_table_map()[TransType::kRise] = wrapTimingTable(rise_power_table);
   }
@@ -855,9 +881,12 @@ bool PWInterface::isTimingDelayArc(idb::LibArc* lib_arc)
     return true;
   }
   idb::LibArc::TimingType timing_type = lib_arc->get_timing_type();
-  return timing_type == idb::LibArc::TimingType::kThreeStateEnable || timing_type == idb::LibArc::TimingType::kThreeStateEnableRise
-         || timing_type == idb::LibArc::TimingType::kThreeStateEnableFall || timing_type == idb::LibArc::TimingType::kThreeStateDisable
-         || timing_type == idb::LibArc::TimingType::kThreeStateDisableRise || timing_type == idb::LibArc::TimingType::kThreeStateDisableFall;
+  return timing_type == idb::LibArc::TimingType::kThreeStateEnable
+         || timing_type == idb::LibArc::TimingType::kThreeStateEnableRise
+         || timing_type == idb::LibArc::TimingType::kThreeStateEnableFall
+         || timing_type == idb::LibArc::TimingType::kThreeStateDisable
+         || timing_type == idb::LibArc::TimingType::kThreeStateDisableRise
+         || timing_type == idb::LibArc::TimingType::kThreeStateDisableFall;
 }
 
 TimingCellArc PWInterface::wrapDelayArc(idb::LibArcSet* lib_arc_set)
@@ -916,8 +945,10 @@ void PWInterface::wrapTimingArcTable(TimingArc& timing_arc, idb::LibArc* lib_arc
   if (table_model->isDelayModel()) {
     idb::LibTable* rise_delay_table = table_model->getTable(CAST_TYPE_TO_INDEX(idb::LibTable::TableType::kCellRise));
     idb::LibTable* fall_delay_table = table_model->getTable(CAST_TYPE_TO_INDEX(idb::LibTable::TableType::kCellFall));
-    idb::LibTable* rise_slew_table = table_model->getTable(CAST_TYPE_TO_INDEX(idb::LibTable::TableType::kRiseTransition));
-    idb::LibTable* fall_slew_table = table_model->getTable(CAST_TYPE_TO_INDEX(idb::LibTable::TableType::kFallTransition));
+    idb::LibTable* rise_slew_table
+        = table_model->getTable(CAST_TYPE_TO_INDEX(idb::LibTable::TableType::kRiseTransition));
+    idb::LibTable* fall_slew_table
+        = table_model->getTable(CAST_TYPE_TO_INDEX(idb::LibTable::TableType::kFallTransition));
     if (rise_delay_table != nullptr) {
       timing_arc.get_delay_table_map()[TransType::kRise] = wrapTimingTable(rise_delay_table);
     }
@@ -971,7 +1002,8 @@ TimingTableVariableType PWInterface::wrapTimingTableVariableType(idb::LibTable* 
   if (*variable == idb::LibLutTableTemplate::Variable::CONSTRAINED_PIN_TRANSITION) {
     return TimingTableVariableType::kConstrainedTransition;
   }
-  if (*variable == idb::LibLutTableTemplate::Variable::INPUT_NET_TRANSITION || *variable == idb::LibLutTableTemplate::Variable::RELATED_PIN_TRANSITION
+  if (*variable == idb::LibLutTableTemplate::Variable::INPUT_NET_TRANSITION
+      || *variable == idb::LibLutTableTemplate::Variable::RELATED_PIN_TRANSITION
       || *variable == idb::LibLutTableTemplate::Variable::INPUT_TRANSITION_TIME) {
     return TimingTableVariableType::kInputTransition;
   }
@@ -1107,7 +1139,11 @@ void PWInterface::wrapParasiticResistance(ParasiticNet& parasitic_net, spef::Res
   wrapParasiticNode(parasitic_net, spef_res.node2);
 }
 
-void PWInterface::wrapParasiticCapacitance(ParasiticNet& parasitic_net, spef::ResCap& spef_cap, double capacitance_scale)
+void PWInterface::wrapParasiticCapacitance(
+    ParasiticNet& parasitic_net,
+    spef::ResCap& spef_cap,
+    double capacitance_scale
+)
 {
   double capacitance = spef_cap.res_or_cap * capacitance_scale;
   wrapParasiticNode(parasitic_net, spef_cap.node1);

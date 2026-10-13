@@ -139,7 +139,11 @@ class PWInterface
   void wrapTimingCellLeakagePower(TimingCell& timing_cell, idb::LibCell* lib_cell);
   void wrapTimingCellPowerConditions(TimingCell& timing_cell);
   TimingPowerArc wrapTimingPowerArc(idb::LibPowerArc* lib_power_arc);
-  TimingPowerArc wrapTimingPortPowerArc(idb::LibInternalPowerInfo* internal_power_info, std::string& port_name, idb::LibLibrary* lib_library);
+  TimingPowerArc wrapTimingPortPowerArc(
+      idb::LibInternalPowerInfo* internal_power_info,
+      std::string& port_name,
+      idb::LibLibrary* lib_library
+  );
   void wrapTimingPowerArcTable(TimingPowerArc& timing_power_arc, idb::LibTableModel* power_table_model);
   TimingLeakagePower wrapTimingLeakagePower(idb::LibLeakagePower* lib_leakage_power);
   LogicExpression wrapLogicExpression(const std::string& expression_string);

@@ -45,7 +45,10 @@ class CPModel
     return find_clock_state(pin_name, clock_name) != nullptr;
   }
   // setter
-  void set_clock_name(std::string_view pin_name, std::string_view clock_name) { _clock_name_map[std::string(pin_name)] = clock_name; }
+  void set_clock_name(std::string_view pin_name, std::string_view clock_name)
+  {
+    _clock_name_map[std::string(pin_name)] = clock_name;
+  }
 
  private:
   std::map<std::string, std::string> _clock_name_map;

@@ -49,10 +49,16 @@ class ParasiticArnoldiModel
   void set_order(const int32_t order) { _order = order; }
   void set_pi_resistance(const double pi_resistance) { _pi_resistance = pi_resistance; }
   void set_total_capacitance(const double total_capacitance) { _total_capacitance = total_capacitance; }
-  void set_sqrt_total_capacitance(const double sqrt_total_capacitance) { _sqrt_total_capacitance = sqrt_total_capacitance; }
+  void set_sqrt_total_capacitance(const double sqrt_total_capacitance)
+  {
+    _sqrt_total_capacitance = sqrt_total_capacitance;
+  }
   void set_diagonal_list(const std::vector<double>& diagonal_list) { _diagonal_list = diagonal_list; }
   void set_off_diagonal_list(const std::vector<double>& off_diagonal_list) { _off_diagonal_list = off_diagonal_list; }
-  void set_projection_list(const std::vector<std::vector<double>>& projection_list) { _projection_list = projection_list; }
+  void set_projection_list(const std::vector<std::vector<double>>& projection_list)
+  {
+    _projection_list = projection_list;
+  }
   // function
 
  private:

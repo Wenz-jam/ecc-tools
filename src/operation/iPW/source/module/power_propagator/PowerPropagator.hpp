@@ -35,7 +35,7 @@ class PowerPropagator
   static std::size_t annotateVcdActivity(const vcd::VcdWindowSignalActivity& window_activity);
 
  private:
- // self
+  // self
   static PowerPropagator* _pp_instance;
 
   PowerPropagator() = default;
@@ -76,13 +76,22 @@ class PowerPropagator
   PowerActivity getPropagatedActivity(PowerActivity source_activity);
   void propagateOutputActivity(std::string& pin_name, PPModel& pp_model);
   PowerActivity getOutputActivity(std::string& pin_name, PPModel& pp_model);
-  void limitDataActivity(Database& database, std::string& pin_name, PowerActivity& activity, double minimum_clock_period);
+  void limitDataActivity(
+      Database& database,
+      std::string& pin_name,
+      PowerActivity& activity,
+      double minimum_clock_period
+  );
   bool shouldLimitDataActivity(Database& database, std::string& pin_name, PowerActivity& activity);
   double getProbabilityLimitedTransitionDensity(PowerActivity& activity, double minimum_clock_period);
   void scaleTransitionDensity(PowerActivity& activity, double maximum_transition_density);
   PowerActivity getClockGateOutputActivity(std::string& pin_name, Instance& instance);
   PowerActivity getClockGateOutputActivity(PowerActivity& clock_activity, PowerActivity& enable_activity);
-  PowerActivity getClockGateEnableActivity(Instance& instance, std::string& clock_pin_name, std::string& output_pin_name);
+  PowerActivity getClockGateEnableActivity(
+      Instance& instance,
+      std::string& clock_pin_name,
+      std::string& output_pin_name
+  );
   bool isClockGateOutputPin(std::string& pin_name, Instance& instance);
   bool isClockGateClockPin(std::string& pin_name, TimingCellPort& timing_cell_port);
   PowerActivity normalizeConstantActivity(PowerActivity activity);
@@ -91,7 +100,11 @@ class PowerPropagator
   void propagateNetActivity(Arc& arc);
   void propagateSequentialActivity(PPModel& pp_model);
   PowerActivity getSequentialOutputActivity(Instance& instance);
-  void limitSequentialOutputActivity(PowerActivity& output_activity, PowerActivity& data_activity, PowerActivity& clock_activity);
+  void limitSequentialOutputActivity(
+      PowerActivity& output_activity,
+      PowerActivity& data_activity,
+      PowerActivity& clock_activity
+  );
   PowerActivity getPinActivity(std::string& pin_name);
   bool isOutputPin(std::string& pin_name);
   bool isClockSource(std::string& pin_name);

@@ -109,7 +109,8 @@ void PowerPropagator::buildSeedPinList(PPModel& pp_model)
   }
   for (std::pair<const std::string, Pin>& pin_pair : database.get_pin_map()) {
     Pin& pin = pin_pair.second;
-    if (!pin.get_is_port() || (pin.get_direction() != PinDirection::kInput && pin.get_direction() != PinDirection::kInout)) {
+    if (!pin.get_is_port()
+        || (pin.get_direction() != PinDirection::kInput && pin.get_direction() != PinDirection::kInout)) {
       continue;
     }
     if (!PWUTIL.exist(seed_pin_list, pin_pair.first)) {
@@ -132,7 +133,8 @@ void PowerPropagator::buildSequentialInstanceNameList(PPModel& pp_model)
 
 bool PowerPropagator::isSequentialForPower(Instance& instance)
 {
-  if (instance.get_is_sequential()) return true;
+  if (instance.get_is_sequential())
+    return true;
   auto& cells = PWDM.getDatabase().get_timing_library().get_cell_map();
   auto cell = cells.find(instance.get_cell_name());
   return cell != cells.end() && cell->second.get_is_sequential_for_power();
@@ -145,7 +147,8 @@ void PowerPropagator::propagateActivity(PPModel& pp_model)
   seedCaseAnalysisActivity();
   seedActivity(pp_model);
   if (PWDM.getDatabase().get_vcd_activity_map().empty()) {
-    if (simulateVectorlessActivity(pp_model.get_minimum_clock_period())) return;
+    if (simulateVectorlessActivity(pp_model.get_minimum_clock_period()))
+      return;
     PWLOG.info(Loc::current(), "Vector simulation unavailable for this design; using analytical activity.");
   }
   seedSequentialStateActivity(pp_model);
@@ -175,7 +178,9 @@ void PowerPropagator::seedVcdActivity()
   PWLOG.info(Loc::current(), "Annotated ", annotated_pin_num, " power activities from VCD.");
 }
 
-std::size_t PowerPropagator::annotateVcdActivity(const std::map<std::string, vcd::VcdSignalActivity>& signal_activity_map)
+std::size_t PowerPropagator::annotateVcdActivity(
+    const std::map<std::string, vcd::VcdSignalActivity>& signal_activity_map
+)
 {
   PWDM.getDatabase().get_vcd_activity_map().clear();
   std::size_t matched_net_num = 0;
@@ -292,7 +297,8 @@ double PowerPropagator::getMinimumSlew(std::map<AnalysisType, std::map<TransType
 {
   double minimum_slew = std::numeric_limits<double>::infinity();
   for (AnalysisType analysis_type : {AnalysisType::kMax, AnalysisType::kMin}) {
-    if (slew_map.count(analysis_type) == 0 || slew_map[analysis_type].count(TransType::kRise) == 0 || slew_map[analysis_type].count(TransType::kFall) == 0) {
+    if (slew_map.count(analysis_type) == 0 || slew_map[analysis_type].count(TransType::kRise) == 0
+        || slew_map[analysis_type].count(TransType::kFall) == 0) {
       continue;
     }
     double average_slew = (slew_map[analysis_type][TransType::kRise] + slew_map[analysis_type][TransType::kFall]) / 2.0;
@@ -328,9 +334,12 @@ int32_t PowerPropagator::getActivityPriority(PowerActivityOrigin origin)
 
 bool PowerPropagator::isActivityChanged(PowerActivity& left_activity, PowerActivity& right_activity)
 {
-  return left_activity.get_is_valid() != right_activity.get_is_valid() || left_activity.get_origin() != right_activity.get_origin()
-         || getRelativeChange(left_activity.get_rise_transition_density(), right_activity.get_rise_transition_density()) > 0.01
-         || getRelativeChange(left_activity.get_fall_transition_density(), right_activity.get_fall_transition_density()) > 0.01
+  return left_activity.get_is_valid() != right_activity.get_is_valid()
+         || left_activity.get_origin() != right_activity.get_origin()
+         || getRelativeChange(left_activity.get_rise_transition_density(), right_activity.get_rise_transition_density())
+                > 0.01
+         || getRelativeChange(left_activity.get_fall_transition_density(), right_activity.get_fall_transition_density())
+                > 0.01
          || getRelativeChange(left_activity.get_static_probability(), right_activity.get_static_probability()) > 0.01;
 }
 
@@ -555,24 +564,32 @@ PowerActivity PowerPropagator::getOutputActivity(std::string& pin_name, PPModel&
   return activity;
 }
 
-void PowerPropagator::limitDataActivity(Database& database, std::string& pin_name, PowerActivity& activity, double minimum_clock_period)
+void PowerPropagator::limitDataActivity(
+    Database& database,
+    std::string& pin_name,
+    PowerActivity& activity,
+    double minimum_clock_period
+)
 {
   if (!shouldLimitDataActivity(database, pin_name, activity) || minimum_clock_period <= PW_ERROR) {
     return;
   }
 
   double default_transition_density = getDefaultTransitionDensity(minimum_clock_period);
-  double probability_limited_transition_density = getProbabilityLimitedTransitionDensity(activity, minimum_clock_period);
+  double probability_limited_transition_density
+      = getProbabilityLimitedTransitionDensity(activity, minimum_clock_period);
   scaleTransitionDensity(activity, std::min(default_transition_density, probability_limited_transition_density));
 }
 
 bool PowerPropagator::shouldLimitDataActivity(Database& database, std::string& pin_name, PowerActivity& activity)
 {
-  if (!activity.get_is_valid() || activity.get_origin() == PowerActivityOrigin::kClock || activity.get_origin() == PowerActivityOrigin::kVcd
+  if (!activity.get_is_valid() || activity.get_origin() == PowerActivityOrigin::kClock
+      || activity.get_origin() == PowerActivityOrigin::kVcd
       || activity.get_origin() == PowerActivityOrigin::kConstant) {
     return false;
   }
-  return database.get_timing_point_map().count(pin_name) == 0 || !database.get_timing_point_map()[pin_name].get_is_clock_point();
+  return database.get_timing_point_map().count(pin_name) == 0
+         || !database.get_timing_point_map()[pin_name].get_is_clock_point();
 }
 
 double PowerPropagator::getProbabilityLimitedTransitionDensity(PowerActivity& activity, double minimum_clock_period)
@@ -618,7 +635,8 @@ PowerActivity PowerPropagator::getClockGateOutputActivity(std::string& pin_name,
     }
     PowerActivity candidate_activity = getPinActivity(candidate_pin_name);
     if (candidate_activity.get_is_valid()
-        && (!clock_activity.get_is_valid() || candidate_activity.get_transition_density() > clock_activity.get_transition_density())) {
+        && (!clock_activity.get_is_valid()
+            || candidate_activity.get_transition_density() > clock_activity.get_transition_density())) {
       clock_activity = candidate_activity;
       clock_pin_name = candidate_pin_name;
     }
@@ -641,18 +659,25 @@ PowerActivity PowerPropagator::getClockGateOutputActivity(PowerActivity& clock_a
   double enable_probability = enable_activity.get_static_probability();
 
   PowerActivity activity;
-  activity.set_rise_transition_density(clock_activity.get_rise_transition_density() * enable_probability
-                                       + enable_activity.get_rise_transition_density() * clock_probability);
-  activity.set_fall_transition_density(clock_activity.get_fall_transition_density() * enable_probability
-                                       + enable_activity.get_fall_transition_density() * clock_probability);
+  activity.set_rise_transition_density(
+      clock_activity.get_rise_transition_density() * enable_probability
+      + enable_activity.get_rise_transition_density() * clock_probability
+  );
+  activity.set_fall_transition_density(
+      clock_activity.get_fall_transition_density() * enable_probability
+      + enable_activity.get_fall_transition_density() * clock_probability
+  );
   activity.set_static_probability(clock_probability * enable_probability);
   activity.set_origin(PowerActivityOrigin::kPropagated);
   activity.set_is_valid(true);
   return activity;
 }
 
-PowerActivity PowerPropagator::getClockGateEnableActivity(Instance& instance, std::string& clock_pin_name,
-                                                          std::string& output_pin_name)
+PowerActivity PowerPropagator::getClockGateEnableActivity(
+    Instance& instance,
+    std::string& clock_pin_name,
+    std::string& output_pin_name
+)
 {
   PowerActivity enable_activity;
   Database& database = PWDM.getDatabase();
@@ -664,12 +689,14 @@ PowerActivity PowerPropagator::getClockGateEnableActivity(Instance& instance, st
     if (pin.get_direction() != PinDirection::kInput && pin.get_direction() != PinDirection::kInout) {
       continue;
     }
-    if (database.get_timing_point_map().count(pin_name) > 0 && database.get_timing_point_map()[pin_name].get_is_clock_point()) {
+    if (database.get_timing_point_map().count(pin_name) > 0
+        && database.get_timing_point_map()[pin_name].get_is_clock_point()) {
       continue;
     }
     PowerActivity candidate_activity = getPinActivity(pin_name);
     if (candidate_activity.get_is_valid()
-        && (!enable_activity.get_is_valid() || candidate_activity.get_static_probability() > enable_activity.get_static_probability())) {
+        && (!enable_activity.get_is_valid()
+            || candidate_activity.get_static_probability() > enable_activity.get_static_probability())) {
       enable_activity = candidate_activity;
     }
   }
@@ -695,7 +722,8 @@ bool PowerPropagator::isClockGateClockPin(std::string& pin_name, TimingCellPort&
     return true;
   }
   Database& database = PWDM.getDatabase();
-  return database.get_timing_point_map().count(pin_name) > 0 && database.get_timing_point_map()[pin_name].get_is_clock_point();
+  return database.get_timing_point_map().count(pin_name) > 0
+         && database.get_timing_point_map()[pin_name].get_is_clock_point();
 }
 
 PowerActivity PowerPropagator::normalizeConstantActivity(PowerActivity activity)
@@ -772,8 +800,12 @@ void PowerPropagator::propagateSequentialActivity(PPModel& pp_model)
   }
 
   if (!valid_quit) {
-    PWLOG.warn(Loc::current(), "Sequential activity propagation did not converge in ",
-        pp_model.get_max_activity_pass_num(), "; result may be inaccurate");
+    PWLOG.warn(
+        Loc::current(),
+        "Sequential activity propagation did not converge in ",
+        pp_model.get_max_activity_pass_num(),
+        "; result may be inaccurate"
+    );
   }
 }
 
@@ -791,8 +823,11 @@ PowerActivity PowerPropagator::getSequentialOutputActivity(Instance& instance)
   return normalizeConstantActivity(output_activity);
 }
 
-void PowerPropagator::limitSequentialOutputActivity(PowerActivity& output_activity, PowerActivity& data_activity,
-                                                     PowerActivity& clock_activity)
+void PowerPropagator::limitSequentialOutputActivity(
+    PowerActivity& output_activity,
+    PowerActivity& data_activity,
+    PowerActivity& clock_activity
+)
 {
   if (!clock_activity.get_is_valid()) {
     return;
@@ -831,7 +866,8 @@ bool PowerPropagator::isOutputPin(std::string& pin_name)
     return false;
   }
   TimingCell& timing_cell = database.get_timing_library().get_cell_map()[instance.get_cell_name()];
-  return timing_cell.get_port_map().count(pin.get_pin_name()) > 0 && timing_cell.get_port_map()[pin.get_pin_name()].get_is_output();
+  return timing_cell.get_port_map().count(pin.get_pin_name()) > 0
+         && timing_cell.get_port_map()[pin.get_pin_name()].get_is_output();
 }
 
 bool PowerPropagator::isClockSource(std::string& pin_name)
@@ -852,7 +888,8 @@ constexpr Word kOnes = ~Word{0};
 int simulationCount(const char* name, int fallback, int minimum, int maximum)
 {
   const char* text = std::getenv(name);
-  if (!text) return fallback;
+  if (!text)
+    return fallback;
   char* end = nullptr;
   long value = std::strtol(text, &end, 10);
   return end != text && *end == '\0' && value >= minimum && value <= maximum ? static_cast<int>(value) : fallback;
@@ -926,33 +963,47 @@ class Simulator
 std::size_t Simulator::node(const std::string& name)
 {
   auto [it, inserted] = _node_index.emplace(name, _values.size());
-  if (inserted) _values.push_back(0);
+  if (inserted)
+    _values.push_back(0);
   return it->second;
 }
 
 bool Simulator::compile(LogicExpression& expression, std::map<std::string, std::size_t>& ports, Program& program)
 {
-  if (expression.get_is_empty()) return false;
+  if (expression.get_is_empty())
+    return false;
   int depth = 0;
   for (auto& term : expression.get_term_list()) {
     Instruction instruction{term.get_operation_type()};
     switch (instruction.op) {
       case LogicOperationType::kPort: {
         auto port = ports.find(term.get_port_name());
-        if (port == ports.end()) return false;
+        if (port == ports.end())
+          return false;
         instruction.node = port->second;
         ++depth;
         break;
       }
       case LogicOperationType::kOne:
-      case LogicOperationType::kZero: ++depth; break;
-      case LogicOperationType::kNot: if (depth < 1) return false; break;
+      case LogicOperationType::kZero:
+        ++depth;
+        break;
+      case LogicOperationType::kNot:
+        if (depth < 1)
+          return false;
+        break;
       case LogicOperationType::kAnd:
       case LogicOperationType::kOr:
-      case LogicOperationType::kXor: if (depth < 2) return false; --depth; break;
-      default: return false;
+      case LogicOperationType::kXor:
+        if (depth < 2)
+          return false;
+        --depth;
+        break;
+      default:
+        return false;
     }
-    if (depth >= 64) return false;
+    if (depth >= 64)
+      return false;
     program.push_back(instruction);
   }
   return depth == 1;
@@ -964,14 +1015,32 @@ Word Simulator::evaluate(const Program& program) const
   std::size_t count = 0;
   for (const auto& instruction : program) {
     switch (instruction.op) {
-      case LogicOperationType::kPort: stack[count++] = _values[instruction.node]; break;
-      case LogicOperationType::kOne: stack[count++] = kOnes; break;
-      case LogicOperationType::kZero: stack[count++] = 0; break;
-      case LogicOperationType::kNot: stack[count - 1] = ~stack[count - 1]; break;
-      case LogicOperationType::kAnd: --count; stack[count - 1] &= stack[count]; break;
-      case LogicOperationType::kOr: --count; stack[count - 1] |= stack[count]; break;
-      case LogicOperationType::kXor: --count; stack[count - 1] ^= stack[count]; break;
-      default: return 0;
+      case LogicOperationType::kPort:
+        stack[count++] = _values[instruction.node];
+        break;
+      case LogicOperationType::kOne:
+        stack[count++] = kOnes;
+        break;
+      case LogicOperationType::kZero:
+        stack[count++] = 0;
+        break;
+      case LogicOperationType::kNot:
+        stack[count - 1] = ~stack[count - 1];
+        break;
+      case LogicOperationType::kAnd:
+        --count;
+        stack[count - 1] &= stack[count];
+        break;
+      case LogicOperationType::kOr:
+        --count;
+        stack[count - 1] |= stack[count];
+        break;
+      case LogicOperationType::kXor:
+        --count;
+        stack[count - 1] ^= stack[count];
+        break;
+      default:
+        return 0;
     }
   }
   return count ? stack[0] : 0;
@@ -979,9 +1048,11 @@ Word Simulator::evaluate(const Program& program) const
 
 bool Simulator::build()
 {
-  if (!std::isfinite(_period) || _period <= 0.0 || !_database.get_vcd_activity_map().empty()) return false;
+  if (!std::isfinite(_period) || _period <= 0.0 || !_database.get_vcd_activity_map().empty())
+    return false;
   for (auto& [name, clock] : _database.get_timing_constraint().get_clock_map()) {
-    if (clock.get_period() > 0 && clock.get_period() < _period) _period = clock.get_period();
+    if (clock.get_period() > 0 && clock.get_period() < _period)
+      _period = clock.get_period();
   }
   _steps_per_period = simulationCount("IPW_POWER_SIM_STEPS_PER_PERIOD", 2, 2, 64);
   _step = _period / _steps_per_period;
@@ -990,26 +1061,31 @@ bool Simulator::build()
   for (auto& [name, clock] : _database.get_timing_constraint().get_clock_map()) {
     for (double value : {clock.get_period(), clock.get_rise_edge(), clock.get_fall_edge()}) {
       double ticks = value / _step;
-      if (!std::isfinite(ticks) || std::abs(ticks - std::round(ticks)) > 1e-9) return false;
+      if (!std::isfinite(ticks) || std::abs(ticks - std::round(ticks)) > 1e-9)
+        return false;
     }
   }
   for (auto& [name, net] : _database.get_net_map()) {
     auto id = node("net:" + name);
-    for (auto& pin : net.get_pin_name_list()) _pin_nodes[pin] = id;
+    for (auto& pin : net.get_pin_name_list())
+      _pin_nodes[pin] = id;
   }
   for (auto& [name, pin] : _database.get_pin_map()) {
-    if (!_pin_nodes.count(name)) _pin_nodes[name] = node("pin:" + name);
+    if (!_pin_nodes.count(name))
+      _pin_nodes[name] = node("pin:" + name);
   }
   std::set<std::size_t> driven;
   for (auto& [name, instance] : _database.get_instance_map()) {
     auto cell_it = _database.get_timing_library().get_cell_map().find(instance.get_cell_name());
-    if (cell_it == _database.get_timing_library().get_cell_map().end()) continue;
+    if (cell_it == _database.get_timing_library().get_cell_map().end())
+      continue;
     auto& cell = cell_it->second;
     std::map<std::string, std::size_t> ports;
     for (auto& [port_name, port] : cell.get_port_map()) {
       std::string pin_name = name + ":" + port_name;
       auto pin = _pin_nodes.find(pin_name);
-      if (pin != _pin_nodes.end()) ports[port_name] = pin->second;
+      if (pin != _pin_nodes.end())
+        ports[port_name] = pin->second;
     }
     for (auto& seq : cell.get_sequentials()) {
       ports[seq.get_state_port()] = node("state:" + name + ":" + seq.get_state_port());
@@ -1022,42 +1098,53 @@ bool Simulator::build()
       model.state = ports[seq.get_state_port()];
       model.inverse = seq.get_inverted_state_port().empty() ? model.state : ports[seq.get_inverted_state_port()];
       model.latch = seq.get_is_latch();
-      if (!compile(seq.get_data(), ports, model.data) || !compile(seq.get_clock(), ports, model.clock)) return false;
-      if (!seq.get_clear().get_is_empty() && !compile(seq.get_clear(), ports, model.clear)) return false;
-      if (!seq.get_preset().get_is_empty() && !compile(seq.get_preset(), ports, model.preset)) return false;
+      if (!compile(seq.get_data(), ports, model.data) || !compile(seq.get_clock(), ports, model.clock))
+        return false;
+      if (!seq.get_clear().get_is_empty() && !compile(seq.get_clear(), ports, model.clear))
+        return false;
+      if (!seq.get_preset().get_is_empty() && !compile(seq.get_preset(), ports, model.preset))
+        return false;
       driven.insert(model.state);
       driven.insert(model.inverse);
       // Start vectorless simulation from a reproducible logic-zero state.
       // The warm-up phase lets reset and clock activity establish reachable
       // states; storage that is never written retains this initial assumption.
       _values[model.state] = 0;
-      if (model.inverse != model.state) _values[model.inverse] = ~_values[model.state];
+      if (model.inverse != model.state)
+        _values[model.inverse] = ~_values[model.state];
       _sequentials.push_back(std::move(model));
     }
     // A sequential cell without its state function cannot be simulated safely.
-    if (cell.get_is_sequential() && cell.get_sequentials().empty() && !cell.get_is_clock_gating()) return false;
+    if (cell.get_is_sequential() && cell.get_sequentials().empty() && !cell.get_is_clock_gating())
+      return false;
     for (auto& [port_name, port] : cell.get_port_map()) {
-      if (!port.get_is_output() || !ports.count(port_name)) continue;
+      if (!port.get_is_output() || !ports.count(port_name))
+        continue;
       Gate gate{ports[port_name], {}};
       if (compile(port.get_function_expression(), ports, gate.function)) {
-        if (!driven.insert(gate.output).second) return false;
+        if (!driven.insert(gate.output).second)
+          return false;
         _gates.push_back(std::move(gate));
-      } else if (!port.get_function_expression().get_is_empty()) return false;
+      } else if (!port.get_function_expression().get_is_empty())
+        return false;
     }
   }
   std::map<std::size_t, PowerActivity> root_activity;
   for (auto& [name, id] : _pin_nodes) {
-    if (driven.count(id)) continue;
+    if (driven.count(id))
+      continue;
     auto it = _database.get_power_activity_map().find(name);
     if (it != _database.get_power_activity_map().end() && it->second.get_is_valid()) {
       if (!root_activity.count(id) || it->second.get_origin() == PowerActivityOrigin::kInput
-          || it->second.get_origin() == PowerActivityOrigin::kClock || it->second.get_origin() == PowerActivityOrigin::kConstant) {
+          || it->second.get_origin() == PowerActivityOrigin::kClock
+          || it->second.get_origin() == PowerActivityOrigin::kConstant) {
         root_activity[id] = it->second;
       }
     }
   }
   for (auto& [name, id] : _node_index) {
-    if (driven.count(id) || root_activity.count(id)) continue;
+    if (driven.count(id) || root_activity.count(id))
+      continue;
     PowerActivity activity;
     activity.set_is_valid(true);
     activity.set_static_probability(0.5);
@@ -1066,12 +1153,15 @@ bool Simulator::build()
     root_activity[id] = activity;
   }
   for (auto& [name, clock] : _database.get_timing_constraint().get_clock_map()) {
-    if (clock.get_period() <= 0.0) continue;
+    if (clock.get_period() <= 0.0)
+      continue;
     for (auto& source : clock.get_source_list()) {
       auto pin = _pin_nodes.find(source);
-      if (pin == _pin_nodes.end()) continue;
+      if (pin == _pin_nodes.end())
+        continue;
       double duty = (clock.get_fall_edge() - clock.get_rise_edge()) / clock.get_period();
-      if (duty <= 0.0) duty += 1.0;
+      if (duty <= 0.0)
+        duty += 1.0;
       PowerActivity activity;
       activity.set_is_valid(true);
       activity.set_static_probability(duty);
@@ -1083,9 +1173,11 @@ bool Simulator::build()
   // Case analysis takes precedence even when it constrains an internal output.
   // Propagate that constant through the implied-activity network as well.
   for (auto& [name, value] : _database.get_timing_constraint().get_case_analysis_map()) {
-    if (value != TimingCaseValue::kZero && value != TimingCaseValue::kOne) continue;
+    if (value != TimingCaseValue::kZero && value != TimingCaseValue::kOne)
+      continue;
     auto pin = _pin_nodes.find(name);
-    if (pin == _pin_nodes.end()) continue;
+    if (pin == _pin_nodes.end())
+      continue;
     const bool constant = value == TimingCaseValue::kOne;
     _constants[pin->second] = constant;
     PowerActivity activity;
@@ -1102,15 +1194,18 @@ bool Simulator::build()
     // share a trajectory; separate annotated nets use separate random vectors.
     // Clock waveforms retain their phase relationship through the logic graph.
     orderGates();
-    if (_gate_order.size() != _gates.size()) return false;
+    if (_gate_order.size() != _gates.size())
+      return false;
     std::set<std::size_t> implied;
     for (auto idx : _gate_order) {
       auto& gate = _gates[idx];
       auto& function = gate.function;
       bool invert = function.size() == 2 && function[1].op == LogicOperationType::kNot;
-      if ((function.size() != 1 && !invert) || function[0].op != LogicOperationType::kPort) continue;
+      if ((function.size() != 1 && !invert) || function[0].op != LogicOperationType::kPort)
+        continue;
       auto input = root_activity.find(function[0].node);
-      if (input == root_activity.end()) continue;
+      if (input == root_activity.end())
+        continue;
       PowerActivity activity = input->second;
       if (invert) {
         activity.set_static_probability(1.0 - activity.get_static_probability());
@@ -1120,7 +1215,8 @@ bool Simulator::build()
       }
       auto existing = root_activity.find(gate.output);
       if (_constants.count(gate.output)
-          || (existing != root_activity.end() && existing->second.get_origin() == PowerActivityOrigin::kClock)) activity = existing->second;
+          || (existing != root_activity.end() && existing->second.get_origin() == PowerActivityOrigin::kClock))
+        activity = existing->second;
       root_activity[gate.output] = activity;
       if (activity.get_origin() != PowerActivityOrigin::kClock) {
         implied.insert(gate.output);
@@ -1133,11 +1229,13 @@ bool Simulator::build()
   }
   // Include roots with no prior annotation, using the documented input default.
   for (auto& [name, id] : _node_index) {
-    if (driven.count(id)) continue;
+    if (driven.count(id))
+      continue;
     Root root;
     root.node = id;
     auto it = root_activity.find(id);
-    if (it != root_activity.end()) root.activity = it->second;
+    if (it != root_activity.end())
+      root.activity = it->second;
     else {
       root.activity.set_is_valid(true);
       root.activity.set_static_probability(0.5);
@@ -1151,12 +1249,14 @@ bool Simulator::build()
     for (auto& [clock_name, clock] : _database.get_timing_constraint().get_clock_map()) {
       for (auto& source : clock.get_source_list()) {
         auto pin = _pin_nodes.find(source);
-        if (pin != _pin_nodes.end() && pin->second == id) root.clock = &clock;
+        if (pin != _pin_nodes.end() && pin->second == id)
+          root.clock = &clock;
       }
     }
     if (root.clock && root.clock->get_period() > 0.0) {
       double duty = (root.clock->get_fall_edge() - root.clock->get_rise_edge()) / root.clock->get_period();
-      if (duty <= 0.0) duty += 1.0;
+      if (duty <= 0.0)
+        duty += 1.0;
       root.activity.set_transition_density(2.0 / root.clock->get_period());
       root.activity.set_static_probability(duty);
       root.activity.set_origin(PowerActivityOrigin::kClock);
@@ -1174,27 +1274,36 @@ void Simulator::orderGates()
   std::vector<std::vector<std::size_t>> fanout(_values.size());
   std::vector<int> indegree(_gates.size(), 0);
   std::set<std::size_t> gate_outputs;
-  for (auto& gate : _gates) gate_outputs.insert(gate.output);
+  for (auto& gate : _gates)
+    gate_outputs.insert(gate.output);
   for (std::size_t idx = 0; idx < _gates.size(); ++idx) {
     std::set<std::size_t> dependencies;
     for (auto& instruction : _gates[idx].function) {
-      if (instruction.op == LogicOperationType::kPort && gate_outputs.count(instruction.node)) dependencies.insert(instruction.node);
+      if (instruction.op == LogicOperationType::kPort && gate_outputs.count(instruction.node))
+        dependencies.insert(instruction.node);
     }
     indegree[idx] = dependencies.size();
-    for (auto id : dependencies) fanout[id].push_back(idx);
+    for (auto id : dependencies)
+      fanout[id].push_back(idx);
   }
   std::queue<std::size_t> ready;
-  for (std::size_t idx = 0; idx < _gates.size(); ++idx) if (!indegree[idx]) ready.push(idx);
+  for (std::size_t idx = 0; idx < _gates.size(); ++idx)
+    if (!indegree[idx])
+      ready.push(idx);
   while (!ready.empty()) {
-    auto idx = ready.front(); ready.pop();
+    auto idx = ready.front();
+    ready.pop();
     _gate_order.push_back(idx);
-    for (auto next : fanout[_gates[idx].output]) if (--indegree[next] == 0) ready.push(next);
+    for (auto next : fanout[_gates[idx].output])
+      if (--indegree[next] == 0)
+        ready.push(next);
   }
 }
 
 void Simulator::settle()
 {
-  for (auto& [id, value] : _constants) _values[id] = value ? kOnes : 0;
+  for (auto& [id, value] : _constants)
+    _values[id] = value ? kOnes : 0;
   for (auto idx : _gate_order) {
     auto& gate = _gates[idx];
     auto constant = _constants.find(gate.output);
@@ -1216,16 +1325,19 @@ bool Simulator::advance()
       Word clear = evaluate(seq.clear), preset = evaluate(seq.preset);
       // Conflicting async controls require Liberty clear_preset_var semantics,
       // including X states, which this two-state simulator cannot represent.
-      if (clear & preset) return false;
+      if (clear & preset)
+        return false;
       value = (value & ~(clear | preset)) | preset;
       _next_state[idx] = value;
       changed |= value != _values[seq.state];
     }
-    if (!changed) return true;
+    if (!changed)
+      return true;
     for (std::size_t idx = 0; idx < _sequentials.size(); ++idx) {
       auto& seq = _sequentials[idx];
       _values[seq.state] = _next_state[idx];
-      if (seq.inverse != seq.state) _values[seq.inverse] = ~_next_state[idx];
+      if (seq.inverse != seq.state)
+        _values[seq.inverse] = ~_next_state[idx];
     }
     settle();
   }
@@ -1244,16 +1356,23 @@ Word Simulator::randomWord()
 
 Word Simulator::randomMask(double probability)
 {
-  if (probability <= 0.0) return 0;
-  if (probability >= 1.0) return kOnes;
-  if (probability == 0.5) return randomWord();
+  if (probability <= 0.0)
+    return 0;
+  if (probability >= 1.0)
+    return kOnes;
+  if (probability == 0.5)
+    return randomWord();
   uint32_t threshold = static_cast<uint32_t>(probability * 65536.0 + 0.5);
-  if (threshold >= 65536) return kOnes;
+  if (threshold >= 65536)
+    return kOnes;
   Word equal = kOnes, less = 0;
   for (int bit = 15; bit >= 0; --bit) {
     Word random = randomWord();
-    if (threshold & (1U << bit)) { less |= equal & ~random; equal &= random; }
-    else equal &= ~random;
+    if (threshold & (1U << bit)) {
+      less |= equal & ~random;
+      equal &= random;
+    } else
+      equal &= ~random;
   }
   return less;
 }
@@ -1261,9 +1380,12 @@ Word Simulator::randomMask(double probability)
 Word Simulator::randomSubset(Word available, int count)
 {
   int size = std::popcount(available);
-  if (count <= 0) return 0;
-  if (count >= size) return available;
-  if (count > size / 2) return available ^ randomSubset(available, size - count);
+  if (count <= 0)
+    return 0;
+  if (count >= size)
+    return available;
+  if (count > size / 2)
+    return available ^ randomSubset(available, size - count);
   Word selected = 0;
   while (count) {
     Word bit = Word{1} << (randomWord() >> 58);
@@ -1279,7 +1401,8 @@ Word Simulator::randomSubset(Word available, int count)
 bool Simulator::run()
 {
   _random_state += simulationCount("IPW_POWER_SIM_SEED", 0, 0, 1000000);
-  if (!build()) return false;
+  if (!build())
+    return false;
   const int warmup = simulationCount("IPW_POWER_SIM_WARMUP", 128 * _steps_per_period, 0, 1000000);
   const int samples = simulationCount("IPW_POWER_SIM_SAMPLES", 1024 * _steps_per_period, 128, 1000000);
   const bool balanced = simulationCount("IPW_POWER_SIM_BALANCED_INPUTS", 1, 0, 1);
@@ -1293,10 +1416,12 @@ bool Simulator::run()
     for (auto& root : _roots) {
       if (balanced && !root.clock && root.activity.get_static_probability() == 0.5) {
         _values[root.node] = randomSubset(kOnes, 32);
-      } else if (batch) _values[root.node] = randomMask(root.activity.get_static_probability());
+      } else if (batch)
+        _values[root.node] = randomMask(root.activity.get_static_probability());
     }
     settle();
-    for (auto& seq : _sequentials) seq.previous_clock = evaluate(seq.clock);
+    for (auto& seq : _sequentials)
+      seq.previous_clock = evaluate(seq.clock);
     std::vector<Word> previous = _values;
     for (int sample = 0; sample < warmup + samples; ++sample) {
       // Clock edges are on the step boundary; random-input events occur one
@@ -1318,17 +1443,21 @@ bool Simulator::run()
       for (auto& root : _roots) {
         if (root.clock && root.clock->get_period() > 0.0) {
           double phase = std::fmod(time - root.clock->get_rise_edge(), root.clock->get_period());
-          if (phase < 0.0) phase += root.clock->get_period();
+          if (phase < 0.0)
+            phase += root.clock->get_period();
           double high_time = root.clock->get_fall_edge() - root.clock->get_rise_edge();
-          if (high_time <= 0.0) high_time += root.clock->get_period();
+          if (high_time <= 0.0)
+            high_time += root.clock->get_period();
           _values[root.node] = phase < high_time ? kOnes : 0;
         }
       }
       settle();
-      if (!advance()) return false;
+      if (!advance())
+        return false;
       collect(1);
       for (auto& root : _roots) {
-        if (root.clock && root.clock->get_period() > 0.0) continue;
+        if (root.clock && root.clock->get_period() > 0.0)
+          continue;
         Word value = _values[root.node];
         if (balanced && root.activity.get_static_probability() == 0.5) {
           // Preserve the annotated 50% probability across the population.
@@ -1338,20 +1467,25 @@ bool Simulator::run()
           double expected = 32.0 * root.rise_probability;
           int count = static_cast<int>(expected);
           double draw = static_cast<double>(randomWord() >> 11) / 9007199254740992.0;
-          if (draw < expected - count) ++count;
+          if (draw < expected - count)
+            ++count;
           value ^= randomSubset(value, count) | randomSubset(~value, count);
-        } else if (root.rise_probability == root.fall_probability) value ^= randomMask(root.rise_probability);
-        else value = (value & ~randomMask(root.fall_probability)) | (~value & randomMask(root.rise_probability));
+        } else if (root.rise_probability == root.fall_probability)
+          value ^= randomMask(root.rise_probability);
+        else
+          value = (value & ~randomMask(root.fall_probability)) | (~value & randomMask(root.rise_probability));
         _values[root.node] = value;
       }
 
       settle();
-      if (!advance()) return false;
+      if (!advance())
+        return false;
       collect(3);
     }
   }
   std::map<std::size_t, PowerActivity> annotated;
-  for (auto& root : _roots) annotated[root.node] = root.activity;
+  for (auto& root : _roots)
+    annotated[root.node] = root.activity;
   for (auto& [pin, id] : _pin_nodes) {
     PowerActivity activity;
     activity.set_is_valid(true);
@@ -1359,7 +1493,8 @@ bool Simulator::run()
     activity.set_rise_transition_density(static_cast<double>(rises[id]) / (64.0 * samples * batches * _step));
     activity.set_fall_transition_density(static_cast<double>(falls[id]) / (64.0 * samples * batches * _step));
     activity.set_origin(PowerActivityOrigin::kPropagated);
-    if (annotated.count(id)) activity = annotated[id];
+    if (annotated.count(id))
+      activity = annotated[id];
     if (_constants.count(id)) {
       activity.set_static_probability(_constants[id] ? 1.0 : 0.0);
       activity.set_transition_density(0.0);
@@ -1367,8 +1502,20 @@ bool Simulator::run()
     }
     _database.get_power_activity_map()[pin] = activity;
   }
-  PWLOG.info(Loc::current(), "Simulated ", _gates.size(), " output functions and ", _sequentials.size(),
-              " sequential states with 64 trajectories and ", samples, " samples in ", batches, " batches; ", _implied_root_count, " implied activity roots.");
+  PWLOG.info(
+      Loc::current(),
+      "Simulated ",
+      _gates.size(),
+      " output functions and ",
+      _sequentials.size(),
+      " sequential states with 64 trajectories and ",
+      samples,
+      " samples in ",
+      batches,
+      " batches; ",
+      _implied_root_count,
+      " implied activity roots."
+  );
   return true;
 }
 }  // namespace

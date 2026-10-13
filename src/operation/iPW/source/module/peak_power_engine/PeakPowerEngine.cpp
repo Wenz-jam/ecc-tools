@@ -79,8 +79,14 @@ void PeakPowerEngine::run(const std::string& vcd_file_path)
   peak_power_summary.set_is_enabled(true);
 
   const vcd::ActivityModelOptions activity_options = buildActivityModelOptions();
-  PWLOG.info(Loc::current(), "Activity model = time_based (X transition derate = ", activity_options.x_transition_derate_factor,
-             ", include initial X transitions = ", activity_options.include_initial_x_transitions ? "true" : "false", ")");
+  PWLOG.info(
+      Loc::current(),
+      "Activity model = time_based (X transition derate = ",
+      activity_options.x_transition_derate_factor,
+      ", include initial X transitions = ",
+      activity_options.include_initial_x_transitions ? "true" : "false",
+      ")"
+  );
 
   const int32_t thread_num = resolveThreadNum();
   PWLOG.info(Loc::current(), "Window analysis runs on ", thread_num, " thread(s).");
@@ -89,7 +95,8 @@ void PeakPowerEngine::run(const std::string& vcd_file_path)
 
 #pragma omp parallel for schedule(static, 1) num_threads(thread_num)
   for (int32_t worker_id = 0; worker_id < thread_num; worker_id++) {
-    worker_result_list[worker_id] = analyzeWindows(vcd_file_path, window_length, worker_id, thread_num, workspace_list[worker_id]);
+    worker_result_list[worker_id]
+        = analyzeWindows(vcd_file_path, window_length, worker_id, thread_num, workspace_list[worker_id]);
   }
 
   bool is_open = true;
@@ -106,8 +113,14 @@ void PeakPowerEngine::run(const std::string& vcd_file_path)
   mergeWorkerResults(worker_result_list, workspace_list, window_num, truncated_window_num);
 
   if (truncated_window_num > 0) {
-    PWLOG.info(Loc::current(), "Skipped ", truncated_window_num, " truncated window(s) shorter than the ", window_length,
-               " ns analysis window.");
+    PWLOG.info(
+        Loc::current(),
+        "Skipped ",
+        truncated_window_num,
+        " truncated window(s) shorter than the ",
+        window_length,
+        " ns analysis window."
+    );
   }
   if (window_num == 0) {
     PWLOG.error(Loc::current(), "The VCD holds no complete ", window_length, " ns window; check the waveform!");
@@ -115,8 +128,18 @@ void PeakPowerEngine::run(const std::string& vcd_file_path)
   }
 
   const PeakPowerValue& total_peak_value = database.get_peak_power_summary().get_total_peak_value();
-  PWLOG.info(Loc::current(), "Analyzed ", window_num, " window(s): peak power ", total_peak_value.get_power(), " W at ",
-             total_peak_value.get_begin_time(), " ns - ", total_peak_value.get_end_time(), " ns");
+  PWLOG.info(
+      Loc::current(),
+      "Analyzed ",
+      window_num,
+      " window(s): peak power ",
+      total_peak_value.get_power(),
+      " W at ",
+      total_peak_value.get_begin_time(),
+      " ns - ",
+      total_peak_value.get_end_time(),
+      " ns"
+  );
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
 
@@ -153,8 +176,14 @@ double PeakPowerEngine::resolveWindowLength()
     }
   }
   if (window_length > 0.0) {
-    PWLOG.info(Loc::current(), "Reference clock '", reference_clock_name, "' period ", window_length,
-               " ns is used as the peak analysis window.");
+    PWLOG.info(
+        Loc::current(),
+        "Reference clock '",
+        reference_clock_name,
+        "' period ",
+        window_length,
+        " ns is used as the peak analysis window."
+    );
   }
   return window_length;
 }
@@ -169,9 +198,13 @@ int32_t PeakPowerEngine::resolveThreadNum()
   return std::max(thread_num, 1);
 }
 
-PeakPowerEngine::WindowWorkerResult PeakPowerEngine::analyzeWindows(const std::string& vcd_file_path, const double window_length,
-                                                                    const int32_t worker_id, const int32_t worker_num,
-                                                                    Database::PowerWorkspace& workspace)
+PeakPowerEngine::WindowWorkerResult PeakPowerEngine::analyzeWindows(
+    const std::string& vcd_file_path,
+    const double window_length,
+    const int32_t worker_id,
+    const int32_t worker_num,
+    Database::PowerWorkspace& workspace
+)
 {
   WindowWorkerResult result;
   Database& database = PWDM.getDatabase();
@@ -209,9 +242,12 @@ PeakPowerEngine::WindowWorkerResult PeakPowerEngine::analyzeWindows(const std::s
   return result;
 }
 
-void PeakPowerEngine::mergeWorkerResults(const std::vector<WindowWorkerResult>& worker_result_list,
-                                         const std::vector<Database::PowerWorkspace>& workspace_list, std::size_t& window_num,
-                                         std::size_t& truncated_window_num)
+void PeakPowerEngine::mergeWorkerResults(
+    const std::vector<WindowWorkerResult>& worker_result_list,
+    const std::vector<Database::PowerWorkspace>& workspace_list,
+    std::size_t& window_num,
+    std::size_t& truncated_window_num
+)
 {
   // Serial analysis leaves the last complete window in the database, so adopt the workspace that
   // holds it before folding in the peaks.
@@ -243,15 +279,22 @@ void PeakPowerEngine::mergeWorkerResults(const std::vector<WindowWorkerResult>& 
   PeakPowerSummary& peak_power_summary = database.get_peak_power_summary();
   for (const Database::PowerWorkspace& workspace : workspace_list) {
     peak_power_summary.get_total_peak_value().merge(workspace.peak_power_summary.get_total_peak_value());
-    for (const std::pair<const std::string, PeakPowerValue>& instance_peak_pair : workspace.peak_power_summary.get_instance_peak_value_map()) {
+    for (const std::pair<const std::string, PeakPowerValue>& instance_peak_pair :
+         workspace.peak_power_summary.get_instance_peak_value_map()) {
       peak_power_summary.get_instance_peak_value_map()[instance_peak_pair.first].merge(instance_peak_pair.second);
     }
     const std::vector<PeakPowerWindow>& worker_window_list = workspace.peak_power_summary.get_window_list();
-    peak_power_summary.get_window_list().insert(peak_power_summary.get_window_list().end(), worker_window_list.begin(), worker_window_list.end());
+    peak_power_summary.get_window_list()
+        .insert(peak_power_summary.get_window_list().end(), worker_window_list.begin(), worker_window_list.end());
   }
   std::vector<PeakPowerWindow>& window_list = peak_power_summary.get_window_list();
-  std::sort(window_list.begin(), window_list.end(),
-            [](const PeakPowerWindow& left_window, const PeakPowerWindow& right_window) { return left_window.window_index < right_window.window_index; });
+  std::sort(
+      window_list.begin(),
+      window_list.end(),
+      [](const PeakPowerWindow& left_window, const PeakPowerWindow& right_window) {
+        return left_window.window_index < right_window.window_index;
+      }
+  );
 }
 
 // 峰值流程固定使用 time_based 口径；折算系数与初始 X 处理从配置读取，默认值与 PTPX 一致。
@@ -272,14 +315,17 @@ void PeakPowerEngine::updatePeakPower(const vcd::VcdWindowSignalActivity& window
   const std::size_t window_index = window_activity.get_window_index();
 
   PeakPowerSummary& peak_power_summary = database.get_peak_power_summary();
-  peak_power_summary.get_window_list().push_back({window_index, window_begin_time, window_end_time,
-                                                  database.get_power_summary().get_total_power_value().get_total_power()});
-  peak_power_summary.get_total_peak_value().update(database.get_power_summary().get_total_power_value(), window_begin_time,
-                                                   window_end_time, window_index);
+  peak_power_summary.get_window_list().push_back(
+      {window_index,
+       window_begin_time,
+       window_end_time,
+       database.get_power_summary().get_total_power_value().get_total_power()}
+  );
+  peak_power_summary.get_total_peak_value()
+      .update(database.get_power_summary().get_total_power_value(), window_begin_time, window_end_time, window_index);
   for (std::pair<const std::string, InstancePower>& instance_power_pair : database.get_instance_power_map()) {
-    peak_power_summary.get_instance_peak_value_map()[instance_power_pair.first].update(instance_power_pair.second.get_power_value(),
-                                                                                       window_begin_time, window_end_time,
-                                                                                       window_index);
+    peak_power_summary.get_instance_peak_value_map()[instance_power_pair.first]
+        .update(instance_power_pair.second.get_power_value(), window_begin_time, window_end_time, window_index);
   }
 }
 

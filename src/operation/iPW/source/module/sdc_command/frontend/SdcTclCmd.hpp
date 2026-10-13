@@ -34,6 +34,7 @@ class SdcTclCmd : public ecc::TclCmd
   void setTclError(std::string error_message) { _error_message = std::move(error_message); }
   void warn(const std::string& message) const;
   void setResult(std::vector<std::string> result);
+
  private:
   void resetExecutionState();
   void setInterpreterError(Tcl_Interp* interp) const;
