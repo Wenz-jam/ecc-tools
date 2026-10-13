@@ -82,15 +82,15 @@ class PowerPropagator
   PowerActivity getInitialSequentialOutputActivity();
   void propagateCombinationalActivity(PPModel& pp_model);
   PowerActivity getPropagatedActivity(PowerActivity source_activity);
-  void propagateOutputActivity(std::string& pin_name, PPModel& pp_model);
-  PowerActivity getOutputActivity(std::string& pin_name, PPModel& pp_model);
+  void propagateOutputActivity(uint32_t pin_index, PPModel& pp_model);
+  PowerActivity getOutputActivity(uint32_t pin_index, PPModel& pp_model);
   void limitDataActivity(
       Database& database,
-      std::string& pin_name,
+      uint32_t pin_index,
       PowerActivity& activity,
       double minimum_clock_period
   );
-  bool shouldLimitDataActivity(Database& database, std::string& pin_name, PowerActivity& activity);
+  bool shouldLimitDataActivity(Database& database, uint32_t pin_index, PowerActivity& activity);
   double getProbabilityLimitedTransitionDensity(PowerActivity& activity, double minimum_clock_period);
   void scaleTransitionDensity(PowerActivity& activity, double maximum_transition_density);
   PowerActivity getClockGateOutputActivity(std::string& pin_name, Instance& instance);
@@ -104,7 +104,7 @@ class PowerPropagator
   bool isClockGateClockPin(std::string& pin_name, TimingCellPort& timing_cell_port);
   PowerActivity normalizeConstantActivity(PowerActivity activity);
   std::map<std::string, PowerActivity> getInputActivityMap(Instance& instance);
-  PowerActivity getFallbackInputActivity(std::string& pin_name);
+  PowerActivity getFallbackInputActivity(uint32_t pin_index);
   void propagateNetActivity(Arc& arc);
   void propagateSequentialActivity(PPModel& pp_model);
   PowerActivity getSequentialOutputActivity(Instance& instance);
@@ -115,7 +115,7 @@ class PowerPropagator
   );
   PowerActivity getPinActivity(std::string& pin_name);
   PowerActivity getPinActivity(uint32_t pin_index);
-  bool isOutputPin(std::string& pin_name);
+  bool isOutputPin(uint32_t pin_index);
   bool isClockSource(std::string& pin_name);
   bool simulateVectorlessActivity(double reference_period);
 

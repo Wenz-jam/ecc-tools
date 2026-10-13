@@ -41,13 +41,18 @@ class Database
  public:
   // Per-window analysis state. One instance is the main workspace, extra ones are handed to the
   // peak engine workers so that every worker writes its own activity, power and peak maps.
-  // 每 pin 的静态解析结果（构建后只读）。S1 先放 pin 指针与全名，
-  // 供按 pin 索引的接口在需要回退（如 minimum slew）时取名字。
+  // 每 pin 的静态解析结果（构建后只读）：把传播/分析热路径上的
+  // pin_map -> instance_map -> cell_map -> port_map 四级查找压缩成一次索引访问。
   struct PinStaticContext
   {
     uint32_t pin_index = 0;
     Pin* pin = nullptr;
     const std::string* full_name = nullptr;
+    Instance* instance = nullptr;         // port/悬空 pin -> nullptr
+    TimingCell* timing_cell = nullptr;    // 黑盒 -> nullptr
+    TimingCellPort* cell_port = nullptr;  // 该 pin 对应的 cell port
+    bool is_output_pin = false;           // == 原 isOutputPin(pin_name)
+    bool is_clock_point = false;          // == timing_point_map[pin].get_is_clock_point()
   };
 
   struct PowerWorkspace
@@ -145,6 +150,12 @@ class Database
   // ---- 引脚活动性（按 pin 索引）----
   PowerActivity& getOrCreatePowerActivity(const uint32_t pin_index, bool& is_created)
   {
+    static PowerActivity invalid_activity;
+    if (pin_index >= get_workspace().activity_stamp.size()) {
+      is_created = false;
+      invalid_activity = PowerActivity();
+      return invalid_activity;
+    }
     PowerWorkspace& workspace = get_workspace();
     is_created = workspace.activity_stamp[pin_index] != workspace.activity_generation;
     if (is_created) {
@@ -165,6 +176,9 @@ class Database
   const PowerActivity* findPowerActivity(const uint32_t pin_index) const
   {
     const PowerWorkspace& workspace = get_workspace();
+    if (pin_index >= workspace.activity_stamp.size()) {
+      return nullptr;
+    }
     return workspace.activity_stamp[pin_index] == workspace.activity_generation
                ? &workspace.activity_list[pin_index]
                : nullptr;
@@ -174,6 +188,10 @@ class Database
   std::vector<NetPower>& get_net_power_list() { return get_workspace().net_power_list; }
   std::vector<uint8_t>& get_net_power_written() { return get_workspace().net_power_written; }
   std::vector<PinStaticContext>& get_pin_static_context_list() { return _pin_static_context_list; }
+  // 传播路径的索引化视图（构建后只读）。
+  std::vector<uint32_t>& get_signal_order_pin_index_list() { return _signal_order_pin_index_list; }
+  std::vector<std::vector<uint32_t>>& get_outgoing_arc_index_list() { return _outgoing_arc_index_list; }
+  std::vector<std::vector<uint32_t>>& get_incoming_arc_index_list() { return _incoming_arc_index_list; }
   PowerSummary& get_power_summary() { return get_workspace().power_summary; }
   PeakPowerSummary& get_peak_power_summary() { return get_workspace().peak_power_summary; }
   TimingLibrary& get_timing_library() { return _timing_library; }
@@ -196,6 +214,9 @@ class Database
   std::map<std::string, Pin> _pin_map;
   std::unordered_map<std::string, bool> _pin_is_output_map;
   std::vector<PinStaticContext> _pin_static_context_list;
+  std::vector<uint32_t> _signal_order_pin_index_list;
+  std::vector<std::vector<uint32_t>> _outgoing_arc_index_list;
+  std::vector<std::vector<uint32_t>> _incoming_arc_index_list;
   std::map<std::string, Net> _net_map;
   std::vector<Arc> _arc_list;
   std::map<std::string, std::vector<std::size_t>> _outgoing_arc_list_map;

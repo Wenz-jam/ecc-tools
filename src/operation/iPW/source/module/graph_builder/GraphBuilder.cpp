@@ -271,6 +271,7 @@ void GraphBuilder::buildPowerIndex()
   for (std::pair<const std::string, Net>& net_pair : database.get_net_map()) {
     net_pair.second.set_index(index++);
   }
+  // 每 pin 的静态解析：instance / cell / cell port / 输出判定 / 时钟点。
   std::vector<Database::PinStaticContext>& pin_static_context_list = database.get_pin_static_context_list();
   pin_static_context_list.assign(database.get_pin_map().size(), Database::PinStaticContext());
   for (std::pair<const std::string, Pin>& pin_pair : database.get_pin_map()) {
@@ -279,7 +280,66 @@ void GraphBuilder::buildPowerIndex()
     pin_static_context.pin_index = static_cast<uint32_t>(pin_index);
     pin_static_context.pin = &pin_pair.second;
     pin_static_context.full_name = &pin_pair.first;
+    if (!pin_pair.second.get_is_port()) {
+      auto instance_iter = database.get_instance_map().find(pin_pair.second.get_instance_name());
+      if (instance_iter != database.get_instance_map().end()) {
+        pin_static_context.instance = &instance_iter->second;
+        auto cell_iter = database.get_timing_library().get_cell_map().find(instance_iter->second.get_cell_name());
+        if (cell_iter != database.get_timing_library().get_cell_map().end()) {
+          pin_static_context.timing_cell = &cell_iter->second;
+          auto port_iter = cell_iter->second.get_port_map().find(pin_pair.second.get_pin_name());
+          if (port_iter != cell_iter->second.get_port_map().end()) {
+            pin_static_context.cell_port = &port_iter->second;
+            pin_static_context.is_output_pin = port_iter->second.get_is_output();
+          }
+        }
+      }
+    }
+    auto timing_point_iter = database.get_timing_point_map().find(pin_pair.first);
+    pin_static_context.is_clock_point = timing_point_iter != database.get_timing_point_map().end()
+                                        && timing_point_iter->second.get_is_clock_point();
   }
+  // 弧端点索引（构建完成后一次性解析）
+  for (Arc& arc : database.get_arc_list()) {
+    auto source_iter = database.get_pin_map().find(arc.get_source_pin());
+    if (source_iter != database.get_pin_map().end()) {
+      arc.set_source_pin_index(static_cast<uint32_t>(source_iter->second.get_index()));
+    }
+    auto sink_iter = database.get_pin_map().find(arc.get_sink_pin());
+    if (sink_iter != database.get_pin_map().end()) {
+      arc.set_sink_pin_index(static_cast<uint32_t>(sink_iter->second.get_index()));
+    }
+  }
+  // 信号序与出入弧邻接表（按 pin 索引摊平）
+  std::vector<uint32_t>& signal_order_pin_index_list = database.get_signal_order_pin_index_list();
+  signal_order_pin_index_list.clear();
+  signal_order_pin_index_list.reserve(database.get_signal_order_list().size());
+  for (std::string& pin_name : database.get_signal_order_list()) {
+    auto pin_iter = database.get_pin_map().find(pin_name);
+    if (pin_iter != database.get_pin_map().end()) {
+      signal_order_pin_index_list.push_back(static_cast<uint32_t>(pin_iter->second.get_index()));
+    }
+  }
+  std::vector<std::vector<uint32_t>>& outgoing_arc_index_list = database.get_outgoing_arc_index_list();
+  std::vector<std::vector<uint32_t>>& incoming_arc_index_list = database.get_incoming_arc_index_list();
+  outgoing_arc_index_list.assign(database.get_pin_map().size(), std::vector<uint32_t>());
+  incoming_arc_index_list.assign(database.get_pin_map().size(), std::vector<uint32_t>());
+  const auto fill_arc_index_list = [&database](std::map<std::string, std::vector<std::size_t>>& arc_list_map,
+                                               std::vector<std::vector<uint32_t>>& arc_index_list) {
+    for (std::pair<const std::string, std::vector<std::size_t>>& arc_list_pair : arc_list_map) {
+      auto pin_iter = database.get_pin_map().find(arc_list_pair.first);
+      if (pin_iter == database.get_pin_map().end()) {
+        continue;
+      }
+      std::vector<uint32_t>& target_list = arc_index_list[pin_iter->second.get_index()];
+      target_list.reserve(arc_list_pair.second.size());
+      for (std::size_t arc_idx : arc_list_pair.second) {
+        target_list.push_back(static_cast<uint32_t>(arc_idx));
+      }
+    }
+  };
+  fill_arc_index_list(database.get_outgoing_arc_list_map(), outgoing_arc_index_list);
+  fill_arc_index_list(database.get_incoming_arc_list_map(), incoming_arc_index_list);
   // 注意：每窗口容器（resizePowerWorkspace）在 PWInterface::wrapPowerIndex() 里
   // 已经分配好；这里不能重复分配，否则会清掉 init 阶段写入的 VCD 注解。
 }

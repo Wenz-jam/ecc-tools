@@ -569,22 +569,24 @@ PowerActivity PowerPropagator::getInitialSequentialOutputActivity()
 void PowerPropagator::propagateCombinationalActivity(PPModel& pp_model)
 {
   Database& database = PWDM.getDatabase();
-  for (std::string& pin_name : database.get_signal_order_list()) {
-    if (isOutputPin(pin_name)) {
-      propagateOutputActivity(pin_name, pp_model);
+  std::vector<uint32_t>& signal_order_pin_index_list = database.get_signal_order_pin_index_list();
+  std::vector<std::vector<uint32_t>>& outgoing_arc_index_list = database.get_outgoing_arc_index_list();
+  for (uint32_t pin_index : signal_order_pin_index_list) {
+    if (isOutputPin(pin_index)) {
+      propagateOutputActivity(pin_index, pp_model);
     }
-    for (std::size_t arc_idx : database.get_outgoing_arc_list_map()[pin_name]) {
+    for (uint32_t arc_idx : outgoing_arc_index_list[pin_index]) {
       Arc& arc = database.get_arc_list()[arc_idx];
       if (arc.get_is_disable_arc() || arc.get_is_loop_disable()) {
         continue;
       }
       if (arc.get_type() == ArcType::kNet) {
         propagateNetActivity(arc);
-      } else if (arc.get_type() == ArcType::kCell && !isOutputPin(arc.get_sink_pin())) {
-        PowerActivity activity = getPinActivity(arc.get_source_pin());
+      } else if (arc.get_type() == ArcType::kCell && !isOutputPin(arc.get_sink_pin_index())) {
+        PowerActivity activity = getPinActivity(arc.get_source_pin_index());
         if (activity.get_is_valid()) {
           activity = getPropagatedActivity(activity);
-          setPinActivity(arc.get_sink_pin(), activity);
+          setPinActivity(arc.get_sink_pin_index(), activity);
         }
       }
     }
@@ -599,74 +601,57 @@ PowerActivity PowerPropagator::getPropagatedActivity(PowerActivity source_activi
   return source_activity;
 }
 
-void PowerPropagator::propagateOutputActivity(std::string& pin_name, PPModel& pp_model)
+void PowerPropagator::propagateOutputActivity(const uint32_t pin_index, PPModel& pp_model)
 {
   Database& database = PWDM.getDatabase();
-  auto pin_iter = database.get_pin_map().find(pin_name);
-  if (pin_iter == database.get_pin_map().end()) {
+  const Database::PinStaticContext& pin_static_context = database.get_pin_static_context_list()[pin_index];
+  if (pin_static_context.instance != nullptr && isSequentialForPower(*pin_static_context.instance)) {
     return;
   }
-  Pin& pin = pin_iter->second;
-  auto instance_iter = database.get_instance_map().find(pin.get_instance_name());
-  if (instance_iter != database.get_instance_map().end() && isSequentialForPower(instance_iter->second)) {
-    return;
-  }
-  PowerActivity activity = getOutputActivity(pin_name, pp_model);
+  PowerActivity activity = getOutputActivity(pin_index, pp_model);
   if (activity.get_is_valid()) {
-    setPinActivity(pin_name, activity);
+    setPinActivity(pin_index, activity);
   }
 }
 
-PowerActivity PowerPropagator::getOutputActivity(std::string& pin_name, PPModel& pp_model)
+PowerActivity PowerPropagator::getOutputActivity(const uint32_t pin_index, PPModel& pp_model)
 {
   Database& database = PWDM.getDatabase();
-  auto pin_iter = database.get_pin_map().find(pin_name);
-  if (pin_iter == database.get_pin_map().end()) {
-    return PowerActivity();
+  const Database::PinStaticContext& pin_static_context = database.get_pin_static_context_list()[pin_index];
+  if (pin_static_context.instance == nullptr || pin_static_context.timing_cell == nullptr
+      || pin_static_context.cell_port == nullptr) {
+    return getFallbackInputActivity(pin_index);
   }
-  Pin& pin = pin_iter->second;
-  auto instance_iter = database.get_instance_map().find(pin.get_instance_name());
-  if (instance_iter == database.get_instance_map().end()) {
-    return getFallbackInputActivity(pin_name);
-  }
-  Instance& instance = instance_iter->second;
-  auto cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
-  if (cell_iter == database.get_timing_library().get_cell_map().end()) {
-    return getFallbackInputActivity(pin_name);
-  }
-  TimingCell& timing_cell = cell_iter->second;
-  auto port_iter = timing_cell.get_port_map().find(pin.get_pin_name());
-  if (port_iter == timing_cell.get_port_map().end()) {
-    return getFallbackInputActivity(pin_name);
-  }
-  TimingCellPort& timing_cell_port = port_iter->second;
+  Instance& instance = *pin_static_context.instance;
+  TimingCellPort& timing_cell_port = *pin_static_context.cell_port;
   if (!timing_cell_port.get_function_expression().get_is_empty()) {
     std::map<std::string, PowerActivity> input_activity_map = getInputActivityMap(instance);
     PowerActivity activity = timing_cell_port.get_function_expression().evaluate_activity(input_activity_map);
     if (activity.get_is_valid()) {
-      limitDataActivity(database, pin_name, activity, pp_model.get_minimum_clock_period());
+      limitDataActivity(database, pin_index, activity, pp_model.get_minimum_clock_period());
       return normalizeConstantActivity(activity);
     }
   }
+  std::string& pin_name = *const_cast<std::string*>(pin_static_context.full_name);
   if (isClockGateOutputPin(pin_name, instance)) {
     PowerActivity activity = getClockGateOutputActivity(pin_name, instance);
     if (activity.get_is_valid()) {
       return activity;
     }
   }
-  PowerActivity activity = getFallbackInputActivity(pin_name);
-  limitDataActivity(database, pin_name, activity, pp_model.get_minimum_clock_period());
+  PowerActivity activity = getFallbackInputActivity(pin_index);
+  limitDataActivity(database, pin_index, activity, pp_model.get_minimum_clock_period());
   return activity;
 }
 
 void PowerPropagator::limitDataActivity(
     Database& database,
-    std::string& pin_name,
+    const uint32_t pin_index,
     PowerActivity& activity,
     double minimum_clock_period
 )
 {
-  if (!shouldLimitDataActivity(database, pin_name, activity) || minimum_clock_period <= PW_ERROR) {
+  if (!shouldLimitDataActivity(database, pin_index, activity) || minimum_clock_period <= PW_ERROR) {
     return;
   }
 
@@ -676,15 +661,14 @@ void PowerPropagator::limitDataActivity(
   scaleTransitionDensity(activity, std::min(default_transition_density, probability_limited_transition_density));
 }
 
-bool PowerPropagator::shouldLimitDataActivity(Database& database, std::string& pin_name, PowerActivity& activity)
+bool PowerPropagator::shouldLimitDataActivity(Database& database, const uint32_t pin_index, PowerActivity& activity)
 {
   if (!activity.get_is_valid() || activity.get_origin() == PowerActivityOrigin::kClock
       || activity.get_origin() == PowerActivityOrigin::kVcd
       || activity.get_origin() == PowerActivityOrigin::kConstant) {
     return false;
   }
-  return database.get_timing_point_map().count(pin_name) == 0
-         || !database.get_timing_point_map()[pin_name].get_is_clock_point();
+  return !database.get_pin_static_context_list()[pin_index].is_clock_point;
 }
 
 double PowerPropagator::getProbabilityLimitedTransitionDensity(PowerActivity& activity, double minimum_clock_period)
@@ -845,15 +829,16 @@ std::map<std::string, PowerActivity> PowerPropagator::getInputActivityMap(Instan
   return input_activity_map;
 }
 
-PowerActivity PowerPropagator::getFallbackInputActivity(std::string& pin_name)
+PowerActivity PowerPropagator::getFallbackInputActivity(const uint32_t pin_index)
 {
   Database& database = PWDM.getDatabase();
-  for (std::size_t arc_idx : database.get_incoming_arc_list_map()[pin_name]) {
+  std::vector<std::vector<uint32_t>>& incoming_arc_index_list = database.get_incoming_arc_index_list();
+  for (uint32_t arc_idx : incoming_arc_index_list[pin_index]) {
     Arc& arc = database.get_arc_list()[arc_idx];
     if (arc.get_type() != ArcType::kCell || arc.get_is_disable_arc() || arc.get_is_loop_disable()) {
       continue;
     }
-    PowerActivity activity = getPinActivity(arc.get_source_pin());
+    PowerActivity activity = getPinActivity(arc.get_source_pin_index());
     if (activity.get_is_valid()) {
       return getPropagatedActivity(activity);
     }
@@ -863,12 +848,12 @@ PowerActivity PowerPropagator::getFallbackInputActivity(std::string& pin_name)
 
 void PowerPropagator::propagateNetActivity(Arc& arc)
 {
-  PowerActivity activity = getPinActivity(arc.get_source_pin());
+  PowerActivity activity = getPinActivity(arc.get_source_pin_index());
   if (!activity.get_is_valid()) {
     return;
   }
   activity = getPropagatedActivity(activity);
-  setPinActivity(arc.get_sink_pin(), activity);
+  setPinActivity(arc.get_sink_pin_index(), activity);
 }
 
 void PowerPropagator::propagateSequentialActivity(PPModel& pp_model)
@@ -953,34 +938,11 @@ PowerActivity PowerPropagator::getPinActivity(const uint32_t pin_index)
   return activity != nullptr ? *activity : PowerActivity();
 }
 
-bool PowerPropagator::isOutputPin(std::string& pin_name)
+bool PowerPropagator::isOutputPin(const uint32_t pin_index)
 {
-  Database& database = PWDM.getDatabase();
-  // Fast path: GraphBuilder precomputed the flag for every pin.
-  const std::unordered_map<std::string, bool>& pin_is_output_map = database.get_pin_is_output_map();
-  if (!pin_is_output_map.empty()) {
-    auto is_output_pin_iter = pin_is_output_map.find(pin_name);
-    return is_output_pin_iter != pin_is_output_map.end() && is_output_pin_iter->second;
-  }
-  auto pin_iter = database.get_pin_map().find(pin_name);
-  if (pin_iter == database.get_pin_map().end()) {
-    return false;
-  }
-  Pin& pin = pin_iter->second;
-  if (pin.get_is_port()) {
-    return false;
-  }
-  auto instance_iter = database.get_instance_map().find(pin.get_instance_name());
-  if (instance_iter == database.get_instance_map().end()) {
-    return false;
-  }
-  auto cell_iter = database.get_timing_library().get_cell_map().find(instance_iter->second.get_cell_name());
-  if (cell_iter == database.get_timing_library().get_cell_map().end()) {
-    return false;
-  }
-  TimingCell& timing_cell = cell_iter->second;
-  auto port_iter = timing_cell.get_port_map().find(pin.get_pin_name());
-  return port_iter != timing_cell.get_port_map().end() && port_iter->second.get_is_output();
+  const std::vector<Database::PinStaticContext>& pin_static_context_list
+      = PWDM.getDatabase().get_pin_static_context_list();
+  return pin_index < pin_static_context_list.size() && pin_static_context_list[pin_index].is_output_pin;
 }
 
 bool PowerPropagator::isClockSource(std::string& pin_name)
