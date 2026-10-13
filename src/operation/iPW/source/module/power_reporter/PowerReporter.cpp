@@ -135,19 +135,62 @@ void PowerReporter::reportNetPower(const std::string& directory_path, const int3
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
 
+void PowerReporter::reportPeakPowerWaveform(const std::string& file_path)
+{
+  Monitor monitor;
+
+  const PeakPowerSummary& peak_power_summary = PWDM.getDatabase().get_peak_power_summary();
+  if (!peak_power_summary.get_is_enabled() || peak_power_summary.get_window_list().empty()) {
+    PWLOG.error(Loc::current(), "No peak power waveform data found, run_pw -peak first!");
+    return;
+  }
+
+  const std::string waveform_file_path
+      = file_path.empty() 
+      ? PWUTIL.getString(PWDM.getConfig().pr_temp_directory_path, "peak_windows.tsv") 
+      : file_path;
+  std::ofstream* waveform_file = PWUTIL.getOutputFileStream(waveform_file_path);
+  (*waveform_file) << "# iPW_PEAK_WINDOW_V1\n";
+  (*waveform_file) << "window_index\tbegin_time_ns\tend_time_ns\tpower_w\n";
+  (*waveform_file) << std::setprecision(17);
+  for (const PeakPowerWindow& window : peak_power_summary.get_window_list()) {
+    (*waveform_file) << window.window_index << '\t' << window.begin_time << '\t' << window.end_time << '\t' << window.power << '\n';
+  }
+  PWUTIL.closeFileStream(waveform_file);
+
+  PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
+}
+
 // private
 
 PowerReporter* PowerReporter::_pr_instance = nullptr;
 
 void PowerReporter::outputPowerReport()
 {
-  std::ofstream* power_report_file = PWUTIL.getOutputFileStream(PWUTIL.getString(PWDM.getConfig().pr_temp_directory_path, "power.rpt"));
+  std::ofstream* power_report_file = PWUTIL.getOutputFileStream(
+    PWUTIL.getString(PWDM.getConfig().pr_temp_directory_path, "power.rpt")
+  );
   outputPowerDesignInfo(power_report_file);
   outputPowerUnitInfo(power_report_file);
-  outputPowerSummary(power_report_file);
-  outputPowerGroupList(power_report_file);
-  outputPowerAttribute(power_report_file);
+  if (PWDM.getDatabase().get_peak_power_summary().get_is_enabled()) {
+    outputPeakPower(power_report_file);
+  } else {
+    outputPowerSummary(power_report_file);
+    outputPowerGroupList(power_report_file);
+    outputPowerAttribute(power_report_file);
+  }
   PWUTIL.closeFileStream(power_report_file);
+}
+
+void PowerReporter::outputPeakPower(std::ofstream* power_report_file)
+{
+  PeakPowerValue& total_peak_value = PWDM.getDatabase().get_peak_power_summary().get_total_peak_value();
+  (*power_report_file) << "Peak Power             = " 
+                       << std::scientific << std::setprecision(5) 
+                       << total_peak_value.get_power()
+                       << std::defaultfloat << " W\n";
+  (*power_report_file) << "Peak Time              = " 
+                       << total_peak_value.get_begin_time() << " ns\n";
 }
 
 void PowerReporter::outputPowerDesignInfo(std::ofstream* power_report_file)
@@ -155,13 +198,16 @@ void PowerReporter::outputPowerDesignInfo(std::ofstream* power_report_file)
   Database& database = PWDM.getDatabase();
   TimingLibrary& timing_library = database.get_timing_library();
   (*power_report_file) << "Design : " << database.get_design_name() << "\n";
-  (*power_report_file) << "Global Operating Voltage = " << std::setprecision(4) << timing_library.get_nom_voltage() << "\n\n";
+  (*power_report_file) << "Global Operating Voltage = " << std::setprecision(4) 
+                       << timing_library.get_nom_voltage() << "\n\n";
 }
 
 void PowerReporter::outputPowerUnitInfo(std::ofstream* power_report_file)
 {
   TimingLibrary& timing_library = PWDM.getDatabase().get_timing_library();
-  std::string leakage_power_unit = timing_library.get_leakage_power_unit() ? *timing_library.get_leakage_power_unit() : "1mW";
+  std::string leakage_power_unit = timing_library.get_leakage_power_unit() 
+                                 ? *timing_library.get_leakage_power_unit() 
+                                 : "1mW";
   (*power_report_file) << "Dynamic Power Units = 1mW\n";
   (*power_report_file) << "Leakage Power Units = " << leakage_power_unit << "\n\n";
 }
@@ -218,17 +264,41 @@ void PowerReporter::outputInstancePower()
   (*instance_power_file) << "instance_name\tvoltage_v\tinternal_power_w\tswitching_power_w\tleakage_power_w\t"
                             "total_power_w\taverage_current_a\n";
   (*instance_power_file) << std::setprecision(17);
+  if (PWDM.getDatabase().get_peak_power_summary().get_is_enabled()) {
+    outputPeakInstancePower(instance_power_file);
+    PWUTIL.closeFileStream(instance_power_file);
+    return;
+  }
   for (std::pair<const std::string, InstancePower>& instance_power_pair : PWDM.getDatabase().get_instance_power_map()) {
     InstancePower& instance_power = instance_power_pair.second;
     PowerValue& power_value = instance_power.get_power_value();
-    double voltage = instance_power.get_voltage();
-    double total_power = power_value.get_total_power();
-    double average_current = voltage > 0.0 ? total_power / voltage : 0.0;
-    (*instance_power_file) << instance_power_pair.first << '\t' << voltage << '\t' << power_value.get_internal_power() << '\t';
-    (*instance_power_file) << power_value.get_switching_power() << '\t' << power_value.get_leakage_power() << '\t';
-    (*instance_power_file) << total_power << '\t' << average_current << '\n';
+    outputInstancePowerRow(instance_power_file, instance_power_pair.first, instance_power.get_voltage(), power_value);
   }
   PWUTIL.closeFileStream(instance_power_file);
+}
+
+// 峰值流程导出每个单元的峰值功耗（各单元取自己的峰窗口），而不是最后一个窗口的值。
+void PowerReporter::outputPeakInstancePower(std::ofstream* instance_power_file)
+{
+  Database& database = PWDM.getDatabase();
+  for (std::pair<const std::string, PeakPowerValue>& peak_pair : database.get_peak_power_summary().get_instance_peak_value_map()) {
+    double voltage = 0.0;
+    auto instance_power_iter = database.get_instance_power_map().find(peak_pair.first);
+    if (instance_power_iter != database.get_instance_power_map().end()) {
+      voltage = instance_power_iter->second.get_voltage();
+    }
+    outputInstancePowerRow(instance_power_file, peak_pair.first, voltage, peak_pair.second.get_power_value());
+  }
+}
+
+void PowerReporter::outputInstancePowerRow(std::ofstream* instance_power_file, const std::string& instance_name, const double voltage,
+                                           PowerValue& power_value)
+{
+  double total_power = power_value.get_total_power();
+  double average_current = voltage > 0.0 ? total_power / voltage : 0.0;
+  (*instance_power_file) << instance_name << '\t' << voltage << '\t' << power_value.get_internal_power() << '\t';
+  (*instance_power_file) << power_value.get_switching_power() << '\t' << power_value.get_leakage_power() << '\t';
+  (*instance_power_file) << total_power << '\t' << average_current << '\n';
 }
 
 void PowerReporter::outputCellPowerReport(const std::string& directory_path,

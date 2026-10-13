@@ -22,6 +22,7 @@
 #include "Net.hpp"
 #include "NetPower.hpp"
 #include "ParasiticNet.hpp"
+#include "PeakPowerSummary.hpp"
 #include "Pin.hpp"
 #include "PowerActivity.hpp"
 #include "PowerSummary.hpp"
@@ -35,6 +36,18 @@ namespace ipw {
 class Database
 {
  public:
+  // Per-window analysis state. One instance is the main workspace, extra ones are handed to the
+  // peak engine workers so that every worker writes its own activity, power and peak maps.
+  struct PowerWorkspace
+  {
+    std::map<std::string, PowerActivity> vcd_activity_map;
+    std::map<std::string, PowerActivity> power_activity_map;
+    std::map<std::string, InstancePower> instance_power_map;
+    std::map<std::string, NetPower> net_power_map;
+    PowerSummary power_summary;
+    PeakPowerSummary peak_power_summary;
+  };
+
   Database() = default;
   ~Database() = default;
   // getter
@@ -48,19 +61,28 @@ class Database
   std::vector<std::string>& get_source_pin_list() { return _source_pin_list; }
   std::vector<std::string>& get_signal_order_list() { return _signal_order_list; }
   std::map<std::string, TimingPoint>& get_timing_point_map() { return _timing_point_map; }
-  std::map<std::string, PowerActivity>& get_vcd_activity_map() { return _vcd_activity_map; }
-  std::map<std::string, PowerActivity>& get_power_activity_map() { return _power_activity_map; }
-  std::map<std::string, InstancePower>& get_instance_power_map() { return _instance_power_map; }
-  std::map<std::string, NetPower>& get_net_power_map() { return _net_power_map; }
-  PowerSummary& get_power_summary() { return _power_summary; }
+  PowerWorkspace& get_workspace() { return currentWorkspace() != nullptr ? *currentWorkspace() : _workspace; }
+  std::map<std::string, PowerActivity>& get_vcd_activity_map() { return get_workspace().vcd_activity_map; }
+  std::map<std::string, PowerActivity>& get_power_activity_map() { return get_workspace().power_activity_map; }
+  std::map<std::string, InstancePower>& get_instance_power_map() { return get_workspace().instance_power_map; }
+  std::map<std::string, NetPower>& get_net_power_map() { return get_workspace().net_power_map; }
+  PowerSummary& get_power_summary() { return get_workspace().power_summary; }
+  PeakPowerSummary& get_peak_power_summary() { return get_workspace().peak_power_summary; }
   TimingLibrary& get_timing_library() { return _timing_library; }
   std::map<std::string, ParasiticNet>& get_parasitic_net_map() { return _parasitic_net_map; }
   TimingConstraint& get_timing_constraint() { return _timing_constraint; }
   // setter
   void set_design_name(const std::string& design_name) { _design_name = design_name; }
+  void set_workspace(PowerWorkspace* workspace) { currentWorkspace() = workspace; }
   // function
 
  private:
+  static PowerWorkspace*& currentWorkspace()
+  {
+    static thread_local PowerWorkspace* workspace = nullptr;
+    return workspace;
+  }
+
   std::string _design_name;
   std::map<std::string, Instance> _instance_map;
   std::map<std::string, Pin> _pin_map;
@@ -71,11 +93,7 @@ class Database
   std::vector<std::string> _source_pin_list;
   std::vector<std::string> _signal_order_list;
   std::map<std::string, TimingPoint> _timing_point_map;
-  std::map<std::string, PowerActivity> _vcd_activity_map;
-  std::map<std::string, PowerActivity> _power_activity_map;
-  std::map<std::string, InstancePower> _instance_power_map;
-  std::map<std::string, NetPower> _net_power_map;
-  PowerSummary _power_summary;
+  PowerWorkspace _workspace;
   TimingLibrary _timing_library;
   std::map<std::string, ParasiticNet> _parasitic_net_map;
   TimingConstraint _timing_constraint;

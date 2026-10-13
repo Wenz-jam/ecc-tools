@@ -90,10 +90,11 @@ class PWInterface
 
 #if 1  // iPW
   void initPW(std::map<std::string, std::any> config_map);
-  void runPW();
+  void runPW(bool is_peak = false, bool is_avg = false);
   void destroyPW();
   void reportCellPower(const std::string& directory_path, const int32_t top_num, const bool is_all);
   void reportNetPower(const std::string& directory_path, const int32_t top_num, const bool is_all);
+  void reportPeakPowerWaveform(const std::string& file_path);
 #endif
 
 #endif
@@ -107,7 +108,6 @@ class PWInterface
   void wrapConfig(std::map<std::string, std::any>& config_map);
   void wrapDatabase();
   void wrapVcdActivity();
-  std::string wrapVcdPinName(std::string& vcd_signal_name);
   void wrapDBInfo();
   void wrapInstanceList();
   void wrapInstance(idb::IdbInstance* idb_instance);
@@ -175,6 +175,10 @@ class PWInterface
 #endif
 
  private:
+  bool resolvePeakFlow(const bool is_peak, const bool is_avg);
+  void runAveragedPower();
+  void runPeakPower();
+
   static PWInterface* _pw_interface_instance;
 
   PWInterface() = default;

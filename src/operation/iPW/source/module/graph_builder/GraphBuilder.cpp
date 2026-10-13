@@ -61,6 +61,9 @@ void GraphBuilder::build()
   buildNetDriverLoadList();
   buildNetArcs();
   buildSourcePinList();
+  // TODO: 
+  // break loop and build signal order could merge
+  // so we can save the full graph scan
   breakLoopArcList();
   buildSignalOrder();
   applyCaseAnalysis();
@@ -648,6 +651,11 @@ void GraphBuilder::buildNetArcs()
   Database& database = PWDM.getDatabase();
   for (auto& [net_name, net] : database.get_net_map()) {
     if (net.get_driver_pin_list().empty()) {
+      PWLOG.warn(Loc::current(), "No deriver on net", net_name, ", skipped");
+      continue;
+    }
+    if (net.get_driver_pin_list().size() > 1) {
+      PWLOG.warn(Loc::current(), "Multiple drivers on net '", net_name, "', skipped");
       continue;
     }
     std::string& driver_pin = net.get_driver_pin_list().back();
