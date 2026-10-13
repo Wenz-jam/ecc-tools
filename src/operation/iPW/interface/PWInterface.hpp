@@ -120,6 +120,7 @@ class PWInterface
   void wrapPortPin(idb::IdbPin* idb_pin);
   std::string wrapPinName(idb::IdbPin* idb_pin);
   void wrapNetList();
+  void wrapPowerIndex();
   void wrapNet(idb::IdbNet* idb_net);
   void wrapNetPinList(idb::IdbNet* idb_net, Net& net);
   void wrapNetPinList(idb::IdbPins* io_pin_list, idb::IdbPins* instance_pin_list, Net& net);

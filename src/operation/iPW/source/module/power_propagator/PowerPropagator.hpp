@@ -60,9 +60,12 @@ class PowerPropagator
   static bool annotateVcdSignal(const std::string& vcd_signal_name, PowerActivity& activity);
   static std::string wrapVcdPinName(const std::string& vcd_signal_name);
   bool setPinActivity(std::string& pin_name, PowerActivity& activity);
+  bool setPinActivity(uint32_t pin_index, PowerActivity& activity);
   void limitTransitionDensity(std::string& pin_name, PowerActivity& activity);
+  void limitTransitionDensity(uint32_t pin_index, PowerActivity& activity);
   double getMinimumSlew(std::string& pin_name);
   double getCachedMinimumSlew(std::string& pin_name);
+  double getCachedMinimumSlew(uint32_t pin_index);
   double getMinimumSlew(std::map<AnalysisType, std::map<TransType, double>>& slew_map);
   int32_t getActivityPriority(PowerActivityOrigin origin);
   bool isActivityChanged(PowerActivity& left_activity, PowerActivity& right_activity);
@@ -111,6 +114,7 @@ class PowerPropagator
       PowerActivity& clock_activity
   );
   PowerActivity getPinActivity(std::string& pin_name);
+  PowerActivity getPinActivity(uint32_t pin_index);
   bool isOutputPin(std::string& pin_name);
   bool isClockSource(std::string& pin_name);
   bool simulateVectorlessActivity(double reference_period);

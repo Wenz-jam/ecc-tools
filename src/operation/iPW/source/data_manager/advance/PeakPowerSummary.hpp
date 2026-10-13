@@ -17,6 +17,8 @@
 #pragma once
 
 #include "PeakPowerValue.hpp"
+#include <algorithm>
+
 #include "PWHeader.hpp"
 
 namespace ipw {
@@ -37,11 +39,47 @@ class PeakPowerSummary
   // getter
   bool get_is_enabled() const { return _is_enabled; }
   PeakPowerValue& get_total_peak_value() { return _total_peak_value; }
-  std::map<std::string, PeakPowerValue>& get_instance_peak_value_map() { return _instance_peak_value_map; }
   std::vector<PeakPowerWindow>& get_window_list() { return _window_list; }
   const PeakPowerValue& get_total_peak_value() const { return _total_peak_value; }
-  const std::map<std::string, PeakPowerValue>& get_instance_peak_value_map() const { return _instance_peak_value_map; }
   const std::vector<PeakPowerWindow>& get_window_list() const { return _window_list; }
+  // 每实例峰值：按 instance id 索引；written 标记等价于原来的 map "存在"。
+  std::size_t get_instance_num() const { return _instance_peak_written.size(); }
+  PeakPowerValue& getOrCreateInstancePeakValue(const uint32_t instance_id)
+  {
+    _instance_peak_written[instance_id] = 1;
+    return _instance_peak_value_list[instance_id];
+  }
+  PeakPowerValue* findInstancePeakValue(const uint32_t instance_id)
+  {
+    if (instance_id >= _instance_peak_written.size() || _instance_peak_written[instance_id] == 0) {
+      return nullptr;
+    }
+    return &_instance_peak_value_list[instance_id];
+  }
+  const PeakPowerValue* findInstancePeakValue(const uint32_t instance_id) const
+  {
+    if (instance_id >= _instance_peak_written.size() || _instance_peak_written[instance_id] == 0) {
+      return nullptr;
+    }
+    return &_instance_peak_value_list[instance_id];
+  }
+  void resizeInstancePeakValueList(const std::size_t instance_num)
+  {
+    _instance_peak_value_list.assign(instance_num, PeakPowerValue());
+    _instance_peak_written.assign(instance_num, 0);
+  }
+  // 跨 worker 合并：逐 id 取两边都写过的做 merge。
+  void mergeInstancePeakValues(const PeakPowerSummary& other)
+  {
+    const std::size_t merge_num = std::min(_instance_peak_written.size(), other._instance_peak_written.size());
+    for (std::size_t instance_id = 0; instance_id < merge_num; instance_id++) {
+      if (other._instance_peak_written[instance_id] == 0) {
+        continue;
+      }
+      getOrCreateInstancePeakValue(static_cast<uint32_t>(instance_id))
+          .merge(other._instance_peak_value_list[instance_id]);
+    }
+  }
   // setter
   void set_is_enabled(const bool is_enabled) { _is_enabled = is_enabled; }
   // function
@@ -50,14 +88,15 @@ class PeakPowerSummary
   {
     _is_enabled = false;
     _total_peak_value = PeakPowerValue();
-    _instance_peak_value_map.clear();
+    std::fill(_instance_peak_written.begin(), _instance_peak_written.end(), 0);
     _window_list.clear();
   }
 
  private:
   bool _is_enabled = false;
   PeakPowerValue _total_peak_value;
-  std::map<std::string, PeakPowerValue> _instance_peak_value_map;
+  std::vector<PeakPowerValue> _instance_peak_value_list;
+  std::vector<uint8_t> _instance_peak_written;
   std::vector<PeakPowerWindow> _window_list;
 };
 

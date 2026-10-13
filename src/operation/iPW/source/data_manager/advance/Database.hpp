@@ -16,6 +16,7 @@
 // ***************************************************************************************
 #pragma once
 
+#include <algorithm>
 #include <unordered_map>
 
 #include "Arc.hpp"
@@ -40,12 +41,32 @@ class Database
  public:
   // Per-window analysis state. One instance is the main workspace, extra ones are handed to the
   // peak engine workers so that every worker writes its own activity, power and peak maps.
+  // 每 pin 的静态解析结果（构建后只读）。S1 先放 pin 指针与全名，
+  // 供按 pin 索引的接口在需要回退（如 minimum slew）时取名字。
+  struct PinStaticContext
+  {
+    uint32_t pin_index = 0;
+    Pin* pin = nullptr;
+    const std::string* full_name = nullptr;
+  };
+
   struct PowerWorkspace
   {
-    std::map<std::string, PowerActivity> vcd_activity_map;
-    std::map<std::string, PowerActivity> power_activity_map;
-    std::map<std::string, InstancePower> instance_power_map;
-    std::map<std::string, NetPower> net_power_map;
+    // 每窗口/每次注解用世代号代替"清空 map"：stamp[i] == generation 才算写过。
+    uint32_t vcd_generation = 1;
+    uint32_t activity_generation = 1;
+
+    std::vector<uint32_t> vcd_stamp;                 // by pin index
+    std::vector<PowerActivity> vcd_activity_list;    // by pin index
+    std::vector<uint32_t> vcd_touched_pin_list;      // 本次写过的 pin（写入序）
+
+    std::vector<uint32_t> activity_stamp;            // by pin index
+    std::vector<PowerActivity> activity_list;        // by pin index
+
+    std::vector<InstancePower> instance_power_list;  // by instance id（每窗口全量写）
+    std::vector<NetPower> net_power_list;            // by net index
+    std::vector<uint8_t> net_power_written;          // by net index
+
     PowerSummary power_summary;
     PeakPowerSummary peak_power_summary;
   };
@@ -68,10 +89,91 @@ class Database
   std::vector<std::string>& get_signal_order_list() { return _signal_order_list; }
   std::map<std::string, TimingPoint>& get_timing_point_map() { return _timing_point_map; }
   PowerWorkspace& get_workspace() { return currentWorkspace() != nullptr ? *currentWorkspace() : _workspace; }
-  std::map<std::string, PowerActivity>& get_vcd_activity_map() { return get_workspace().vcd_activity_map; }
-  std::map<std::string, PowerActivity>& get_power_activity_map() { return get_workspace().power_activity_map; }
-  std::map<std::string, InstancePower>& get_instance_power_map() { return get_workspace().instance_power_map; }
-  std::map<std::string, NetPower>& get_net_power_map() { return get_workspace().net_power_map; }
+  const PowerWorkspace& get_workspace() const
+  {
+    return currentWorkspace() != nullptr ? *currentWorkspace() : _workspace;
+  }
+  // 网表构建完成后调用一次：给（每个 worker 的）workspace 分配按 id 索引的向量。
+  void resizePowerWorkspace(PowerWorkspace& workspace)
+  {
+    const std::size_t pin_num = _pin_map.size();
+    workspace.vcd_stamp.assign(pin_num, 0);
+    workspace.vcd_activity_list.assign(pin_num, PowerActivity());
+    workspace.vcd_touched_pin_list.clear();
+    workspace.activity_stamp.assign(pin_num, 0);
+    workspace.activity_list.assign(pin_num, PowerActivity());
+    workspace.instance_power_list.assign(_instance_map.size(), InstancePower());
+    workspace.net_power_list.assign(_net_map.size(), NetPower());
+    workspace.net_power_written.assign(_net_map.size(), 0);
+    workspace.vcd_generation = 1;
+    workspace.activity_generation = 1;
+    workspace.peak_power_summary.resizeInstancePeakValueList(_instance_map.size());
+  }
+  // ---- 窗口边界 ----
+  void beginVcdAnnotation()
+  {
+    PowerWorkspace& workspace = get_workspace();
+    workspace.vcd_generation++;
+    workspace.vcd_touched_pin_list.clear();
+  }
+  void beginActivityWindow() { get_workspace().activity_generation++; }
+  void beginPowerWindow()
+  {
+    std::vector<uint8_t>& net_power_written = get_workspace().net_power_written;
+    std::fill(net_power_written.begin(), net_power_written.end(), 0);
+  }
+  // ---- VCD 注解（按 pin 索引）----
+  void setVcdActivity(const uint32_t pin_index, const PowerActivity& activity)
+  {
+    PowerWorkspace& workspace = get_workspace();
+    if (workspace.vcd_stamp[pin_index] != workspace.vcd_generation) {
+      workspace.vcd_stamp[pin_index] = workspace.vcd_generation;
+      workspace.vcd_touched_pin_list.push_back(pin_index);
+    }
+    workspace.vcd_activity_list[pin_index] = activity;
+  }
+  const PowerActivity* findVcdActivity(const uint32_t pin_index) const
+  {
+    const PowerWorkspace& workspace = get_workspace();
+    return workspace.vcd_stamp[pin_index] == workspace.vcd_generation
+               ? &workspace.vcd_activity_list[pin_index]
+               : nullptr;
+  }
+  bool hasVcdActivity() const { return !get_workspace().vcd_touched_pin_list.empty(); }
+  std::size_t getVcdActivityNum() const { return get_workspace().vcd_touched_pin_list.size(); }
+  std::vector<uint32_t>& get_vcd_touched_pin_list() { return get_workspace().vcd_touched_pin_list; }
+  // ---- 引脚活动性（按 pin 索引）----
+  PowerActivity& getOrCreatePowerActivity(const uint32_t pin_index, bool& is_created)
+  {
+    PowerWorkspace& workspace = get_workspace();
+    is_created = workspace.activity_stamp[pin_index] != workspace.activity_generation;
+    if (is_created) {
+      workspace.activity_stamp[pin_index] = workspace.activity_generation;
+      workspace.activity_list[pin_index] = PowerActivity();
+    }
+    return workspace.activity_list[pin_index];
+  }
+  PowerActivity& getOrCreatePowerActivity(const uint32_t pin_index)
+  {
+    PowerWorkspace& workspace = get_workspace();
+    if (workspace.activity_stamp[pin_index] != workspace.activity_generation) {
+      workspace.activity_stamp[pin_index] = workspace.activity_generation;
+      workspace.activity_list[pin_index] = PowerActivity();
+    }
+    return workspace.activity_list[pin_index];
+  }
+  const PowerActivity* findPowerActivity(const uint32_t pin_index) const
+  {
+    const PowerWorkspace& workspace = get_workspace();
+    return workspace.activity_stamp[pin_index] == workspace.activity_generation
+               ? &workspace.activity_list[pin_index]
+               : nullptr;
+  }
+  // ---- 功耗结果（按 id/索引）----
+  std::vector<InstancePower>& get_instance_power_list() { return get_workspace().instance_power_list; }
+  std::vector<NetPower>& get_net_power_list() { return get_workspace().net_power_list; }
+  std::vector<uint8_t>& get_net_power_written() { return get_workspace().net_power_written; }
+  std::vector<PinStaticContext>& get_pin_static_context_list() { return _pin_static_context_list; }
   PowerSummary& get_power_summary() { return get_workspace().power_summary; }
   PeakPowerSummary& get_peak_power_summary() { return get_workspace().peak_power_summary; }
   TimingLibrary& get_timing_library() { return _timing_library; }
@@ -93,6 +195,7 @@ class Database
   std::map<std::string, Instance> _instance_map;
   std::map<std::string, Pin> _pin_map;
   std::unordered_map<std::string, bool> _pin_is_output_map;
+  std::vector<PinStaticContext> _pin_static_context_list;
   std::map<std::string, Net> _net_map;
   std::vector<Arc> _arc_list;
   std::map<std::string, std::vector<std::size_t>> _outgoing_arc_list_map;

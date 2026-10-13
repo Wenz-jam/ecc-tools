@@ -267,6 +267,21 @@ void GraphBuilder::buildPowerIndex()
   for (std::pair<const std::string, Pin>& pin_pair : database.get_pin_map()) {
     pin_pair.second.set_index(index++);
   }
+  index = 0;
+  for (std::pair<const std::string, Net>& net_pair : database.get_net_map()) {
+    net_pair.second.set_index(index++);
+  }
+  std::vector<Database::PinStaticContext>& pin_static_context_list = database.get_pin_static_context_list();
+  pin_static_context_list.assign(database.get_pin_map().size(), Database::PinStaticContext());
+  for (std::pair<const std::string, Pin>& pin_pair : database.get_pin_map()) {
+    const uint64_t pin_index = pin_pair.second.get_index();
+    Database::PinStaticContext& pin_static_context = pin_static_context_list[pin_index];
+    pin_static_context.pin_index = static_cast<uint32_t>(pin_index);
+    pin_static_context.pin = &pin_pair.second;
+    pin_static_context.full_name = &pin_pair.first;
+  }
+  // 注意：每窗口容器（resizePowerWorkspace）在 PWInterface::wrapPowerIndex() 里
+  // 已经分配好；这里不能重复分配，否则会清掉 init 阶段写入的 VCD 注解。
 }
 
 void GraphBuilder::buildPinOutputFlagMap()

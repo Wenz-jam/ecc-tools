@@ -68,24 +68,24 @@ void PowerReporter::reportCellPower(const std::string& directory_path, const int
   PWLOG.info(Loc::current(), "Starting...");
 
   Database& database = PWDM.getDatabase();
-  if (database.get_instance_power_map().empty()) {
+  if (database.get_instance_power_list().empty()) {
     PWLOG.error(Loc::current(), "No instance power data found, run_pw first!");
   }
   if (!is_all && top_num < 1) {
     PWLOG.error(Loc::current(), "The -top option requires a positive integer!");
   }
 
+  std::vector<InstancePower>& instance_power_list = database.get_instance_power_list();
   std::vector<std::pair<std::string, InstancePower*>> cell_power_list;
   std::size_t skipped_num = 0;
-  for (std::pair<const std::string, InstancePower>& instance_power_pair : database.get_instance_power_map()) {
-    const std::string& instance_name = instance_power_pair.first;
-    auto instance_iter = database.get_instance_map().find(instance_name);
-    if (instance_iter == database.get_instance_map().end()
-        || database.get_timing_library().get_cell_map().count(instance_iter->second.get_cell_name()) == 0) {
+  // 按 instance_map（字典序）遍历 + 按 id 取功耗：与原 map 遍历顺序一致。
+  for (std::pair<const std::string, Instance>& instance_pair : database.get_instance_map()) {
+    const std::string& instance_name = instance_pair.first;
+    if (database.get_timing_library().get_cell_map().count(instance_pair.second.get_cell_name()) == 0) {
       skipped_num++;
       continue;
     }
-    cell_power_list.emplace_back(instance_name, &instance_power_pair.second);
+    cell_power_list.emplace_back(instance_name, &instance_power_list[instance_pair.second.get_instance_id()]);
   }
   std::sort(
       cell_power_list.begin(),
@@ -114,16 +114,23 @@ void PowerReporter::reportNetPower(const std::string& directory_path, const int3
   PWLOG.info(Loc::current(), "Starting...");
 
   Database& database = PWDM.getDatabase();
-  if (database.get_instance_power_map().empty()) {
+  if (database.get_instance_power_list().empty()) {
     PWLOG.error(Loc::current(), "No instance power data found, run_pw first!");
   }
   if (!is_all && top_num < 1) {
     PWLOG.error(Loc::current(), "The -top option requires a positive integer!");
   }
 
+  std::vector<NetPower>& net_power_list_data = database.get_net_power_list();
+  std::vector<uint8_t>& net_power_written = database.get_net_power_written();
   std::vector<std::pair<std::string, NetPower*>> net_power_list;
-  for (std::pair<const std::string, NetPower>& net_power_pair : database.get_net_power_map()) {
-    net_power_list.emplace_back(net_power_pair.first, &net_power_pair.second);
+  // 只列"本窗口写过"的 net，顺序同原 map（net_map 为字典序）。
+  for (std::pair<const std::string, Net>& net_pair : database.get_net_map()) {
+    const uint64_t net_index = net_pair.second.get_index();
+    if (net_power_written[net_index] == 0) {
+      continue;
+    }
+    net_power_list.emplace_back(net_pair.first, &net_power_list_data[net_index]);
   }
   std::sort(
       net_power_list.begin(),
@@ -278,10 +285,12 @@ void PowerReporter::outputInstancePower()
     PWUTIL.closeFileStream(instance_power_file);
     return;
   }
-  for (std::pair<const std::string, InstancePower>& instance_power_pair : PWDM.getDatabase().get_instance_power_map()) {
-    InstancePower& instance_power = instance_power_pair.second;
+  Database& database = PWDM.getDatabase();
+  std::vector<InstancePower>& instance_power_list = database.get_instance_power_list();
+  for (std::pair<const std::string, Instance>& instance_pair : database.get_instance_map()) {
+    InstancePower& instance_power = instance_power_list[instance_pair.second.get_instance_id()];
     PowerValue& power_value = instance_power.get_power_value();
-    outputInstancePowerRow(instance_power_file, instance_power_pair.first, instance_power.get_voltage(), power_value);
+    outputInstancePowerRow(instance_power_file, instance_pair.first, instance_power.get_voltage(), power_value);
   }
   PWUTIL.closeFileStream(instance_power_file);
 }
@@ -290,14 +299,16 @@ void PowerReporter::outputInstancePower()
 void PowerReporter::outputPeakInstancePower(std::ofstream* instance_power_file)
 {
   Database& database = PWDM.getDatabase();
-  for (std::pair<const std::string, PeakPowerValue>& peak_pair :
-       database.get_peak_power_summary().get_instance_peak_value_map()) {
-    double voltage = 0.0;
-    auto instance_power_iter = database.get_instance_power_map().find(peak_pair.first);
-    if (instance_power_iter != database.get_instance_power_map().end()) {
-      voltage = instance_power_iter->second.get_voltage();
+  PeakPowerSummary& peak_power_summary = database.get_peak_power_summary();
+  std::vector<InstancePower>& instance_power_list = database.get_instance_power_list();
+  for (std::pair<const std::string, Instance>& instance_pair : database.get_instance_map()) {
+    const uint32_t instance_id = static_cast<uint32_t>(instance_pair.second.get_instance_id());
+    PeakPowerValue* peak_value = peak_power_summary.findInstancePeakValue(instance_id);
+    if (peak_value == nullptr) {
+      continue;
     }
-    outputInstancePowerRow(instance_power_file, peak_pair.first, voltage, peak_pair.second.get_power_value());
+    double voltage = instance_id < instance_power_list.size() ? instance_power_list[instance_id].get_voltage() : 0.0;
+    outputInstancePowerRow(instance_power_file, instance_pair.first, voltage, peak_value->get_power_value());
   }
 }
 

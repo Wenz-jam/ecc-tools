@@ -67,16 +67,14 @@ PowerAnalyzer* PowerAnalyzer::_pa_instance = nullptr;
 void PowerAnalyzer::analyzePower()
 {
   Database& database = PWDM.getDatabase();
-  database.get_instance_power_map().clear();
-  database.get_net_power_map().clear();
+  database.beginPowerWindow();
   initPowerSummary();
   PowerSummary& power_summary = database.get_power_summary();
   for (std::pair<const std::string, Instance>& instance_pair : database.get_instance_map()) {
-    const std::string& instance_name = instance_pair.first;
     Instance& instance = instance_pair.second;
     PAInstanceModel pa_instance_model;
     InstancePower instance_power = analyzeInstancePower(instance, pa_instance_model);
-    database.get_instance_power_map()[instance_name] = instance_power;
+    database.get_instance_power_list()[instance.get_instance_id()] = instance_power;
     power_summary.get_group_power_map()[instance_power.get_power_group_type()].add_power_value(
         instance_power.get_power_value()
     );
@@ -605,7 +603,13 @@ void PowerAnalyzer::recordNetPower(
     net_power.set_static_probability(activity.get_static_probability());
     net_power.set_transition_density(activity.get_transition_density());
   }
-  database.get_net_power_map()[pin_iter->second.get_net_name()] = net_power;
+  auto net_iter = database.get_net_map().find(pin_iter->second.get_net_name());
+  if (net_iter == database.get_net_map().end()) {
+    return;
+  }
+  const uint64_t net_index = net_iter->second.get_index();
+  database.get_net_power_list()[net_index] = net_power;
+  database.get_net_power_written()[net_index] = 1;
 }
 
 void PowerAnalyzer::analyzeLeakagePower(Instance& instance, PowerValue& power_value, PAInstanceModel& pa_instance_model)
@@ -698,11 +702,12 @@ std::map<std::string, PowerActivity>& PowerAnalyzer::getPortActivityMap(
 PowerActivity PowerAnalyzer::getPinActivity(const std::string& pin_name)
 {
   Database& database = PWDM.getDatabase();
-  auto power_activity = database.get_power_activity_map().find(pin_name);
-  if (power_activity == database.get_power_activity_map().end()) {
+  auto pin_iter = database.get_pin_map().find(pin_name);
+  if (pin_iter == database.get_pin_map().end()) {
     return PowerActivity();
   }
-  return power_activity->second;
+  const PowerActivity* activity = database.findPowerActivity(static_cast<uint32_t>(pin_iter->second.get_index()));
+  return activity != nullptr ? *activity : PowerActivity();
 }
 
 double PowerAnalyzer::getPinSlew(const std::string& pin_name, TransType trans_type)

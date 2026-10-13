@@ -271,9 +271,32 @@ void PWInterface::wrapDatabase()
   wrapInstanceList();
   wrapPortList();
   wrapNetList();
+  // VCD 注解（wrapVcdActivity）需要按 pin 索引写入，因此索引与每窗口容器
+  // 必须在它之前准备好。
+  wrapPowerIndex();
   wrapTimingLibrary();
   wrapParasiticLibrary();
   wrapVcdActivity();
+}
+
+// 给 instance/pin/net 分配稠密索引，并分配按 id 索引的每窗口容器。
+// 放在 wrapNetList 之后：网表规模已知，VCD 注解也只依赖 pin 索引。
+void PWInterface::wrapPowerIndex()
+{
+  Database& database = PWDM.getDatabase();
+  uint64_t index = 0;
+  for (std::pair<const std::string, Instance>& instance_pair : database.get_instance_map()) {
+    instance_pair.second.set_instance_id(index++);
+  }
+  index = 0;
+  for (std::pair<const std::string, Pin>& pin_pair : database.get_pin_map()) {
+    pin_pair.second.set_index(index++);
+  }
+  index = 0;
+  for (std::pair<const std::string, Net>& net_pair : database.get_net_map()) {
+    net_pair.second.set_index(index++);
+  }
+  database.resizePowerWorkspace(database.get_workspace());
 }
 
 void PWInterface::wrapVcdActivity()
@@ -290,7 +313,7 @@ void PWInterface::wrapVcdActivity()
       " net(s) from ",
       vcd_reader->get_signal_activity_map().size(),
       " VCD signal(s); annotated ",
-      PWDM.getDatabase().get_vcd_activity_map().size(),
+      PWDM.getDatabase().getVcdActivityNum(),
       " pin(s)."
   );
 }

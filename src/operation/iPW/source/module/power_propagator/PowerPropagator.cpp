@@ -71,20 +71,26 @@ void PowerPropagator::prepareStaticContext()
 
 double PowerPropagator::getCachedMinimumSlew(std::string& pin_name)
 {
-  // The average flow keeps the original on-demand path (nothing to prepare);
-  // only the peak flow, which queries this for every pin of every window,
-  // fills the list up front.
-  if (_pin_minimum_slew_list.empty()) {
-    return getMinimumSlew(pin_name);
-  }
   Database& database = PWDM.getDatabase();
   auto pin_iter = database.get_pin_map().find(pin_name);
   if (pin_iter == database.get_pin_map().end()) {
     return getMinimumSlew(pin_name);
   }
-  const uint64_t pin_index = pin_iter->second.get_index();
-  if (pin_index >= _pin_minimum_slew_list.size()) {
-    return getMinimumSlew(pin_name);
+  return getCachedMinimumSlew(static_cast<uint32_t>(pin_iter->second.get_index()));
+}
+
+double PowerPropagator::getCachedMinimumSlew(const uint32_t pin_index)
+{
+  // The average flow keeps the original on-demand path (nothing to prepare);
+  // only the peak flow, which queries this for every pin of every window,
+  // fills the list up front.
+  if (_pin_minimum_slew_list.empty() || pin_index >= _pin_minimum_slew_list.size()) {
+    Database& database = PWDM.getDatabase();
+    const std::vector<Database::PinStaticContext>& pin_static_context_list = database.get_pin_static_context_list();
+    if (pin_index < pin_static_context_list.size() && pin_static_context_list[pin_index].full_name != nullptr) {
+      return getMinimumSlew(*const_cast<std::string*>(pin_static_context_list[pin_index].full_name));
+    }
+    return 0.0;
   }
   return _pin_minimum_slew_list[pin_index];
 }
@@ -183,7 +189,7 @@ void PowerPropagator::propagateActivity(PPModel& pp_model)
   seedVcdActivity();
   seedCaseAnalysisActivity();
   seedActivity(pp_model);
-  if (PWDM.getDatabase().get_vcd_activity_map().empty()) {
+  if (!PWDM.getDatabase().hasVcdActivity()) {
     if (simulateVectorlessActivity(pp_model.get_minimum_clock_period()))
       return;
     PWLOG.info(Loc::current(), "Vector simulation unavailable for this design; using analytical activity.");
@@ -195,20 +201,24 @@ void PowerPropagator::propagateActivity(PPModel& pp_model)
 
 void PowerPropagator::clearPowerActivity()
 {
-  PWDM.getDatabase().get_power_activity_map().clear();
+  // 世代号 +1 即"清空"：上一窗口的条目自然失效，省掉每窗口 clear+重建的分配。
+  PWDM.getDatabase().beginActivityWindow();
 }
 
 void PowerPropagator::seedVcdActivity()
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_vcd_activity_map().empty()) {
+  if (!database.hasVcdActivity()) {
     return;
   }
   std::size_t annotated_pin_num = 0;
-  for (std::pair<const std::string, PowerActivity>& activity_pair : database.get_vcd_activity_map()) {
-    std::string pin_name = activity_pair.first;
-    PowerActivity activity = activity_pair.second;
-    if (setPinActivity(pin_name, activity)) {
+  for (uint32_t pin_index : database.get_vcd_touched_pin_list()) {
+    const PowerActivity* vcd_activity = database.findVcdActivity(pin_index);
+    if (vcd_activity == nullptr) {
+      continue;
+    }
+    PowerActivity activity = *vcd_activity;
+    if (setPinActivity(pin_index, activity)) {
       annotated_pin_num++;
     }
   }
@@ -219,7 +229,7 @@ std::size_t PowerPropagator::annotateVcdActivity(
     const std::map<std::string, vcd::VcdSignalActivity>& signal_activity_map
 )
 {
-  PWDM.getDatabase().get_vcd_activity_map().clear();
+  PWDM.getDatabase().beginVcdAnnotation();
   std::size_t matched_net_num = 0;
   for (const std::pair<const std::string, vcd::VcdSignalActivity>& activity_pair : signal_activity_map) {
     PowerActivity activity;
@@ -234,7 +244,7 @@ std::size_t PowerPropagator::annotateVcdActivity(
 
 std::size_t PowerPropagator::annotateVcdActivity(const vcd::VcdWindowSignalActivity& window_activity)
 {
-  PWDM.getDatabase().get_vcd_activity_map().clear();
+  PWDM.getDatabase().beginVcdAnnotation();
   const std::vector<std::string>& signal_name_list = window_activity.get_signal_name_list();
   std::size_t matched_net_num = 0;
   for (std::size_t signal_index = 0; signal_index < signal_name_list.size(); signal_index++) {
@@ -263,7 +273,11 @@ bool PowerPropagator::annotateVcdSignal(const std::string& vcd_signal_name, Powe
   activity.set_origin(PowerActivityOrigin::kVcd);
   activity.set_is_valid(true);
   for (std::string& pin_name : net_iter->second.get_pin_name_list()) {
-    database.get_vcd_activity_map()[pin_name] = activity;
+    auto pin_iter = database.get_pin_map().find(pin_name);
+    if (pin_iter == database.get_pin_map().end()) {
+      continue;
+    }
+    database.setVcdActivity(static_cast<uint32_t>(pin_iter->second.get_index()), activity);
   }
   return true;
 }
@@ -289,13 +303,23 @@ std::string PowerPropagator::wrapVcdPinName(const std::string& vcd_signal_name)
 bool PowerPropagator::setPinActivity(std::string& pin_name, PowerActivity& activity)
 {
   Database& database = PWDM.getDatabase();
-  limitTransitionDensity(pin_name, activity);
-  auto [activity_iter, is_inserted] = database.get_power_activity_map().try_emplace(pin_name);
-  if (is_inserted) {
-    activity_iter->second = activity;
+  auto pin_iter = database.get_pin_map().find(pin_name);
+  if (pin_iter == database.get_pin_map().end()) {
+    return false;
+  }
+  return setPinActivity(static_cast<uint32_t>(pin_iter->second.get_index()), activity);
+}
+
+bool PowerPropagator::setPinActivity(const uint32_t pin_index, PowerActivity& activity)
+{
+  Database& database = PWDM.getDatabase();
+  limitTransitionDensity(pin_index, activity);
+  bool is_created = false;
+  PowerActivity& current_activity = database.getOrCreatePowerActivity(pin_index, is_created);
+  if (is_created) {
+    current_activity = activity;
     return true;
   }
-  PowerActivity& current_activity = activity_iter->second;
   if (getActivityPriority(current_activity.get_origin()) > getActivityPriority(activity.get_origin())) {
     return false;
   }
@@ -308,7 +332,17 @@ bool PowerPropagator::setPinActivity(std::string& pin_name, PowerActivity& activ
 
 void PowerPropagator::limitTransitionDensity(std::string& pin_name, PowerActivity& activity)
 {
-  double minimum_slew = getCachedMinimumSlew(pin_name);
+  Database& database = PWDM.getDatabase();
+  auto pin_iter = database.get_pin_map().find(pin_name);
+  if (pin_iter == database.get_pin_map().end()) {
+    return;
+  }
+  limitTransitionDensity(static_cast<uint32_t>(pin_iter->second.get_index()), activity);
+}
+
+void PowerPropagator::limitTransitionDensity(const uint32_t pin_index, PowerActivity& activity)
+{
+  double minimum_slew = getCachedMinimumSlew(pin_index);
   if (minimum_slew <= PW_ERROR) {
     return;
   }
@@ -906,10 +940,17 @@ void PowerPropagator::limitSequentialOutputActivity(
 PowerActivity PowerPropagator::getPinActivity(std::string& pin_name)
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_power_activity_map().count(pin_name) == 0) {
+  auto pin_iter = database.get_pin_map().find(pin_name);
+  if (pin_iter == database.get_pin_map().end()) {
     return PowerActivity();
   }
-  return database.get_power_activity_map()[pin_name];
+  return getPinActivity(static_cast<uint32_t>(pin_iter->second.get_index()));
+}
+
+PowerActivity PowerPropagator::getPinActivity(const uint32_t pin_index)
+{
+  const PowerActivity* activity = PWDM.getDatabase().findPowerActivity(pin_index);
+  return activity != nullptr ? *activity : PowerActivity();
 }
 
 bool PowerPropagator::isOutputPin(std::string& pin_name)
@@ -1027,6 +1068,9 @@ class Simulator
   std::size_t _implied_root_count = 0;
   std::map<std::string, std::size_t> _node_index;
   std::map<std::string, std::size_t> _pin_nodes;
+  // pin 名字 -> pin 索引：活动按 pin 写回（同一 net 上的多个 pin 共享 node，
+  // 但旧行为是每个 pin 各持一份活动），因此这里按名字映射而不是按 node。
+  std::map<std::string, uint32_t> _pin_name_index;
   std::vector<Word> _values;
   std::vector<Gate> _gates;
   std::vector<std::size_t> _gate_order;
@@ -1133,7 +1177,7 @@ Word Simulator::evaluate(const Program& program) const
 
 bool Simulator::build()
 {
-  if (!std::isfinite(_period) || _period <= 0.0 || !_database.get_vcd_activity_map().empty())
+  if (!std::isfinite(_period) || _period <= 0.0 || _database.hasVcdActivity())
     return false;
   for (auto& [name, clock] : _database.get_timing_constraint().get_clock_map()) {
     if (clock.get_period() > 0 && clock.get_period() < _period)
@@ -1158,6 +1202,7 @@ bool Simulator::build()
   for (auto& [name, pin] : _database.get_pin_map()) {
     if (!_pin_nodes.count(name))
       _pin_nodes[name] = node("pin:" + name);
+    _pin_name_index[name] = static_cast<uint32_t>(pin.get_index());
   }
   std::set<std::size_t> driven;
   for (auto& [name, instance] : _database.get_instance_map()) {
@@ -1216,14 +1261,16 @@ bool Simulator::build()
   }
   std::map<std::size_t, PowerActivity> root_activity;
   for (auto& [name, id] : _pin_nodes) {
-    if (driven.count(id))
+    auto pin_index_iter = _pin_name_index.find(name);
+    if (driven.count(id) || pin_index_iter == _pin_name_index.end()) {
       continue;
-    auto it = _database.get_power_activity_map().find(name);
-    if (it != _database.get_power_activity_map().end() && it->second.get_is_valid()) {
-      if (!root_activity.count(id) || it->second.get_origin() == PowerActivityOrigin::kInput
-          || it->second.get_origin() == PowerActivityOrigin::kClock
-          || it->second.get_origin() == PowerActivityOrigin::kConstant) {
-        root_activity[id] = it->second;
+    }
+    const PowerActivity* stored_activity = _database.findPowerActivity(pin_index_iter->second);
+    if (stored_activity != nullptr && stored_activity->get_is_valid()) {
+      if (!root_activity.count(id) || stored_activity->get_origin() == PowerActivityOrigin::kInput
+          || stored_activity->get_origin() == PowerActivityOrigin::kClock
+          || stored_activity->get_origin() == PowerActivityOrigin::kConstant) {
+        root_activity[id] = *stored_activity;
       }
     }
   }
@@ -1587,7 +1634,10 @@ bool Simulator::run()
       activity.set_transition_density(0.0);
       activity.set_origin(PowerActivityOrigin::kConstant);
     }
-    _database.get_power_activity_map()[pin] = activity;
+    auto pin_index_iter = _pin_name_index.find(pin);
+    if (pin_index_iter != _pin_name_index.end()) {
+      _database.getOrCreatePowerActivity(pin_index_iter->second) = activity;
+    }
   }
   PWLOG.info(
       Loc::current(),

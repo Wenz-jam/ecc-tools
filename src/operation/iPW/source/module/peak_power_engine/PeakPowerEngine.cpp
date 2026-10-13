@@ -95,6 +95,9 @@ void PeakPowerEngine::run(const std::string& vcd_file_path)
   PowerAnalyzer::getInst().prepareStaticContext();
   PowerPropagator::getInst().prepareStaticContext();
   std::vector<Database::PowerWorkspace> workspace_list(thread_num);
+  for (Database::PowerWorkspace& workspace : workspace_list) {
+    database.resizePowerWorkspace(workspace);
+  }
   std::vector<WindowWorkerResult> worker_result_list(thread_num);
 
 #pragma omp parallel for schedule(static, 1) num_threads(thread_num)
@@ -274,19 +277,15 @@ void PeakPowerEngine::mergeWorkerResults(
 
   Database& database = PWDM.getDatabase();
   const Database::PowerWorkspace& last_window_workspace = workspace_list[last_worker_id];
-  database.get_vcd_activity_map() = last_window_workspace.vcd_activity_map;
-  database.get_power_activity_map() = last_window_workspace.power_activity_map;
-  database.get_instance_power_map() = last_window_workspace.instance_power_map;
-  database.get_net_power_map() = last_window_workspace.net_power_map;
+  database.get_workspace().vcd_touched_pin_list = last_window_workspace.vcd_touched_pin_list;
+  database.get_instance_power_list() = last_window_workspace.instance_power_list;
+  database.get_net_power_list() = last_window_workspace.net_power_list;
   database.get_power_summary() = last_window_workspace.power_summary;
 
   PeakPowerSummary& peak_power_summary = database.get_peak_power_summary();
   for (const Database::PowerWorkspace& workspace : workspace_list) {
     peak_power_summary.get_total_peak_value().merge(workspace.peak_power_summary.get_total_peak_value());
-    for (const std::pair<const std::string, PeakPowerValue>& instance_peak_pair :
-         workspace.peak_power_summary.get_instance_peak_value_map()) {
-      peak_power_summary.get_instance_peak_value_map()[instance_peak_pair.first].merge(instance_peak_pair.second);
-    }
+    peak_power_summary.mergeInstancePeakValues(workspace.peak_power_summary);
     const std::vector<PeakPowerWindow>& worker_window_list = workspace.peak_power_summary.get_window_list();
     peak_power_summary.get_window_list()
         .insert(peak_power_summary.get_window_list().end(), worker_window_list.begin(), worker_window_list.end());
@@ -327,9 +326,10 @@ void PeakPowerEngine::updatePeakPower(const vcd::VcdWindowSignalActivity& window
   );
   peak_power_summary.get_total_peak_value()
       .update(database.get_power_summary().get_total_power_value(), window_begin_time, window_end_time, window_index);
-  for (std::pair<const std::string, InstancePower>& instance_power_pair : database.get_instance_power_map()) {
-    peak_power_summary.get_instance_peak_value_map()[instance_power_pair.first]
-        .update(instance_power_pair.second.get_power_value(), window_begin_time, window_end_time, window_index);
+  std::vector<InstancePower>& instance_power_list = database.get_instance_power_list();
+  for (std::size_t instance_id = 0; instance_id < instance_power_list.size(); instance_id++) {
+    peak_power_summary.getOrCreateInstancePeakValue(static_cast<uint32_t>(instance_id))
+        .update(instance_power_list[instance_id].get_power_value(), window_begin_time, window_end_time, window_index);
   }
 }
 
