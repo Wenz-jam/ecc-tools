@@ -15,7 +15,9 @@
 // ***************************************************************************************
 #pragma once
 
+#include "AnalysisType.hpp"
 #include "PWHeader.hpp"
+#include "TransType.hpp"
 
 namespace ipw {
 
