@@ -53,6 +53,42 @@ void PowerPropagator::destroyInst()
 
 // function
 
+void PowerPropagator::prepareStaticContext()
+{
+  // The peak engine calls this once before its workers start; propagate() then
+  // only hits the ready flag for every window (the list is read-only afterwards).
+  if (_is_static_context_ready) {
+    return;
+  }
+  Database& database = PWDM.getDatabase();
+  _pin_minimum_slew_list.assign(database.get_pin_map().size(), 0.0);
+  for (std::pair<const std::string, Pin>& pin_pair : database.get_pin_map()) {
+    std::string pin_name = pin_pair.first;
+    _pin_minimum_slew_list[pin_pair.second.get_index()] = getMinimumSlew(pin_name);
+  }
+  _is_static_context_ready = true;
+}
+
+double PowerPropagator::getCachedMinimumSlew(std::string& pin_name)
+{
+  // The average flow keeps the original on-demand path (nothing to prepare);
+  // only the peak flow, which queries this for every pin of every window,
+  // fills the list up front.
+  if (_pin_minimum_slew_list.empty()) {
+    return getMinimumSlew(pin_name);
+  }
+  Database& database = PWDM.getDatabase();
+  auto pin_iter = database.get_pin_map().find(pin_name);
+  if (pin_iter == database.get_pin_map().end()) {
+    return getMinimumSlew(pin_name);
+  }
+  const uint64_t pin_index = pin_iter->second.get_index();
+  if (pin_index >= _pin_minimum_slew_list.size()) {
+    return getMinimumSlew(pin_name);
+  }
+  return _pin_minimum_slew_list[pin_index];
+}
+
 void PowerPropagator::propagate()
 {
   Monitor monitor;
@@ -272,7 +308,7 @@ bool PowerPropagator::setPinActivity(std::string& pin_name, PowerActivity& activ
 
 void PowerPropagator::limitTransitionDensity(std::string& pin_name, PowerActivity& activity)
 {
-  double minimum_slew = getMinimumSlew(pin_name);
+  double minimum_slew = getCachedMinimumSlew(pin_name);
   if (minimum_slew <= PW_ERROR) {
     return;
   }

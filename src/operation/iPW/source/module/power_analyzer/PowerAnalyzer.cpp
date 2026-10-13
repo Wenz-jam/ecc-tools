@@ -54,6 +54,7 @@ void PowerAnalyzer::analyze()
   Monitor monitor;
   PWLOG.info(Loc::current(), "Starting...");
 
+  prepareStaticContext();
   analyzePower();
 
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
@@ -91,6 +92,59 @@ void PowerAnalyzer::analyzePower()
   }
 }
 
+void PowerAnalyzer::prepareStaticContext()
+{
+  if (_is_static_context_ready) {
+    return;
+  }
+  Database& database = PWDM.getDatabase();
+  // Window-independent per-instance data. Both the average flow (single shot)
+  // and the peak flow (once per run, before the window loop) use this.
+  _instance_static_context_list.assign(database.get_instance_map().size(), PAInstanceStaticContext());
+  for (std::pair<const std::string, Instance>& instance_pair : database.get_instance_map()) {
+    Instance& instance = instance_pair.second;
+    PAInstanceStaticContext& static_context = _instance_static_context_list[instance.get_instance_id()];
+    static_context.group = getPowerGroupType(instance);
+    static_context.voltage = getInstanceVoltage(instance);
+    auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
+    if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
+      continue;
+    }
+    static_context.timing_cell = &timing_cell_iter->second;
+    for (TimingPowerArc& timing_power_arc : timing_cell_iter->second.get_power_arc_list()) {
+      PAArcStaticContext arc_static_context;
+      arc_static_context.energy_rise = getTimingPowerArcEnergy(instance, timing_power_arc, TransType::kRise);
+      arc_static_context.energy_fall = getTimingPowerArcEnergy(instance, timing_power_arc, TransType::kFall);
+      arc_static_context.is_active_clock_pin
+          = !timing_power_arc.get_sink_port().empty() && isActiveClockPin(instance, timing_power_arc.get_sink_port());
+      static_context.arc_context_list.push_back(arc_static_context);
+    }
+    for (std::pair<const std::string, TimingCellPort>& port_pair : timing_cell_iter->second.get_port_map()) {
+      if (!port_pair.second.get_is_output()) {
+        continue;
+      }
+      std::string output_pin_name = instance.get_instance_name() + ":" + port_pair.first;
+      static_context.port_output_load_map.emplace(
+          port_pair.first,
+          std::max(
+              PWDC.getPowerOutputLoad(output_pin_name, AnalysisType::kMax, TransType::kRise),
+              PWDC.getPowerOutputLoad(output_pin_name, AnalysisType::kMax, TransType::kFall)
+          )
+      );
+    }
+  }
+  _is_static_context_ready = true;
+}
+
+const PAInstanceStaticContext* PowerAnalyzer::getStaticContext(Instance& instance)
+{
+  const uint64_t instance_id = instance.get_instance_id();
+  if (instance_id >= _instance_static_context_list.size()) {
+    return nullptr;
+  }
+  return &_instance_static_context_list[instance_id];
+}
+
 void PowerAnalyzer::initPowerSummary()
 {
   PowerSummary& power_summary = PWDM.getDatabase().get_power_summary();
@@ -102,13 +156,20 @@ void PowerAnalyzer::initPowerSummary()
 
 InstancePower PowerAnalyzer::analyzeInstancePower(Instance& instance, PAInstanceModel& pa_instance_model)
 {
+  const PAInstanceStaticContext* static_context = getStaticContext(instance);
+  pa_instance_model.set_static_context(static_context);
   // Build the per-instance port activity cache once, so the per-arc
   // getPortActivity() calls below hit the map instead of rebuilding
   // "<instance>:<port>" names and re-walking the pin database.
   getPortActivityMap(instance, pa_instance_model);
   InstancePower instance_power;
-  instance_power.set_power_group_type(getPowerGroupType(instance));
-  instance_power.set_voltage(getInstanceVoltage(instance));
+  if (static_context != nullptr) {
+    instance_power.set_power_group_type(static_context->group);
+    instance_power.set_voltage(static_context->voltage);
+  } else {
+    instance_power.set_power_group_type(getPowerGroupType(instance));
+    instance_power.set_voltage(getInstanceVoltage(instance));
+  }
   instance_power.set_power_value(getInstancePowerValue(instance, pa_instance_model));
   return instance_power;
 }
@@ -128,19 +189,21 @@ void PowerAnalyzer::analyzeInternalPower(
     PAInstanceModel& pa_instance_model
 )
 {
-  Database& database = PWDM.getDatabase();
-  auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
-  if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
+  const PAInstanceStaticContext* static_context = pa_instance_model.get_static_context();
+  if (static_context == nullptr || static_context->timing_cell == nullptr) {
     return;
   }
-  TimingCell& timing_cell = timing_cell_iter->second;
+  TimingCell& timing_cell = *static_context->timing_cell;
   buildOutputTimingPowerArcWeightMap(instance, timing_cell, pa_instance_model);
-  for (TimingPowerArc& timing_power_arc : timing_cell.get_power_arc_list()) {
-    double internal_power = getTimingPowerArcPower(instance, timing_power_arc, pa_instance_model);
+  std::vector<TimingPowerArc>& power_arc_list = timing_cell.get_power_arc_list();
+  for (std::size_t arc_index = 0; arc_index < power_arc_list.size(); arc_index++) {
+    TimingPowerArc& timing_power_arc = power_arc_list[arc_index];
+    const PAArcStaticContext& arc_static_context = static_context->arc_context_list[arc_index];
+    double internal_power = getTimingPowerArcPower(instance, timing_power_arc, arc_static_context, pa_instance_model);
     power_value.add_internal_power(internal_power);
     // An output arc related to CK still belongs to the output pin. Only
     // internal energy attached to a clock input is moved to clock_network.
-    if (isActiveClockPin(instance, timing_power_arc.get_sink_port())) {
+    if (arc_static_context.is_active_clock_pin) {
       pa_instance_model.add_clock_pin_internal_power(internal_power);
     }
   }
@@ -179,18 +242,20 @@ void PowerAnalyzer::buildOutputTimingPowerArcWeightMap(
 double PowerAnalyzer::getTimingPowerArcPower(
     Instance& instance,
     TimingPowerArc& timing_power_arc,
+    const PAArcStaticContext& arc_static_context,
     PAInstanceModel& pa_instance_model
 )
 {
   if (timing_power_arc.get_source_port().empty()) {
-    return getInputTimingPowerArcPower(instance, timing_power_arc, pa_instance_model);
+    return getInputTimingPowerArcPower(instance, timing_power_arc, arc_static_context, pa_instance_model);
   }
-  return getOutputTimingPowerArcPower(instance, timing_power_arc, pa_instance_model);
+  return getOutputTimingPowerArcPower(instance, timing_power_arc, arc_static_context, pa_instance_model);
 }
 
 double PowerAnalyzer::getInputTimingPowerArcPower(
     Instance& instance,
     TimingPowerArc& timing_power_arc,
+    const PAArcStaticContext& arc_static_context,
     PAInstanceModel& pa_instance_model
 )
 {
@@ -210,7 +275,7 @@ double PowerAnalyzer::getInputTimingPowerArcPower(
   for (TransType trans_type : {TransType::kRise, TransType::kFall}) {
     double transition_density = trans_type == TransType::kRise ? sink_activity.get_rise_transition_density()
                                                                : sink_activity.get_fall_transition_density();
-    double energy = getTimingPowerArcEnergy(instance, timing_power_arc, trans_type);
+    double energy = trans_type == TransType::kRise ? arc_static_context.energy_rise : arc_static_context.energy_fall;
     internal_power += energy * transition_density * condition_probability * 1E-3;
   }
   return internal_power;
@@ -231,6 +296,7 @@ double PowerAnalyzer::getInputTimingPowerArcConditionProbability(
 double PowerAnalyzer::getOutputTimingPowerArcPower(
     Instance& instance,
     TimingPowerArc& timing_power_arc,
+    const PAArcStaticContext& arc_static_context,
     PAInstanceModel& pa_instance_model
 )
 {
@@ -256,7 +322,7 @@ double PowerAnalyzer::getOutputTimingPowerArcPower(
       continue;
     double transition_density = trans_type == TransType::kRise ? sink_activity.get_rise_transition_density()
                                                                : sink_activity.get_fall_transition_density();
-    double energy = getTimingPowerArcEnergy(instance, timing_power_arc, trans_type);
+    double energy = trans_type == TransType::kRise ? arc_static_context.energy_rise : arc_static_context.energy_fall;
     internal_power += energy * transition_density * timing_power_arc_weight / timing_power_arc_weight_sum * 1E-3;
   }
   return internal_power;
@@ -485,13 +551,12 @@ void PowerAnalyzer::analyzeSwitchingPower(
     PAInstanceModel& pa_instance_model
 )
 {
-  Database& database = PWDM.getDatabase();
-  auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
-  if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
+  const PAInstanceStaticContext* static_context = pa_instance_model.get_static_context();
+  if (static_context == nullptr || static_context->timing_cell == nullptr) {
     return;
   }
-  TimingCell& timing_cell = timing_cell_iter->second;
-  double voltage = getInstanceVoltage(instance);
+  TimingCell& timing_cell = *static_context->timing_cell;
+  double voltage = static_context->voltage;
   for (std::pair<const std::string, TimingCellPort>& port_pair : timing_cell.get_port_map()) {
     TimingCellPort& timing_cell_port = port_pair.second;
     if (!timing_cell_port.get_is_output()) {
@@ -499,10 +564,14 @@ void PowerAnalyzer::analyzeSwitchingPower(
     }
     std::string output_pin_name = instance.get_instance_name() + ":" + port_pair.first;
     PowerActivity activity = getPortActivity(instance, port_pair.first, pa_instance_model);
-    double output_load = std::max(
-        PWDC.getPowerOutputLoad(output_pin_name, AnalysisType::kMax, TransType::kRise),
-        PWDC.getPowerOutputLoad(output_pin_name, AnalysisType::kMax, TransType::kFall)
-    );
+    auto output_load_iter = static_context->port_output_load_map.find(port_pair.first);
+    double output_load
+        = output_load_iter != static_context->port_output_load_map.end()
+              ? output_load_iter->second
+              : std::max(
+                    PWDC.getPowerOutputLoad(output_pin_name, AnalysisType::kMax, TransType::kRise),
+                    PWDC.getPowerOutputLoad(output_pin_name, AnalysisType::kMax, TransType::kFall)
+                );
     if (!activity.get_is_valid()) {
       recordNetPower(output_pin_name, voltage, output_load, activity, 0.0);
       continue;

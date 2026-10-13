@@ -90,6 +90,10 @@ void PeakPowerEngine::run(const std::string& vcd_file_path)
 
   const int32_t thread_num = resolveThreadNum();
   PWLOG.info(Loc::current(), "Window analysis runs on ", thread_num, " thread(s).");
+  // Prepare the window-independent per-instance / per-pin data once, in the
+  // main thread: the workers only read it while walking the windows.
+  PowerAnalyzer::getInst().prepareStaticContext();
+  PowerPropagator::getInst().prepareStaticContext();
   std::vector<Database::PowerWorkspace> workspace_list(thread_num);
   std::vector<WindowWorkerResult> worker_result_list(thread_num);
 

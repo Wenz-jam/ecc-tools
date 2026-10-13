@@ -67,6 +67,7 @@ void GraphBuilder::build()
   breakLoopArcList();
   buildSignalOrder();
   buildPinOutputFlagMap();
+  buildPowerIndex();
   applyCaseAnalysis();
   printLoopInfo();
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
@@ -252,6 +253,22 @@ GraphBuilder* GraphBuilder::_gb_instance = nullptr;
 // Mirrors PowerPropagator::isOutputPin(): the flag only depends on the input
 // database, so it is computed once here and read as a hash lookup in the
 // propagation loop (which runs per signal, and per window in the peak flow).
+// Dense indices for the per-instance / per-pin caches used by the power flow.
+// Instance ids come from idb but nothing in iPW consumes them, so they are
+// renumbered here in instance_map order (a std::map: the order is stable).
+void GraphBuilder::buildPowerIndex()
+{
+  Database& database = PWDM.getDatabase();
+  uint64_t index = 0;
+  for (std::pair<const std::string, Instance>& instance_pair : database.get_instance_map()) {
+    instance_pair.second.set_instance_id(index++);
+  }
+  index = 0;
+  for (std::pair<const std::string, Pin>& pin_pair : database.get_pin_map()) {
+    pin_pair.second.set_index(index++);
+  }
+}
+
 void GraphBuilder::buildPinOutputFlagMap()
 {
   Database& database = PWDM.getDatabase();

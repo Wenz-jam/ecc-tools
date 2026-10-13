@@ -54,6 +54,7 @@ class GraphBuilder
   void disableCaseInsensitiveArc();
   void buildSignalPointList();
   void buildPinOutputFlagMap();
+  void buildPowerIndex();
   void normalizePinDirectionByTimingCell();
   void buildCellArcs();
   bool buildLibraryCellArcs(Instance& instance);

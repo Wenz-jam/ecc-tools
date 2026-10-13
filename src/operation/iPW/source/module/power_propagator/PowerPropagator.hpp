@@ -27,6 +27,10 @@ class PowerPropagator
 {
  public:
   static void initInst();
+  // Once per run: per-pin minimum slew is window independent (slews only change
+  // in signal propagation), so the peak flow can read it from a flat vector
+  // instead of re-walking the timing point slew maps for every window.
+  void prepareStaticContext();
   static PowerPropagator& getInst();
   static void destroyInst();
   // function
@@ -58,6 +62,7 @@ class PowerPropagator
   bool setPinActivity(std::string& pin_name, PowerActivity& activity);
   void limitTransitionDensity(std::string& pin_name, PowerActivity& activity);
   double getMinimumSlew(std::string& pin_name);
+  double getCachedMinimumSlew(std::string& pin_name);
   double getMinimumSlew(std::map<AnalysisType, std::map<TransType, double>>& slew_map);
   int32_t getActivityPriority(PowerActivityOrigin origin);
   bool isActivityChanged(PowerActivity& left_activity, PowerActivity& right_activity);
@@ -109,6 +114,10 @@ class PowerPropagator
   bool isOutputPin(std::string& pin_name);
   bool isClockSource(std::string& pin_name);
   bool simulateVectorlessActivity(double reference_period);
+
+  // indexed by Pin::get_index()
+  std::vector<double> _pin_minimum_slew_list;
+  bool _is_static_context_ready = false;
 };
 
 }  // namespace ipw

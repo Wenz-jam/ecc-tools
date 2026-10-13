@@ -17,6 +17,7 @@
 
 #include "Database.hpp"
 #include "PAInstanceModel.hpp"
+#include "PAInstanceStaticContext.hpp"
 #include "PALeakageSummary.hpp"
 #include "TimingArcSense.hpp"
 
@@ -32,10 +33,17 @@ class PowerAnalyzer
   static void destroyInst();
   // function
   void analyze();
+  // One-time per-run preparation of the window-independent per-instance data
+  // (power group, voltage, arc energies, output loads). Must be called before
+  // any multi-threaded use (the peak engine prepares it before its workers).
+  void prepareStaticContext();
 
  private:
   // self
   static PowerAnalyzer* _pa_instance;
+
+  std::vector<PAInstanceStaticContext> _instance_static_context_list;
+  bool _is_static_context_ready = false;
 
   PowerAnalyzer() = default;
   PowerAnalyzer(const PowerAnalyzer& other) = delete;
@@ -46,6 +54,7 @@ class PowerAnalyzer
   // function
   void analyzePower();
   void initPowerSummary();
+  const PAInstanceStaticContext* getStaticContext(Instance& instance);
   InstancePower analyzeInstancePower(Instance& instance, PAInstanceModel& pa_instance_model);
   PowerValue getInstancePowerValue(Instance& instance, PAInstanceModel& pa_instance_model);
   void analyzeInternalPower(Instance& instance, PowerValue& power_value, PAInstanceModel& pa_instance_model);
@@ -57,11 +66,13 @@ class PowerAnalyzer
   double getTimingPowerArcPower(
       Instance& instance,
       TimingPowerArc& timing_power_arc,
+      const PAArcStaticContext& arc_static_context,
       PAInstanceModel& pa_instance_model
   );
   double getInputTimingPowerArcPower(
       Instance& instance,
       TimingPowerArc& timing_power_arc,
+      const PAArcStaticContext& arc_static_context,
       PAInstanceModel& pa_instance_model
   );
   double getInputTimingPowerArcConditionProbability(
@@ -72,6 +83,7 @@ class PowerAnalyzer
   double getOutputTimingPowerArcPower(
       Instance& instance,
       TimingPowerArc& timing_power_arc,
+      const PAArcStaticContext& arc_static_context,
       PAInstanceModel& pa_instance_model
   );
   double getOutputTimingPowerArcWeight(
