@@ -242,130 +242,121 @@ void DEFCutter::buildIOPinList(DCModel& dc_model)
     }
   }
   for (auto& [net_name, net_idx_list] : net_idx_map) {
-    std::vector<DCIOPin> pin_list;
-    std::vector<DCLayerRect> shape_list;
-    std::set<std::tuple<std::string, int32_t, int32_t, int32_t, int32_t>> shape_set;
-    bool is_pg = false;
-    bool has_removed_pin = false;
+    DCIOPin pin;
+    pin.set_net_idx(net_idx_list.front());
+    bool needs_io = false;
     for (int32_t net_idx : net_idx_list) {
       DCNet& net = dc_model.get_net_list()[net_idx];
-      is_pg = is_pg || net.get_is_pg();
-      has_removed_pin = has_removed_pin || net.get_removed_pin_num() > 0;
-      for (DCLayerRect& shape : net.get_io_shape_list()) {
-        DCRect& rect = shape.get_rect();
-        if (isBoundaryRect(rect, dc_model.get_die())
-            && shape_set.emplace(shape.get_layer_name(), rect.get_ll_x(), rect.get_ll_y(), rect.get_ur_x(), rect.get_ur_y()).second) {
-          shape_list.push_back(shape);
-        }
+      needs_io = needs_io || net.get_removed_pin_num() > 0 || !net.get_io_shape_list().empty();
+      if (net.get_is_pg()) {
+        pin.set_net_idx(net_idx);
       }
     }
-    if (!has_removed_pin && shape_list.empty()) {
+    if (!needs_io) {
       continue;
     }
-    if (!is_pg) {
-      std::set<std::tuple<bool, int32_t, std::string>> connection_set;
-      for (int32_t net_idx : net_idx_list) {
-        DCNet& net = dc_model.get_net_list()[net_idx];
-        for (int32_t idx = 0; idx < static_cast<int32_t>(net.get_connection_list().size()); idx++) {
-          DCConnection& connection = net.get_connection_list()[idx];
-          if (connection.get_retained()
-              || !connection_set.emplace(connection.get_is_io(), connection.get_object_idx(), connection.get_pin_name()).second) {
-            continue;
-          }
-          DCIOPin pin;
-          pin.set_net_idx(net_idx);
-          pin.set_connection_idx(idx);
-          pin.set_type(getExternalPinType(connection));
-          pin.set_target_coord(getIOPinTargetCoord(dc_model, net_idx, idx));
-          if (connection.get_is_io()) {
-            pin.set_name(connection.get_pin_name());
-          }
-          pin_list.push_back(pin);
+    pin.set_layer_name(getIOPinLayerName(dc_model, net_idx_list));
+    std::set<std::tuple<std::string, int32_t, int32_t, int32_t, int32_t>> shape_set;
+    for (int32_t net_idx : net_idx_list) {
+      for (DCLayerRect& shape : dc_model.get_net_list()[net_idx].get_io_shape_list()) {
+        DCRect& rect = shape.get_rect();
+        if (shape.get_layer_name() == pin.get_layer_name() && isBoundaryRect(rect, dc_model.get_die())
+            && shape_set.emplace(shape.get_layer_name(), rect.get_ll_x(), rect.get_ll_y(), rect.get_ur_x(), rect.get_ur_y()).second) {
+          pin.get_shape_list().push_back(shape);
         }
       }
     }
-    if (pin_list.empty()) {
-      DCIOPin pin;
-      pin.set_net_idx(net_idx_list.front());
-      pin.set_type(getIOPinType(dc_model, net_idx_list));
-      pin.set_target_coord(getIOPinTargetCoord(dc_model, pin.get_net_idx(), -1));
-      for (int32_t net_idx : net_idx_list) {
-        DCNet& net = dc_model.get_net_list()[net_idx];
-        if (net.get_is_pg()) {
-          pin.set_net_idx(net_idx);
-        }
-        for (DCConnection& connection : net.get_connection_list()) {
-          if (connection.get_is_io() && connection.get_retained() && pin.get_source_idx() < 0) {
-            pin.set_source_idx(connection.get_object_idx());
-            pin.set_name(connection.get_pin_name());
-            pin.set_type(connection.get_pin_type() == DCPinType::kNone ? DCPinType::kInout : connection.get_pin_type());
-            pin.set_shape_list(connection.get_shape_list());
+    pin.set_type(getIOPinType(dc_model, net_idx_list));
+    pin.set_target_coord(getIOPinTargetCoord(dc_model, net_idx_list));
+    // Keep an existing top-level port instead of adding a second logical driver.
+    for (int32_t net_idx : net_idx_list) {
+      for (DCConnection& connection : dc_model.get_net_list()[net_idx].get_connection_list()) {
+        if (connection.get_is_io() && connection.get_retained() && pin.get_source_idx() < 0) {
+          pin.set_source_idx(connection.get_object_idx());
+          pin.set_name(connection.get_pin_name());
+          pin.set_type(connection.get_pin_type() == DCPinType::kNone ? DCPinType::kInout : connection.get_pin_type());
+          for (DCLayerRect& shape : connection.get_shape_list()) {
+            DCRect& rect = shape.get_rect();
+            if (shape_set.emplace(shape.get_layer_name(), rect.get_ll_x(), rect.get_ll_y(), rect.get_ur_x(), rect.get_ur_y()).second) {
+              pin.get_shape_list().push_back(shape);
+            }
           }
         }
       }
-      pin_list.push_back(pin);
     }
-    // A route can cross several edges before reaching one external terminal.
-    // Distribute available cuts first, then retain extra access shapes on the nearest port.
-    assignBoundaryShapeList(pin_list, shape_list);
-    int32_t name_idx = 0;
-    for (DCIOPin& pin : pin_list) {
-      if (pin.get_source_idx() < 0) {
-        std::string pin_name = pin.get_name().empty() ? net_name : pin.get_name();
-        while (pin_name_set.contains(pin_name) || (pin_name != net_name && net_idx_map.contains(pin_name))) {
-          pin_name = net_name + "__cut_" + std::to_string(name_idx++);
-        }
-        pin_name_set.insert(pin_name);
-        pin.set_name(pin_name);
+    if (pin.get_source_idx() < 0) {
+      int32_t name_idx = 0;
+      std::string pin_name = net_name;
+      while (pin_name_set.contains(pin_name) || (pin_name != net_name && net_idx_map.contains(pin_name))) {
+        pin_name = net_name + "__cut_" + std::to_string(name_idx++);
       }
-      for (int32_t net_idx : net_idx_list) {
-        dc_model.get_net_list()[net_idx].get_cut_pin_idx_list().push_back(static_cast<int32_t>(dc_model.get_cut_pin_list().size()));
+      pin_name_set.insert(pin_name);
+      pin.set_name(pin_name);
+    }
+    for (int32_t net_idx : net_idx_list) {
+      dc_model.get_net_list()[net_idx].set_cut_pin_idx(static_cast<int32_t>(dc_model.get_cut_pin_list().size()));
+    }
+    dc_model.get_cut_pin_list().push_back(pin);
+  }
+}
+
+std::string DEFCutter::getIOPinLayerName(DCModel& dc_model, std::vector<int32_t>& net_idx_list)
+{
+  std::map<int32_t, std::string> layer_order_map;
+  for (idb::IdbLayer* layer : dmInst->get_idb_layout()->get_layers()->get_routing_layers()) {
+    layer_order_map[layer->get_order()] = layer->get_name();
+  }
+  std::vector<std::string> layer_name_list;
+  std::map<std::string, int32_t> layer_idx_map;
+  for (auto& [order, name] : layer_order_map) {
+    layer_idx_map[name] = static_cast<int32_t>(layer_name_list.size());
+    layer_name_list.push_back(name);
+  }
+  std::set<std::tuple<bool, int32_t, std::string>> pin_set;
+  double layer_idx_sum = 0.0;
+  int32_t pin_num = 0;
+  for (int32_t net_idx : net_idx_list) {
+    DCNet& net = dc_model.get_net_list()[net_idx];
+    for (DCConnection& connection : net.get_connection_list()) {
+      if (!pin_set.emplace(connection.get_is_io(), connection.get_object_idx(), connection.get_pin_name()).second) {
+        continue;
       }
-      dc_model.get_cut_pin_list().push_back(pin);
+      if (connection.get_layer_name_set().empty()) {
+        MJLOG.error(Loc::current(), "Missing original routing layers for pin ", connection.get_pin_name(), " on cut net ", net.get_name());
+      }
+      double pin_layer_idx_sum = 0.0;
+      for (const std::string& layer_name : connection.get_layer_name_set()) {
+        pin_layer_idx_sum += layer_idx_map[layer_name];
+      }
+      layer_idx_sum += pin_layer_idx_sum / connection.get_layer_name_set().size();
+      pin_num++;
     }
   }
+  // A routing-only transit net has no terminal; use its boundary metal layers.
+  if (pin_num == 0) {
+    std::set<std::string> layer_name_set;
+    for (int32_t net_idx : net_idx_list) {
+      for (DCLayerRect& shape : dc_model.get_net_list()[net_idx].get_io_shape_list()) {
+        if (isBoundaryRect(shape.get_rect(), dc_model.get_die())) {
+          layer_name_set.insert(shape.get_layer_name());
+        }
+      }
+    }
+    for (const std::string& layer_name : layer_name_set) {
+      layer_idx_sum += layer_idx_map[layer_name];
+      pin_num++;
+    }
+  }
+  if (pin_num == 0) {
+    MJLOG.error(Loc::current(), "Missing routing layers for cut net ", dc_model.get_net_list()[net_idx_list.front()].get_name());
+  }
+  return layer_name_list[static_cast<int32_t>(std::round(layer_idx_sum / pin_num))];
 }
 
 bool DEFCutter::isBoundaryRect(const DCRect& rect, const DCRect& die)
 {
   return die.contains(rect) && (rect.get_ll_x() == die.get_ll_x() || rect.get_ll_y() == die.get_ll_y()
                                || rect.get_ur_x() == die.get_ur_x() || rect.get_ur_y() == die.get_ur_y());
-}
-
-DCPinType DEFCutter::getExternalPinType(DCConnection& connection)
-{
-  DCPinType type = connection.get_pin_type();
-  if (type != DCPinType::kInput && type != DCPinType::kOutput) {
-    return DCPinType::kInout;
-  }
-  if (connection.get_is_io()) {
-    return type;
-  }
-  return type == DCPinType::kInput ? DCPinType::kOutput : DCPinType::kInput;
-}
-
-std::array<int32_t, 2> DEFCutter::getIOPinTargetCoord(DCModel& dc_model, int32_t net_idx, int32_t connection_idx)
-{
-  DCNet& net = dc_model.get_net_list()[net_idx];
-  DCRect rect = dc_model.get_die();
-  if (connection_idx >= 0) {
-    DCConnection& connection = net.get_connection_list()[connection_idx];
-    std::vector<DCObject>& objects = connection.get_is_io() ? dc_model.get_io_pin_list() : dc_model.get_instance_list();
-    if (!connection.get_shape_list().empty()) {
-      rect = connection.get_shape_list().front().get_rect();
-    } else if (!objects[connection.get_object_idx()].get_rect_list().empty()) {
-      rect = objects[connection.get_object_idx()].get_rect_list().front();
-    }
-  } else {
-    for (DCConnection& connection : net.get_connection_list()) {
-      if (connection.get_retained() && !connection.get_shape_list().empty()) {
-        rect = connection.get_shape_list().front().get_rect();
-        break;
-      }
-    }
-  }
-  return {static_cast<int32_t>((static_cast<double>(rect.get_ll_x()) + rect.get_ur_x()) / 2),
-          static_cast<int32_t>((static_cast<double>(rect.get_ll_y()) + rect.get_ur_y()) / 2)};
 }
 
 DCPinType DEFCutter::getIOPinType(DCModel& dc_model, std::vector<int32_t>& net_idx_list)
@@ -402,57 +393,20 @@ DCPinType DEFCutter::getIOPinType(DCModel& dc_model, std::vector<int32_t>& net_i
   return DCPinType::kInout;
 }
 
-void DEFCutter::assignBoundaryShapeList(std::vector<DCIOPin>& pin_list, std::vector<DCLayerRect>& shape_list)
+std::array<int32_t, 2> DEFCutter::getIOPinTargetCoord(DCModel& dc_model, std::vector<int32_t>& net_idx_list)
 {
-  for (DCLayerRect& shape : shape_list) {
-    int32_t best_idx = -1;
-    double best_distance = std::numeric_limits<double>::max();
-    bool has_empty_pin = false;
-    bool duplicate = false;
-    std::vector<int32_t> overlap_idx_list;
-    for (int32_t idx = 0; idx < static_cast<int32_t>(pin_list.size()); idx++) {
-      DCIOPin& pin = pin_list[idx];
-      has_empty_pin = has_empty_pin || pin.get_shape_list().empty();
-      for (DCLayerRect& existing : pin.get_shape_list()) {
-        if (shape.get_layer_name() == existing.get_layer_name() && shape.get_rect().intersect(existing.get_rect()).isValid()) {
-          overlap_idx_list.push_back(idx);
-          duplicate = duplicate || (existing.get_rect().contains(shape.get_rect()));
-          break;
-        }
+  DCRect rect = dc_model.get_die();
+  bool found = false;
+  for (int32_t net_idx : net_idx_list) {
+    for (DCConnection& connection : dc_model.get_net_list()[net_idx].get_connection_list()) {
+      if (!found && connection.get_retained() && !connection.get_shape_list().empty()) {
+        rect = connection.get_shape_list().front().get_rect();
+        found = true;
       }
     }
-    if (duplicate) {
-      continue;
-    }
-    if (!overlap_idx_list.empty()) {
-      std::vector<DCLayerRect>& merged_shape_list = pin_list[overlap_idx_list.front()].get_shape_list();
-      for (int32_t idx = 1; idx < static_cast<int32_t>(overlap_idx_list.size()); idx++) {
-        std::vector<DCLayerRect>& shapes = pin_list[overlap_idx_list[idx]].get_shape_list();
-        merged_shape_list.insert(merged_shape_list.end(), shapes.begin(), shapes.end());
-        shapes.clear();
-      }
-      merged_shape_list.push_back(shape);
-      continue;
-    }
-    for (int32_t idx = 0; idx < static_cast<int32_t>(pin_list.size()); idx++) {
-      DCIOPin& pin = pin_list[idx];
-      if (has_empty_pin && !pin.get_shape_list().empty()) {
-        continue;
-      }
-      double distance = getIOPinDistance(pin, shape.get_rect());
-      if (distance < best_distance) {
-        best_distance = distance;
-        best_idx = idx;
-      }
-    }
-    pin_list[best_idx].get_shape_list().push_back(shape);
   }
-}
-
-double DEFCutter::getIOPinDistance(DCIOPin& pin, const DCRect& rect)
-{
-  return std::abs((static_cast<double>(rect.get_ll_x()) + rect.get_ur_x()) / 2 - pin.get_target_coord()[0])
-         + std::abs((static_cast<double>(rect.get_ll_y()) + rect.get_ur_y()) / 2 - pin.get_target_coord()[1]);
+  return {static_cast<int32_t>((static_cast<double>(rect.get_ll_x()) + rect.get_ur_x()) / 2),
+          static_cast<int32_t>((static_cast<double>(rect.get_ll_y()) + rect.get_ur_y()) / 2)};
 }
 
 void DEFCutter::cutObjectList(std::vector<DCObject>& object_list, DCRect& boundary)
@@ -499,7 +453,7 @@ void DEFCutter::placeIOPinList(DCModel& dc_model)
     double best_distance = std::numeric_limits<double>::max();
     for (int32_t idx = 0; idx < static_cast<int32_t>(slot_list.size()); idx++) {
       DCIOSlot& slot = slot_list[idx];
-      if (!slot.get_available()) {
+      if (!slot.get_available() || pin.get_layer_name() != slot.get_shape().get_layer_name()) {
         continue;
       }
       double distance = getIOPinDistance(pin, slot.get_shape().get_rect());
@@ -509,7 +463,8 @@ void DEFCutter::placeIOPinList(DCModel& dc_model)
       }
     }
     if (best_idx < 0) {
-      MJLOG.error(Loc::current(), "Cannot place ", unplaced_pin_num, " remaining cut IO pins on the die boundary without overlap or spacing violations.");
+      MJLOG.error(Loc::current(), "No legal boundary slot for cut IO ", pin.get_name(), " on net ", dc_model.get_net_list()[pin.get_net_idx()].get_name(),
+                  "; selected routing layer: ", pin.get_layer_name(), "; remaining IO pins=", unplaced_pin_num);
     }
     DCLayerRect shape = slot_list[best_idx].get_shape();
     pin.get_shape_list().push_back(shape);
@@ -728,6 +683,12 @@ bool DEFCutter::hasIOPinSpacing(DCLayerRect& first, DCLayerRect& second)
   double x_gap = std::max(static_cast<double>(first_rect.get_ll_x()) - second_rect.get_ur_x(), static_cast<double>(second_rect.get_ll_x()) - first_rect.get_ur_x());
   double y_gap = std::max(static_cast<double>(first_rect.get_ll_y()) - second_rect.get_ur_y(), static_cast<double>(second_rect.get_ll_y()) - first_rect.get_ur_y());
   return !first_rect.intersect(second_rect).isValid() && (x_gap >= spacing || y_gap >= spacing);
+}
+
+double DEFCutter::getIOPinDistance(DCIOPin& pin, const DCRect& rect)
+{
+  return std::abs((static_cast<double>(rect.get_ll_x()) + rect.get_ur_x()) / 2 - pin.get_target_coord()[0])
+         + std::abs((static_cast<double>(rect.get_ll_y()) + rect.get_ur_y()) / 2 - pin.get_target_coord()[1]);
 }
 
 void DEFCutter::updateDesign(DCModel& dc_model)
@@ -961,8 +922,8 @@ void DEFCutter::buildNetList(DCModel& dc_model, idb::IdbDesign* design)
       }
       connectPin(design, pin, output_net, output_pg_net);
     }
-    for (int32_t pin_idx : net.get_cut_pin_idx_list()) {
-      connectPin(design, design->get_io_pin_list()->find_pin(dc_model.get_cut_pin_list()[pin_idx].get_name()), output_net, output_pg_net);
+    if (net.get_cut_pin_idx() >= 0) {
+      connectPin(design, design->get_io_pin_list()->find_pin(dc_model.get_cut_pin_list()[net.get_cut_pin_idx()].get_name()), output_net, output_pg_net);
     }
     std::map<int32_t, idb::IdbRegularWire*> wire_map;
     std::map<int32_t, idb::IdbSpecialWire*> pg_wire_map;
@@ -1180,9 +1141,10 @@ void DEFCutter::writeReport(DCModel& dc_model)
   *stream << "Design : " << dc_model.get_design_name() << "\nCoordinates : absolute, DBU"
           << "\nDie : " << dc_model.get_die().get_ll_x() << " " << dc_model.get_die().get_ll_y() << " " << dc_model.get_die().get_ur_x() << " "
           << dc_model.get_die().get_ur_y() << "\nOnly complete placed instances, ports and vias are retained.\n"
-          << "Each removed signal connection has its own IO on the same net. PG nets remain consolidated.\n"
+          << "Each cut net reuses or adds one logical IO for all removed terminals.\n"
           << "IOs use boundary routing cuts or legal edge tracks; unrouted connections require routing to the new IOs.\n"
-          << "External drivers become INPUTs and external loads become OUTPUTs; PG and unresolved directions use INOUT.\n";
+          << "IO layers follow the mean routing-layer position of all net terminals; CUT layers are excluded.\n"
+          << "IO directions follow inside/outside driver roles; PG and unresolved directions use INOUT.\n";
   int32_t kept_instance_num = 0;
   for (DCObject& object : dc_model.get_instance_list()) {
     if (object.get_retained()) {
@@ -1198,25 +1160,17 @@ void DEFCutter::writeReport(DCModel& dc_model)
       continue;
     }
     kept_net_num++;
-    if (!net.get_cut_pin_idx_list().empty()) {
+    if (net.get_cut_pin_idx() >= 0) {
       cut_net_num++;
-      *stream << "CutNet : " << net.get_name() << " removed_pins=" << net.get_removed_pin_num() << " io_pins=" << net.get_cut_pin_idx_list().size() << "\n";
+      *stream << "CutNet : " << net.get_name() << " removed_pins=" << net.get_removed_pin_num() << " io_pins=1\n";
     }
   }
   int32_t added_pin_num = 0;
   for (DCIOPin& pin : dc_model.get_cut_pin_list()) {
     added_pin_num += pin.get_source_idx() < 0;
     *stream << "IOPin : " << pin.get_name() << " net=" << dc_model.get_net_list()[pin.get_net_idx()].get_name()
-            << " direction=" << GetDCPinTypeName()(pin.get_type()) << " ports=" << pin.get_shape_list().size() << " reused=" << (pin.get_source_idx() >= 0);
-    if (pin.get_connection_idx() >= 0) {
-      DCConnection& connection = dc_model.get_net_list()[pin.get_net_idx()].get_connection_list()[pin.get_connection_idx()];
-      *stream << " external=";
-      if (!connection.get_is_io()) {
-        *stream << dc_model.get_instance_list()[connection.get_object_idx()].get_name() << "/";
-      }
-      *stream << connection.get_pin_name();
-    }
-    *stream << "\n";
+            << " direction=" << GetDCPinTypeName()(pin.get_type()) << " ports=" << pin.get_shape_list().size() << " reused=" << (pin.get_source_idx() >= 0)
+            << " layer=" << pin.get_layer_name() << "\n";
     for (DCLayerRect& shape : pin.get_shape_list()) {
       DCRect& rect = shape.get_rect();
       *stream << "  " << shape.get_layer_name() << " " << rect.get_ll_x() << " " << rect.get_ll_y() << " " << rect.get_ur_x() << " " << rect.get_ur_y() << "\n";

@@ -494,6 +494,7 @@ void MJInterface::wrapCutNetList(DCModel& dc_model)
           connection.set_is_io(io != 0);
           connection.set_pin_name(pin->get_pin_name());
           connection.set_pin_type(wrapCutPinType(pin));
+          connection.set_layer_name_set(wrapCutPinLayerNameSet(pin));
           connection.set_shape_list(wrapCutPinShapeList(pin));
           if ((io && !io_idx_map.contains(pin)) || (!io && !instance_idx_map.contains(pin->get_instance()))) {
             MJLOG.error(Loc::current(), "Invalid pin owner on net ", net.get_name());
@@ -521,6 +522,28 @@ DCPinType MJInterface::wrapCutPinType(idb::IdbPin* pin)
     return DCPinType::kInout;
   }
   return DCPinType::kNone;
+}
+
+std::set<std::string> MJInterface::wrapCutPinLayerNameSet(idb::IdbPin* pin)
+{
+  std::set<std::string> layer_name_set;
+  if (pin->get_term() == nullptr) {
+    return layer_name_set;
+  }
+  // Terminal layers are valid even when the pin has no placed geometry.
+  for (idb::IdbPort* port : pin->get_term()->get_port_list()) {
+    for (idb::IdbLayerShape* shape : port->get_layer_shape()) {
+      if (shape->get_layer() != nullptr && shape->get_layer()->is_routing() && !shape->get_rect_list().empty()) {
+        layer_name_set.insert(shape->get_layer()->get_name());
+      }
+    }
+    for (idb::IdbVia* via : port->get_via_list()) {
+      for (DCLayerRect& shape : wrapCutViaShapeList(via)) {
+        layer_name_set.insert(shape.get_layer_name());
+      }
+    }
+  }
+  return layer_name_set;
 }
 
 void MJInterface::wrapCutRouteList(DCNet& net)

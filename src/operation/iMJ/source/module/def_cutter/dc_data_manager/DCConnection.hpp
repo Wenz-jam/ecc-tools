@@ -31,6 +31,7 @@ class DCConnection
   std::string& get_pin_name() { return _pin_name; }
   bool get_is_io() { return _is_io; }
   DCPinType get_pin_type() { return _pin_type; }
+  std::set<std::string>& get_layer_name_set() { return _layer_name_set; }
   std::vector<DCLayerRect>& get_shape_list() { return _shape_list; }
   bool get_retained() { return _retained; }
   // const getter
@@ -38,6 +39,7 @@ class DCConnection
   const std::string& get_pin_name() const { return _pin_name; }
   bool get_is_io() const { return _is_io; }
   DCPinType get_pin_type() const { return _pin_type; }
+  const std::set<std::string>& get_layer_name_set() const { return _layer_name_set; }
   const std::vector<DCLayerRect>& get_shape_list() const { return _shape_list; }
   bool get_retained() const { return _retained; }
   // setter
@@ -45,6 +47,7 @@ class DCConnection
   void set_pin_name(const std::string& pin_name) { _pin_name = pin_name; }
   void set_is_io(bool is_io) { _is_io = is_io; }
   void set_pin_type(DCPinType pin_type) { _pin_type = pin_type; }
+  void set_layer_name_set(const std::set<std::string>& layer_name_set) { _layer_name_set = layer_name_set; }
   void set_shape_list(const std::vector<DCLayerRect>& shape_list) { _shape_list = shape_list; }
   void set_retained(bool retained) { _retained = retained; }
   // function
@@ -54,6 +57,7 @@ class DCConnection
   std::string _pin_name;
   bool _is_io = false;
   DCPinType _pin_type = DCPinType::kNone;
+  std::set<std::string> _layer_name_set;
   std::vector<DCLayerRect> _shape_list;
   bool _retained = false;
 };

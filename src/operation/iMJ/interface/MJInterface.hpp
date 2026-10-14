@@ -121,6 +121,7 @@ class MJInterface
   DCRect wrapCutViaRect(idb::IdbVia* via);
   void wrapCutNetList(DCModel& dc_model);
   DCPinType wrapCutPinType(idb::IdbPin* pin);
+  std::set<std::string> wrapCutPinLayerNameSet(idb::IdbPin* pin);
   void wrapCutRouteList(DCNet& net);
   DCRect wrapCutWireRect(int32_t x1, int32_t y1, int32_t x2, int32_t y2, int32_t width, int32_t ext1, int32_t ext2);
 #endif

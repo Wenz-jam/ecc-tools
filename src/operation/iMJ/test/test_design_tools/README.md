@@ -64,29 +64,36 @@ netlist_save -path ./cropped.v
   and special routing, rectangular blockages, fills, regions and slots are
   clipped. Complete vias are retained. For a partially clipped via, its cut is
   removed while its in-die routing enclosures remain as metal and IO access.
-- Each distinct removed signal terminal becomes a separate IO on its original
-  net. For example, an internal A connected to external B/C/D produces three
-  IOs, not one IO with three PORT shapes. External instance drivers become
-  INPUTs; external loads become OUTPUTs. Removed top-level ports retain their
-  direction. This preserves a single driver even when an externally driven net
-  also has external fanout loads. Internal-only nets do not gain IOs.
-- Boundary routing cuts supply the IO shapes where available. Unrouted IOs are
+- All removed terminals on the same net share one logical IO. For example,
+  internal A connected to external B/C/D produces one IO, not three. Reuse a
+  retained top-level IO when available. An external driver produces an INPUT;
+  internal drivers driving external loads produce an OUTPUT. Internal-only
+  nets do not gain IOs.
+- Boundary routing cuts on the selected layer supply IO shapes where available.
+  Multiple shapes are PORTs of one IO, not separate IOs. Unrouted IOs are
   placed inside and flush with the new die boundary, on DEF tracks (or LEF
   pitch/offset when no DEF tracks exist), using layer direction, minimum width,
   minimum area and spacing. Retained metal, vias, IO, routing blockages and fill
   reserve their space. Insufficient legal edge capacity fails before updating
   IDB; the cutter does not overlap pins or enlarge the die to make them fit.
-- PG nets remain consolidated. Routing-only transit nets use one logical IO
-  with all their boundary access shapes. Existing retained IOs are preserved;
-  when no external terminal is removed, boundary access can extend an existing
-  port. Same-name ordinary/special records share generated IOs. PG and unknown
-  directions use INOUT.
+- The new IO layer is the mean metal-layer position of all distinct net pins,
+  inside and outside the crop. Routing layers are ordered by LEF stack order,
+  not by their names or by an interleaved metal/CUT layer index. Each multilayer
+  pin first averages its unique routing layers, including pin-via metal, then
+  all pins have equal weight. Round to the nearest metal layer, ties upward.
+  Unplaced terminals still provide their LEF/DEF port layers. CUT layers never
+  participate. Missing terminal layer data or exhausted selected-layer slots
+  fails without choosing another layer.
+- Routing-only nets without terminals average their boundary metal layers.
+  Existing retained IO geometry is preserved. Same-name ordinary/special records
+  share one generated IO. PG and unknown directions use INOUT.
 - The result has explicit ports and connectivity for DEF and Verilog export.
   It does not synthesize the deleted logic or reroute the retained metal: the
   new ports describe the interface to the removed environment. A newly placed
   IO without a pre-existing routing cut is logically connected, not newly
-  routed. Added/extended IOs, external terminal identities and shapes are listed
-  in the report.
+  routed. Metal on non-selected layers remains routing metal rather than IO
+  geometry; no via is synthesized to connect it to the new IO. Added/extended
+  IOs, selected layers and shapes are listed in the report.
 - The current geometry path supports rectangular DIEAREA and Manhattan
   routing represented by IDB. Unsupported diagonal routing fails explicitly.
   Output uses the IDB DEF writer; geometry is preserved as clipped metal

@@ -51,12 +51,10 @@ class DEFCutter
   void cutNetList(DCModel& dc_model);
   void buildBoundaryShapeList(DCNet& net, DCRoute& route, DCRect& input_rect, DCRect& die);
   void buildIOPinList(DCModel& dc_model);
+  std::string getIOPinLayerName(DCModel& dc_model, std::vector<int32_t>& net_idx_list);
   bool isBoundaryRect(const DCRect& rect, const DCRect& die);
-  DCPinType getExternalPinType(DCConnection& connection);
-  std::array<int32_t, 2> getIOPinTargetCoord(DCModel& dc_model, int32_t net_idx, int32_t connection_idx);
   DCPinType getIOPinType(DCModel& dc_model, std::vector<int32_t>& net_idx_list);
-  void assignBoundaryShapeList(std::vector<DCIOPin>& pin_list, std::vector<DCLayerRect>& shape_list);
-  double getIOPinDistance(DCIOPin& pin, const DCRect& rect);
+  std::array<int32_t, 2> getIOPinTargetCoord(DCModel& dc_model, std::vector<int32_t>& net_idx_list);
   void cutObjectList(std::vector<DCObject>& object_list, DCRect& boundary);
   void placeIOPinList(DCModel& dc_model);
   std::vector<DCIOSlot> buildIOSlotList(DCModel& dc_model);
@@ -65,6 +63,7 @@ class DEFCutter
   int32_t getIOPinDepth(DCModel& dc_model, idb::IdbLayerRouting* layer, int32_t width, bool low_side);
   std::map<std::string, std::vector<DCRect>> buildIOObstacleMap(DCModel& dc_model);
   bool hasIOPinSpacing(DCLayerRect& first, DCLayerRect& second);
+  double getIOPinDistance(DCIOPin& pin, const DCRect& rect);
   void updateDesign(DCModel& dc_model);
   void buildFloorplan(DCModel& dc_model, idb::IdbLayout* layout);
   void buildInstanceList(DCModel& dc_model, idb::IdbDesign* design);
