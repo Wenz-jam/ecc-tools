@@ -43,23 +43,19 @@ void DriverAnalyzer::destroyInst()
   _da_instance = nullptr;
 }
 
-void DriverAnalyzer::analyze(std::map<std::string, std::any>& config_map)
+void DriverAnalyzer::analyze()
 {
   Monitor monitor;
   MJLOG.info(Loc::current(), "Starting...");
-  DAModel da_model = initDAModel(config_map);
+  DAModel da_model = initDAModel();
   analyzeNetList(da_model);
   writeReport(da_model);
   MJLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
 
-DAModel DriverAnalyzer::initDAModel(std::map<std::string, std::any>& config_map)
+DAModel DriverAnalyzer::initDAModel()
 {
   DAModel da_model;
-  da_model.set_source(MJUTIL.getConfigValue<std::string>(config_map, "-source", "design"));
-  if (da_model.get_source() != "design" && da_model.get_source() != "netlist") {
-    MJLOG.error(Loc::current(), "analyze_driver -source must be design or netlist.");
-  }
   MJI.wrapDriverDesign(da_model);
   return da_model;
 }
@@ -94,7 +90,7 @@ void DriverAnalyzer::writeReport(DAModel& da_model)
 {
   std::string path = MJDM.getConfig().da_temp_directory_path + "driver_report.rpt";
   std::ofstream* stream = MJUTIL.getOutputFileStream(path);
-  *stream << "Design : " << da_model.get_design_name() << "\nSource : " << da_model.get_source() << "\nSignalNets : " << da_model.get_net_list().size()
+  *stream << "Design : " << da_model.get_design_name() << "\nSignalNets : " << da_model.get_net_list().size()
           << "\nExcludedPGNets : " << da_model.get_excluded_pg_net_num() << "\nMultiDriverNets : " << da_model.get_multi_driver_net_num()
           << "\nUnresolvedNets : " << da_model.get_unresolved_net_num() << "\nUndrivenNets : " << da_model.get_undriven_net_num()
           << "\n\nINOUT and unknown directions are unresolved, not definite drivers.\n"

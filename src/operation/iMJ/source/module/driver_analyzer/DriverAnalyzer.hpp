@@ -29,7 +29,7 @@ class DriverAnalyzer
   static DriverAnalyzer& getInst();
   static void destroyInst();
   // function
-  void analyze(std::map<std::string, std::any>& config_map);
+  void analyze();
 
  private:
   static DriverAnalyzer* _da_instance;
@@ -41,7 +41,7 @@ class DriverAnalyzer
   DriverAnalyzer& operator=(const DriverAnalyzer& other) = delete;
   DriverAnalyzer& operator=(DriverAnalyzer&& other) = delete;
   // function
-  DAModel initDAModel(std::map<std::string, std::any>& config_map);
+  DAModel initDAModel();
   void analyzeNetList(DAModel& da_model);
 #if 1  // exhibit
   void writeReport(DAModel& da_model);

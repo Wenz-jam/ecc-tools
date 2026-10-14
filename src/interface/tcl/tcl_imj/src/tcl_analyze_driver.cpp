@@ -21,8 +21,6 @@ namespace tcl {
 
 TclAnalyzeDriver::TclAnalyzeDriver(const char* cmd_name) : TclCmd(cmd_name)
 {
-  _config_list.push_back(std::make_pair("-source", ValueType::kString));
-  TclUtil::addOption(this, _config_list);
 }
 
 unsigned TclAnalyzeDriver::exec()
@@ -30,8 +28,7 @@ unsigned TclAnalyzeDriver::exec()
   if (!check()) {
     return 0;
   }
-  std::map<std::string, std::any> config_map = TclUtil::getConfigMap(this, _config_list);
-  MJI.analyzeDriver(config_map);
+  MJI.analyzeDriver();
   return 1;
 }
 

@@ -100,10 +100,10 @@ void MJInterface::flattenDef(std::map<std::string, std::any> config_map)
   DefFlattener::destroyInst();
 }
 
-void MJInterface::analyzeDriver(std::map<std::string, std::any> config_map)
+void MJInterface::analyzeDriver()
 {
   DriverAnalyzer::initInst();
-  MJDA.analyze(config_map);
+  MJDA.analyze();
   DriverAnalyzer::destroyInst();
 }
 
@@ -159,9 +159,9 @@ void MJInterface::wrapConfig(std::map<std::string, std::any>& config_map)
 
 void MJInterface::wrapDriverDesign(DAModel& da_model)
 {
-  idb::IdbDesign* design = da_model.get_source() == "netlist" ? dmInst->get_netlist_idb_design() : dmInst->get_idb_design();
+  idb::IdbDesign* design = dmInst->get_idb_design();
   if (design == nullptr) {
-    MJLOG.error(Loc::current(), "No ", da_model.get_source(), " loaded for driver analysis.");
+    MJLOG.error(Loc::current(), "No design loaded for driver analysis.");
   }
   da_model.set_design_name(design->get_design_name());
   std::map<std::string, int32_t> net_idx_map;

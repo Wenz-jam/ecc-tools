@@ -18,10 +18,9 @@ def_save -path ./cropped.def
 netlist_save -path ./cropped.v
 ```
 
-- `analyze_driver [-source design|netlist]` writes
-  `driver_analyzer/driver_report.rpt`. The default is the active design, whether
-  loaded from DEF or ordinary Verilog. `netlist` selects the separate reference
-  design loaded by `lvs_verilog_init`.
+- `analyze_driver` takes no arguments and writes
+  `driver_analyzer/driver_report.rpt`. It always uses the active design loaded
+  from DEF or ordinary Verilog, never the separate LVS reference netlist.
 - Top-level inputs and instance outputs are structural drivers. INOUT and
   unspecified directions are reported as unresolved, not silently classified.
   POWER/GROUND nets and pins are excluded. Multiple tristate outputs remain
@@ -67,8 +66,9 @@ ecc_py.cut_def(config_dict={"-rect": "10 10 40 40"})
 ecc_py.destroy_mj()
 ```
 
-An optional JSON file uses the existing top-level `MJ` object with string flag
-values. Nonempty `config_dict` values override JSON values.
+For commands with configuration options, an optional JSON file uses the existing
+top-level `MJ` object with string flag values. Nonempty `config_dict` values
+override JSON values. `analyze_driver()` has no configuration arguments.
 
 Regression:
 

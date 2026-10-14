@@ -99,9 +99,6 @@ class TclAnalyzeDriver : public TclCmd
   ~TclAnalyzeDriver() override = default;
   unsigned check() override { return 1; }
   unsigned exec() override;
-
- private:
-  std::vector<std::pair<std::string, ValueType>> _config_list;
 };
 
 class TclCutDEF : public TclCmd

@@ -74,7 +74,7 @@ class DesignToolsTest
 
   void testDriverAnalysis()
   {
-    MJI.analyzeDriver({});
+    MJI.analyzeDriver();
     std::string report = readText(_output / "driver_analyzer/driver_report.rpt");
     require(report.find("MultiDriverNets : 1") != std::string::npos, "multiple outputs");
     require(report.find("UnresolvedNets : 1") != std::string::npos, "inout classification");
@@ -84,7 +84,7 @@ class DesignToolsTest
     idb::IdbNet* net = dmInst->get_idb_design()->get_net_list()->find_net("multi");
     idb::IdbPin* pin = dmInst->get_idb_design()->get_instance_list()->find_instance("u0")->get_pin("Y");
     net->get_instance_pin_list()->get_pin_list().push_back(pin);
-    MJI.analyzeDriver({});
+    MJI.analyzeDriver();
     report = readText(_output / "driver_analyzer/driver_report.rpt");
     require(report.find("Drivers : 2") != std::string::npos && report.find("Drivers : 3") == std::string::npos, "deduplicate pins");
     net->get_instance_pin_list()->get_pin_list().pop_back();
@@ -170,7 +170,7 @@ class DesignToolsTest
     imj::DCModel roundtrip_model;
     MJI.wrapCutDesign(roundtrip_model);
     checkIOPins(roundtrip_model);
-    MJI.analyzeDriver({});
+    MJI.analyzeDriver();
     report = readText(_output / "driver_analyzer/driver_report.rpt");
     require(report.find("MultiDriverNets : 1") != std::string::npos, "cropping must not introduce multiple drivers");
     require(report.find("UndrivenNets : 1") != std::string::npos, "external driver must be replaced with an input IO");
@@ -243,15 +243,19 @@ class DesignToolsTest
     require(dmInst->readLef(std::vector<std::string>{(_data / "cell.lef").string()}), "read cell netlist");
     require(dmInst->readVerilog((_data / "design.v").string(), "driver_test"), "read netlist");
     MJI.initMJ({{"-temp_directory_path", (_output / "netlist").string()}});
-    MJI.analyzeDriver({});
+    MJI.analyzeDriver();
     std::string report = readText(_output / "netlist/driver_analyzer/driver_report.rpt");
     require(report.find("MultiDriverNets : 1") != std::string::npos, "netlist multi driver");
     MJI.destroyMJ();
+    require(dmInst->readDef((_data / "design.def.in").string()), "read active DEF");
     require(dmInst->addVerilog((_data / "design.v").string(), "driver_test"), "read reference netlist");
-    MJI.initMJ({{"-temp_directory_path", (_output / "reference").string()}});
-    MJI.analyzeDriver({{"-source", std::string("netlist")}});
-    report = readText(_output / "reference/driver_analyzer/driver_report.rpt");
-    require(report.find("Source : netlist") != std::string::npos && report.find("MultiDriverNets : 1") != std::string::npos, "reference netlist selection");
+    MJI.initMJ({{"-temp_directory_path", (_output / "active_design").string()}});
+    MJI.analyzeDriver();
+    report = readText(_output / "active_design/driver_analyzer/driver_report.rpt");
+    require(report.find("Design : crop_test\n") != std::string::npos && report.find("Design : driver_test\n") == std::string::npos,
+            "driver analysis must use the active design, not the LVS reference");
+    require(report.find("MultiDriverNets : 1") != std::string::npos && report.find("UnresolvedNets : 1") != std::string::npos,
+            "active DEF driver classification");
     MJI.destroyMJ();
   }
 };

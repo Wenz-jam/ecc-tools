@@ -25,7 +25,7 @@ bool insertFiller(std::string& config, std::map<std::string, std::string>& confi
 bool checkAntenna(std::string& config, std::map<std::string, std::string>& config_dict);
 bool insertMetal(std::string& config, std::map<std::string, std::string>& config_dict);
 bool defFlatten(std::string& config, std::map<std::string, std::string>& config_dict);
-bool analyzeDriver(std::string& config, std::map<std::string, std::string>& config_dict);
+bool analyzeDriver();
 bool cutDEF(std::string& config, std::map<std::string, std::string>& config_dict);
 bool destroyMJ();
 

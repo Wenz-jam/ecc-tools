@@ -27,7 +27,6 @@ class DAModel
   ~DAModel() = default;
   // getter
   std::string& get_design_name() { return _design_name; }
-  std::string& get_source() { return _source; }
   std::vector<DANet>& get_net_list() { return _net_list; }
   int32_t get_multi_driver_net_num() { return _multi_driver_net_num; }
   int32_t get_unresolved_net_num() { return _unresolved_net_num; }
@@ -35,7 +34,6 @@ class DAModel
   int32_t get_excluded_pg_net_num() { return _excluded_pg_net_num; }
   // const getter
   const std::string& get_design_name() const { return _design_name; }
-  const std::string& get_source() const { return _source; }
   const std::vector<DANet>& get_net_list() const { return _net_list; }
   int32_t get_multi_driver_net_num() const { return _multi_driver_net_num; }
   int32_t get_unresolved_net_num() const { return _unresolved_net_num; }
@@ -43,7 +41,6 @@ class DAModel
   int32_t get_excluded_pg_net_num() const { return _excluded_pg_net_num; }
   // setter
   void set_design_name(const std::string& design_name) { _design_name = design_name; }
-  void set_source(const std::string& source) { _source = source; }
   void set_net_list(const std::vector<DANet>& net_list) { _net_list = net_list; }
   void set_multi_driver_net_num(int32_t multi_driver_net_num) { _multi_driver_net_num = multi_driver_net_num; }
   void set_unresolved_net_num(int32_t unresolved_net_num) { _unresolved_net_num = unresolved_net_num; }
@@ -53,7 +50,6 @@ class DAModel
 
  private:
   std::string _design_name;
-  std::string _source;
   std::vector<DANet> _net_list;
   int32_t _multi_driver_net_num = 0;
   int32_t _unresolved_net_num = 0;

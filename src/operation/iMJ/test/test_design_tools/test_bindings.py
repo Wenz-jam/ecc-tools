@@ -16,6 +16,12 @@ with tempfile.TemporaryDirectory(prefix="imj_bindings_") as temp:
     report = (output / "driver_analyzer/driver_report.rpt").read_text()
     assert "MultiDriverNets : 1" in report
     assert "UnresolvedNets : 1" in report
+    try:
+        ecc_py.analyze_driver(config_dict={"-source": "netlist"})
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("analyze_driver must not accept source selection")
 
     config = Path(temp) / "cut.json"
     config.write_text(json.dumps({"MJ": {"-rect": "3 3 12 12"}}))

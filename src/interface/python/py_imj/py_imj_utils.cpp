@@ -145,32 +145,6 @@ void initDefFlattenConfigMapByDict(std::map<std::string, std::string>& config_di
   }
 }
 
-bool initDriverAnalysisConfigMapByJSON(const std::string& config, std::map<std::string, std::any>& config_map)
-{
-  std::ifstream stream(config);
-  if (!stream.is_open()) {
-    return false;
-  }
-  nlohmann::json json;
-  stream >> json;
-  for (std::string key : {"-source"}) {
-    std::string value = ecc::getJsonData(json, {"MJ", key});
-    if (!value.empty()) {
-      config_map[key] = value;
-    }
-  }
-  return true;
-}
-
-void initDriverAnalysisConfigMapByDict(std::map<std::string, std::string>& config_dict, std::map<std::string, std::any>& config_map)
-{
-  for (std::string key : {"-source"}) {
-    if (config_dict.contains(key) && !config_dict[key].empty()) {
-      config_map[key] = config_dict[key];
-    }
-  }
-}
-
 bool initDEFCutConfigMapByJSON(const std::string& config, std::map<std::string, std::any>& config_map)
 {
   std::ifstream stream(config);

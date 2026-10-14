@@ -94,7 +94,7 @@ class MJInterface
   void insertMetal(std::map<std::string, std::any> config_map);
   void checkAntenna(std::map<std::string, std::any> config_map);
   void flattenDef(std::map<std::string, std::any> config_map);
-  void analyzeDriver(std::map<std::string, std::any> config_map);
+  void analyzeDriver();
   void cutDEF(std::map<std::string, std::any> config_map);
   void destroyMJ();
 #endif
