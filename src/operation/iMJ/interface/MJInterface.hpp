@@ -25,6 +25,11 @@
 #if 1  // 前向声明
 
 namespace idb {
+class IdbDesign;
+class IdbLayout;
+class IdbRect;
+class IdbVia;
+class IdbSpecialNet;
 class IdbLayerRouting;
 class IdbLayerCut;
 class IdbNet;
@@ -35,6 +40,14 @@ class IdbRegularWireSegment;
 }  // namespace idb
 
 namespace imj {
+class DAModel;
+class DAPin;
+class DCModel;
+class DCNet;
+class DCRect;
+class DCRoute;
+class DCLayerRect;
+enum class DCPinType;
 class RoutingLayer;
 class CutLayer;
 class LayerCoord;
@@ -81,6 +94,8 @@ class MJInterface
   void insertMetal(std::map<std::string, std::any> config_map);
   void checkAntenna(std::map<std::string, std::any> config_map);
   void flattenDef(std::map<std::string, std::any> config_map);
+  void analyzeDriver(std::map<std::string, std::any> config_map);
+  void cutDEF(std::map<std::string, std::any> config_map);
   void destroyMJ();
 #endif
 
@@ -93,10 +108,31 @@ class MJInterface
 #if 1  // input
   void input(std::map<std::string, std::any>& config_map);
   void wrapConfig(std::map<std::string, std::any>& config_map);
+  void wrapDriverDesign(DAModel& da_model);
+  std::vector<idb::IdbPin*> getSpecialNetPinList(idb::IdbDesign* design, idb::IdbSpecialNet* net, bool is_io);
+  DAPin wrapDriverPin(idb::IdbPin* pin, bool is_io);
+  void wrapCutDesign(DCModel& dc_model);
+  void wrapCutFloorplan(DCModel& dc_model);
+  DCRect wrapCutRect(idb::IdbRect* rect);
+  void wrapCutObjectList(DCModel& dc_model);
+  std::vector<DCLayerRect> wrapCutPinShapeList(idb::IdbPin* pin);
+  std::vector<DCLayerRect> wrapCutViaShapeList(idb::IdbVia* via);
+  DCRect wrapCutViaRect(idb::IdbVia* via);
+  void wrapCutNetList(DCModel& dc_model);
+  DCPinType wrapCutPinType(idb::IdbPin* pin);
+  void wrapCutRouteList(DCNet& net);
+  DCRect wrapCutWireRect(int32_t x1, int32_t y1, int32_t x2, int32_t y2, int32_t width, int32_t ext1, int32_t ext2);
 #endif
 
 #if 1  // output
   void output();
+  void writeCutDEF(DCModel& dc_model, std::string path);
+  void writeCutFloorplan(DCModel& dc_model, idb::IdbLayout* layout);
+  void writeCutInstanceList(DCModel& dc_model, idb::IdbDesign* design);
+  void writeCutPinList(DCModel& dc_model, idb::IdbDesign* design);
+  void writeCutNetList(DCModel& dc_model, idb::IdbDesign* design);
+  void connectCutPin(idb::IdbPin* pin, idb::IdbNet* net, idb::IdbSpecialNet* special_net);
+  void writeCutShapeList(DCModel& dc_model, idb::IdbDesign* design);
 #endif
 
 #endif
