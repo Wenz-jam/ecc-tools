@@ -118,17 +118,34 @@ void RTInterface::runRT()
   RTPA.access();
   PinAccessor::destroyInst();
   RTUTIL.releaseMemory("PinAccessor");
+  // outputDef("irt_pa.def");
 
   initRegionRoute();
-  RegionRoute& region_route = RTDM.getDatabase().get_region_route();
-  if (region_route.get_enable()) {
-    region_route.set_is_regional_stage(true);
-    RTLOG.info(Loc::current(), "Starting selected-net routing flow");
-    runRoutingFlow();
-    region_route.set_is_regional_stage(false);
-    RTLOG.info(Loc::current(), "Starting full-chip routing flow");
-  }
-  runRoutingFlow();
+
+  SupplyAnalyzer::initInst();
+  RTSA.analyze();
+  SupplyAnalyzer::destroyInst();
+
+  PlanarRouter::initInst();
+  RTPR.generate();
+  PlanarRouter::destroyInst();
+
+  LayerAssigner::initInst();
+  RTLA.assign();
+  LayerAssigner::destroyInst();
+
+  std::vector<GridMap<RoutingEdge>>().swap(RTDM.getDatabase().get_routing_h_edge_map());
+  std::vector<GridMap<RoutingEdge>>().swap(RTDM.getDatabase().get_routing_v_edge_map());
+
+  TrackAssigner::initInst();
+  RTTA.assign();
+  TrackAssigner::destroyInst();
+  // outputDef("irt_ta.def");
+
+  DetailedRouter::initInst();
+  RTDR.route();
+  DetailedRouter::destroyInst();
+  RTUTIL.releaseMemory("DetailedRouter");
 
   ViolationReporter::initInst();
   RTVR.report();
@@ -141,12 +158,22 @@ void RTInterface::runRT()
   RTLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
 
+void RTInterface::outputDef(const std::string& def_name)
+{
+  const std::string def_path = RTDM.getConfig().temp_directory_path + def_name;
+  RTLOG.info(Loc::current(), "Save def to : ", def_path);
+
+  output();
+  if (!dmInst->saveDef(def_path)) {
+    RTLOG.error(Loc::current(), "Failed to save DEF: ", def_path);
+  }
+}
+
 void RTInterface::initRegionRoute()
 {
   RegionRoute& region_route = RTDM.getDatabase().get_region_route();
   region_route = RegionRoute();
 
-  // Set the regional routing rectangle here before recompiling. std::nullopt disables regional routing.
   const std::optional<PlanarRect> region_rect;
   if (!region_rect.has_value()) {
     return;
@@ -176,36 +203,6 @@ void RTInterface::initRegionRoute()
   region_route.set_enable(true);
   RTLOG.info(Loc::current(), "Enabled regional routing in rect ", real_rect.get_ll_x(), ",", real_rect.get_ll_y(), "-", real_rect.get_ur_x(), ",",
              real_rect.get_ur_y(), " for ", region_route.get_net_idx_set().size(), " complete nets across the die");
-}
-
-void RTInterface::runRoutingFlow()
-{
-  SupplyAnalyzer::initInst();
-  RTSA.analyze();
-  SupplyAnalyzer::destroyInst();
-
-  PlanarRouter::initInst();
-  RTPR.generate();
-  PlanarRouter::destroyInst();
-
-  RTDM.getDatabase().get_planar_routing_h_edge_map().free();
-  RTDM.getDatabase().get_planar_routing_v_edge_map().free();
-
-  LayerAssigner::initInst();
-  RTLA.assign();
-  LayerAssigner::destroyInst();
-
-  std::vector<GridMap<RoutingEdge>>().swap(RTDM.getDatabase().get_routing_h_edge_map());
-  std::vector<GridMap<RoutingEdge>>().swap(RTDM.getDatabase().get_routing_v_edge_map());
-
-  TrackAssigner::initInst();
-  RTTA.assign();
-  TrackAssigner::destroyInst();
-
-  DetailedRouter::initInst();
-  RTDR.route();
-  DetailedRouter::destroyInst();
-  RTUTIL.releaseMemory("DetailedRouter");
 }
 
 void RTInterface::destroyRT()
