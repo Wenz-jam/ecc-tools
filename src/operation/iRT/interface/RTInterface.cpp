@@ -939,6 +939,15 @@ void RTInterface::wrapMacroList()
     if (idb_instance == nullptr || idb_instance->get_cell_master() == nullptr || !idb_instance->get_cell_master()->is_block()) {
       continue;
     }
+    idb::IdbCellMaster* idb_cell_master = idb_instance->get_cell_master();
+    if (idb_cell_master->has_macro_property()) {
+      for (idb::macro::ObsSpacing& obs_spacing : idb_cell_master->get_macro_property()->get_obs_spacing_list()) {
+        RTLOG.info(Loc::current(), "macro ", idb_cell_master->get_name(), " obs spacing ", obs_spacing.get_layer()->get_name(),
+                   " = ", obs_spacing.get_min_spacing());
+      }
+    } else {
+      RTLOG.info(Loc::current(), "macro ", idb_cell_master->get_name(), " obs spacing is empty!");
+    }
     idb_instance->set_bounding_box();
     idb::IdbRect* idb_bbox = idb_instance->get_bounding_box();
     if (idb_bbox == nullptr) {
