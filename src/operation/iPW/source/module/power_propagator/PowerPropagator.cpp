@@ -19,6 +19,10 @@
 #include <cstdint>
 #include <cstdlib>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include "DataManager.hpp"
 #include "Logger.hpp"
 #include "Monitor.hpp"
@@ -971,6 +975,36 @@ int simulationCount(const char* name, int fallback, int minimum, int maximum)
   return end != text && *end == '\0' && value >= minimum && value <= maximum ? static_cast<int>(value) : fallback;
 }
 
+// 向量less 仿真器的线程数：优先 IPW_POWER_SIM_THREADS，其次配置里的 thread_number；
+// 按 OpenMP 可用线程数封顶，并限制到 32（该循环是内存访问密集型，再多的线程收益递减）。
+int resolveSimulatorThreadNum()
+{
+  int thread_num = 0;
+  if (const char* text = std::getenv("IPW_POWER_SIM_THREADS")) {
+    char* end = nullptr;
+    const long value = std::strtol(text, &end, 10);
+    if (end != text && *end == '\0' && value > 0 && value <= 1024) {
+      thread_num = static_cast<int>(value);
+    }
+  }
+  if (thread_num <= 0) {
+    thread_num = PWDM.getConfig().thread_number;
+  }
+  if (thread_num <= 0) {
+    thread_num = 1;
+  }
+#ifdef _OPENMP
+  const int max_threads = omp_get_max_threads();
+  if (thread_num > max_threads) {
+    thread_num = max_threads;
+  }
+#endif
+  if (thread_num > 32) {
+    thread_num = 32;
+  }
+  return thread_num;
+}
+
 struct Instruction
 {
   LogicOperationType op;
@@ -1017,8 +1051,22 @@ class Simulator
   Word evaluate(const Program& program) const;
   bool build();
   std::size_t orderGates();
+  void buildGateLevels();
   static bool isSelfReferential(const Gate& gate);
   void settle();
+  void fullSettle();
+  void eventSettle();
+  void markDirty(std::size_t node);
+  void setValue(std::size_t node, Word value);
+  void pushDirtyGate(std::size_t gate_idx);
+  void accumulateNode(
+      std::size_t idx,
+      uint64_t duration,
+      std::vector<uint64_t>& ones,
+      std::vector<uint64_t>& rises,
+      std::vector<uint64_t>& falls,
+      const std::vector<Word>& previous
+  );
   bool advance();
   Word randomWord();
   Word randomMask(double probability);
@@ -1041,6 +1089,24 @@ class Simulator
   // pin 名字 -> pin 索引：活动按 pin 写回（同一 net 上的多个 pin 共享 node，
   // 但旧行为是每个 pin 各持一份活动），因此这里按名字映射而不是按 node。
   std::map<std::string, uint32_t> _pin_name_index;
+  // 事件驱动 settle 与层内并行（见 buildGateLevels()）：只在没有组合环时启用，
+  // 此时 level 与 gate_order 一致，跳过"输入未变"的门与串行逐门求值逐位等价。
+  bool _levels_valid = false;
+  bool _full_settle_pending = true;
+  bool _event_driven = true;
+  int _thread_num = 1;
+  std::size_t _parallel_min_gates = 4096;
+  std::size_t _parallel_min_nodes = 65536;
+  std::vector<std::int32_t> _gate_level;
+  std::vector<std::vector<uint32_t>> _level_gates;
+  std::vector<std::int32_t> _node_driver_gate;
+  std::vector<std::vector<uint32_t>> _node_fanout_gates;
+  std::vector<uint8_t> _node_dirty;
+  std::vector<std::size_t> _dirty_node_list;
+  std::vector<std::vector<uint32_t>> _dirty_buckets;
+  std::vector<uint32_t> _gate_bucket_stamp;
+  uint32_t _bucket_generation = 0;
+  std::vector<Word> _parallel_values;
   std::vector<Word> _values;
   std::vector<Gate> _gates;
   std::vector<std::size_t> _gate_order;
@@ -1483,6 +1549,25 @@ bool Simulator::build()
     for (auto& detail : _consolidated_net_details)
       PWLOG.warn(Loc::current(), "  ", detail);
   }
+  _thread_num = resolveSimulatorThreadNum();
+  _event_driven = simulationCount("IPW_POWER_SIM_EVENT_DRIVEN", 1, 0, 1) != 0;
+  _parallel_min_gates
+      = static_cast<std::size_t>(simulationCount("IPW_POWER_SIM_PARALLEL_MIN_GATES", 4096, 0, 1000000000));
+  _parallel_min_nodes
+      = static_cast<std::size_t>(simulationCount("IPW_POWER_SIM_PARALLEL_MIN_NODES", 65536, 0, 1000000000));
+  PWLOG.info(
+      Loc::current(),
+      "Vectorless simulation: ",
+      _gates.size(),
+      " gates, ",
+      _sequentials.size(),
+      " sequential states, ",
+      _level_gates.size(),
+      " levels, ",
+      _thread_num,
+      " thread(s), event-driven settle ",
+      (_event_driven && _levels_valid) ? "enabled" : "disabled"
+  );
   _next_state.resize(_sequentials.size());
   return _gate_order.size() == _gates.size();
 }
@@ -1541,20 +1626,172 @@ std::size_t Simulator::orderGates()
       }
     }
   }
+  buildGateLevels();
+  _levels_valid = broken == 0;
   return broken;
+}
+
+// 为每个门算 level（1 + 驱动其输入的门的最大 level；根/常量输入算 0），
+// 并建"节点 -> 读它的门"的反向索引。只在无组合环时启用事件驱动。
+void Simulator::buildGateLevels()
+{
+  _node_driver_gate.assign(_values.size(), -1);
+  for (std::size_t idx = 0; idx < _gates.size(); ++idx) {
+    _node_driver_gate[_gates[idx].output] = static_cast<std::int32_t>(idx);
+  }
+  _node_fanout_gates.assign(_values.size(), std::vector<uint32_t>());
+  _gate_level.assign(_gates.size(), 0);
+  // 按拓扑序（_gate_order）计算，保证输入门的 level 已经定值
+  for (std::size_t order_pos = 0; order_pos < _gate_order.size(); ++order_pos) {
+    const std::size_t idx = _gate_order[order_pos];
+    std::int32_t level = 0;
+    for (const Instruction& instruction : _gates[idx].function) {
+      if (instruction.op != LogicOperationType::kPort) {
+        continue;
+      }
+      _node_fanout_gates[instruction.node].push_back(static_cast<uint32_t>(idx));
+      const std::int32_t driver = _node_driver_gate[instruction.node];
+      if (driver < 0) {
+        level = std::max(level, 1);
+      } else {
+        level = std::max(level, _gate_level[static_cast<std::size_t>(driver)] + 1);
+      }
+    }
+    _gate_level[idx] = level;
+  }
+  std::int32_t max_level = 0;
+  for (std::int32_t level : _gate_level) {
+    max_level = std::max(max_level, level);
+  }
+  _level_gates.assign(static_cast<std::size_t>(max_level) + 1, std::vector<uint32_t>());
+  for (std::size_t idx = 0; idx < _gates.size(); ++idx) {
+    _level_gates[static_cast<std::size_t>(_gate_level[idx])].push_back(static_cast<uint32_t>(idx));
+  }
+  _dirty_buckets.assign(_level_gates.size(), std::vector<uint32_t>());
+  _gate_bucket_stamp.assign(_gates.size(), 0);
+  _node_dirty.assign(_values.size(), 0);
+  _dirty_node_list.clear();
+}
+
+void Simulator::markDirty(std::size_t node)
+{
+  if (_node_dirty[node] == 0) {
+    _node_dirty[node] = 1;
+    _dirty_node_list.push_back(node);
+  }
+}
+
+// 所有对 _values 的写入都走这里：值确实变化才标记"下游需要重算"。
+void Simulator::setValue(std::size_t node, Word value)
+{
+  if (_values[node] == value) {
+    return;
+  }
+  _values[node] = value;
+  markDirty(node);
+}
+
+void Simulator::pushDirtyGate(std::size_t gate_idx)
+{
+  if (_gate_bucket_stamp[gate_idx] == _bucket_generation) {
+    return;
+  }
+  _gate_bucket_stamp[gate_idx] = _bucket_generation;
+  _dirty_buckets[static_cast<std::size_t>(_gate_level[gate_idx])].push_back(static_cast<uint32_t>(gate_idx));
+}
+
+// 全扫：与改造前逐门求值完全一致（批次初始化、首次 settle、有组合环时使用）。
+void Simulator::fullSettle()
+{
+  for (auto idx : _gate_order) {
+    Gate& gate = _gates[idx];
+    _values[gate.output] = isConstant(gate.output) ? (getConstantValue(gate.output) ? kOnes : 0) : evaluate(gate.function);
+  }
+  for (std::size_t node : _dirty_node_list) {
+    _node_dirty[node] = 0;
+  }
+  _dirty_node_list.clear();
+  ++_bucket_generation;
+}
+
+// 事件驱动：只重算"输入确实变化"的门所在的下游锥。DAG 下与全扫逐位等价：
+// 每个门在它的 level 上被求值至多一次，且此时所有前驱都已是最终值。
+void Simulator::eventSettle()
+{
+  if (_dirty_node_list.empty()) {
+    return;
+  }
+  ++_bucket_generation;
+  for (std::size_t node : _dirty_node_list) {
+    for (uint32_t gate_idx : _node_fanout_gates[node]) {
+      pushDirtyGate(gate_idx);
+    }
+  }
+  for (std::size_t node : _dirty_node_list) {
+    _node_dirty[node] = 0;
+  }
+  _dirty_node_list.clear();
+
+  for (std::size_t level = 0; level < _dirty_buckets.size(); ++level) {
+    std::vector<uint32_t>& bucket = _dirty_buckets[level];
+    if (bucket.empty()) {
+      continue;
+    }
+    const std::size_t count = bucket.size();
+    if (_thread_num > 1 && count >= _parallel_min_gates) {
+      // 同一 level 的门写集不相交（每个门只写自己的输出），读的是更早 level 的值，
+      // 因此并行求值无竞争；apply 阶段串行且顺序固定，结果与串行逐位一致。
+      _parallel_values.resize(count);
+      const Gate* gate_list = _gates.data();
+      const std::int64_t parallel_count = static_cast<std::int64_t>(count);
+#pragma omp parallel for schedule(dynamic, 64) num_threads(_thread_num)
+      for (std::int64_t i = 0; i < parallel_count; ++i) {
+        const Gate& gate = gate_list[bucket[static_cast<std::size_t>(i)]];
+        _parallel_values[static_cast<std::size_t>(i)]
+            = isConstant(gate.output) ? (getConstantValue(gate.output) ? kOnes : 0) : evaluate(gate.function);
+      }
+      for (std::size_t i = 0; i < count; ++i) {
+        const std::size_t output = gate_list[bucket[i]].output;
+        const Word value = _parallel_values[i];
+        if (value == _values[output]) {
+          continue;
+        }
+        _values[output] = value;
+        for (uint32_t next : _node_fanout_gates[output]) {
+          pushDirtyGate(next);
+        }
+      }
+    } else {
+      for (std::size_t i = 0; i < count; ++i) {
+        const Gate& gate = _gates[bucket[i]];
+        const Word value
+            = isConstant(gate.output) ? (getConstantValue(gate.output) ? kOnes : 0) : evaluate(gate.function);
+        if (value == _values[gate.output]) {
+          continue;
+        }
+        _values[gate.output] = value;
+        for (uint32_t next : _node_fanout_gates[gate.output]) {
+          pushDirtyGate(next);
+        }
+      }
+    }
+    bucket.clear();
+  }
 }
 
 void Simulator::settle()
 {
   for (std::size_t id = 0; id < _constants.size() && id < _values.size(); id++) {
     if (_constants[id] >= 0) {
-      _values[id] = _constants[id] ? kOnes : 0;
+      setValue(id, _constants[id] ? kOnes : 0);
     }
   }
-  for (auto idx : _gate_order) {
-    auto& gate = _gates[idx];
-    _values[gate.output] = isConstant(gate.output) ? (getConstantValue(gate.output) ? kOnes : 0) : evaluate(gate.function);
+  if (!_event_driven || !_levels_valid || _full_settle_pending) {
+    fullSettle();
+    _full_settle_pending = false;
+    return;
   }
+  eventSettle();
 }
 
 bool Simulator::advance()
@@ -1581,9 +1818,9 @@ bool Simulator::advance()
       return true;
     for (std::size_t idx = 0; idx < _sequentials.size(); ++idx) {
       auto& seq = _sequentials[idx];
-      _values[seq.state] = _next_state[idx];
+      setValue(seq.state, _next_state[idx]);
       if (seq.inverse != seq.state)
-        _values[seq.inverse] = ~_next_state[idx];
+        setValue(seq.inverse, ~_next_state[idx]);
     }
     settle();
   }
@@ -1644,6 +1881,21 @@ Word Simulator::randomSubset(Word available, int count)
   return selected;
 }
 
+void Simulator::accumulateNode(
+    std::size_t idx,
+    uint64_t duration,
+    std::vector<uint64_t>& ones,
+    std::vector<uint64_t>& rises,
+    std::vector<uint64_t>& falls,
+    const std::vector<Word>& previous
+)
+{
+  const Word value = _values[idx];
+  ones[idx] += duration * std::popcount(value);
+  rises[idx] += std::popcount(value & ~previous[idx]);
+  falls[idx] += std::popcount(~value & previous[idx]);
+}
+
 bool Simulator::run()
 {
   _random_state += simulationCount("IPW_POWER_SIM_SEED", 0, 0, 1000000);
@@ -1659,11 +1911,13 @@ bool Simulator::run()
   std::vector<uint64_t> ones(_values.size()), rises(_values.size()), falls(_values.size());
   for (int batch = 0; batch < batches; ++batch) {
     _values = initial_values;
+    // 整个数组被改写：本轮必须全扫，之后才能走事件驱动
+    _full_settle_pending = true;
     for (auto& root : _roots) {
       if (balanced && !root.clock && root.activity.get_static_probability() == 0.5) {
-        _values[root.node] = randomSubset(kOnes, 32);
+        setValue(root.node, randomSubset(kOnes, 32));
       } else if (batch)
-        _values[root.node] = randomMask(root.activity.get_static_probability());
+        setValue(root.node, randomMask(root.activity.get_static_probability()));
     }
     settle();
     for (auto& seq : _sequentials)
@@ -1677,11 +1931,18 @@ bool Simulator::run()
       double time = (sample + 0.25) * _step;
       auto collect = [&](uint64_t duration) {
         if (sample >= warmup) {
-          for (std::size_t idx = 0; idx < _values.size(); ++idx) {
-            Word value = _values[idx];
-            ones[idx] += duration * std::popcount(value);
-            rises[idx] += std::popcount(value & ~previous[idx]);
-            falls[idx] += std::popcount(~value & previous[idx]);
+          const std::int64_t node_count = static_cast<std::int64_t>(_values.size());
+          if (_thread_num > 1 && _values.size() >= _parallel_min_nodes) {
+            // 每个 idx 只被一个线程访问（按 static 分块），所以无需原子；
+            // 整数计数的最终值与串行逐位相同。
+#pragma omp parallel for schedule(static) num_threads(_thread_num)
+            for (std::int64_t i = 0; i < node_count; ++i) {
+              accumulateNode(static_cast<std::size_t>(i), duration, ones, rises, falls, previous);
+            }
+          } else {
+            for (std::int64_t i = 0; i < node_count; ++i) {
+              accumulateNode(static_cast<std::size_t>(i), duration, ones, rises, falls, previous);
+            }
           }
         }
         previous = _values;
@@ -1694,7 +1955,7 @@ bool Simulator::run()
           double high_time = root.clock->get_fall_edge() - root.clock->get_rise_edge();
           if (high_time <= 0.0)
             high_time += root.clock->get_period();
-          _values[root.node] = phase < high_time ? kOnes : 0;
+          setValue(root.node, phase < high_time ? kOnes : 0);
         }
       }
       settle();
@@ -1720,7 +1981,7 @@ bool Simulator::run()
           value ^= randomMask(root.rise_probability);
         else
           value = (value & ~randomMask(root.fall_probability)) | (~value & randomMask(root.rise_probability));
-        _values[root.node] = value;
+        setValue(root.node, value);
       }
 
       settle();
