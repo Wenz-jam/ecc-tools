@@ -49,7 +49,7 @@ class PowerPropagator
   PowerPropagator& operator=(const PowerPropagator& other) = delete;
   PowerPropagator& operator=(PowerPropagator&& other) = delete;
   // function
-  PPModel initPPModel();
+  PPModel& initPPModel();
   void buildMinimumClockPeriod(PPModel& pp_model);
   void buildSeedPinList(PPModel& pp_model);
   void buildSequentialInstanceNameList(PPModel& pp_model);

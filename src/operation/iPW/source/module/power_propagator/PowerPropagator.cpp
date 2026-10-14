@@ -104,7 +104,7 @@ void PowerPropagator::propagate()
   Monitor monitor;
   PWLOG.info(Loc::current(), "Starting...");
 
-  PPModel pp_model = initPPModel();
+  PPModel& pp_model = initPPModel();
   propagateActivity(pp_model);
 
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
@@ -114,13 +114,24 @@ void PowerPropagator::propagate()
 
 PowerPropagator* PowerPropagator::_pp_instance = nullptr;
 
-PPModel PowerPropagator::initPPModel()
+PPModel& PowerPropagator::initPPModel()
 {
-  PPModel pp_model;
-  buildMinimumClockPeriod(pp_model);
-  buildSeedPinList(pp_model);
-  buildSequentialInstanceNameList(pp_model);
-  return pp_model;
+  // 这三个列表都只依赖设计（窗口无关），而峰值流程每个窗口都会调到这里。
+  // 按 (设计名, 实例数) 缓存在 thread_local：整个 run 只建一次，调用方只读它。
+  static thread_local PPModel cached_model;
+  static thread_local std::string cached_design_name;
+  static thread_local std::size_t cached_instance_num = 0;
+  Database& database = PWDM.getDatabase();
+  const std::size_t instance_num = database.get_instance_map().size();
+  if (cached_instance_num != instance_num || cached_design_name != database.get_design_name()) {
+    cached_model = PPModel();
+    buildMinimumClockPeriod(cached_model);
+    buildSeedPinList(cached_model);
+    buildSequentialInstanceNameList(cached_model);
+    cached_design_name = database.get_design_name();
+    cached_instance_num = instance_num;
+  }
+  return cached_model;
 }
 
 void PowerPropagator::buildMinimumClockPeriod(PPModel& pp_model)
@@ -248,16 +259,59 @@ std::size_t PowerPropagator::annotateVcdActivity(
 
 std::size_t PowerPropagator::annotateVcdActivity(const vcd::VcdWindowSignalActivity& window_activity)
 {
-  PWDM.getDatabase().beginVcdAnnotation();
+  Database& database = PWDM.getDatabase();
+  database.beginVcdAnnotation();
   const std::vector<std::string>& signal_name_list = window_activity.get_signal_name_list();
+  const std::size_t signal_num = signal_name_list.size();
+  // 波形里的信号 -> 该 net 上所有 pin 的索引列表，在 run 内是固定的：
+  // 第一个窗口解析一次（net_map/pin_map 字符串查找），之后每个窗口只写活动值。
+  static thread_local std::vector<std::vector<uint32_t>> signal_pin_index_list;
+  static thread_local std::vector<uint8_t> signal_is_matched;
+  static thread_local std::string cached_design_name;
+  static thread_local std::size_t cached_signal_num = 0;
+  if (cached_signal_num != signal_num || cached_design_name != database.get_design_name()) {
+    signal_pin_index_list.assign(signal_num, std::vector<uint32_t>());
+    signal_is_matched.assign(signal_num, 0);
+    cached_signal_num = signal_num;
+    cached_design_name = database.get_design_name();
+    for (std::size_t signal_index = 0; signal_index < signal_num; signal_index++) {
+      std::string net_name = wrapVcdPinName(signal_name_list[signal_index]);
+      if (net_name.empty()) {
+        continue;
+      }
+      auto net_iter = database.get_net_map().find(net_name);
+      if (net_iter == database.get_net_map().end()) {
+        continue;
+      }
+      signal_is_matched[signal_index] = 1;
+      std::vector<uint32_t>& pin_index_list = signal_pin_index_list[signal_index];
+      for (std::string& pin_name : net_iter->second.get_pin_name_list()) {
+        auto pin_iter = database.get_pin_map().find(pin_name);
+        if (pin_iter == database.get_pin_map().end()) {
+          continue;
+        }
+        pin_index_list.push_back(static_cast<uint32_t>(pin_iter->second.get_index()));
+      }
+    }
+  }
   std::size_t matched_net_num = 0;
-  for (std::size_t signal_index = 0; signal_index < signal_name_list.size(); signal_index++) {
+  for (std::size_t signal_index = 0; signal_index < signal_num; signal_index++) {
+    if (signal_is_matched[signal_index] == 0) {
+      continue;
+    }
+    matched_net_num++;
+    const std::vector<uint32_t>& pin_index_list = signal_pin_index_list[signal_index];
+    if (pin_index_list.empty()) {
+      continue;
+    }
     PowerActivity activity;
     activity.set_rise_transition_density(window_activity.get_rise_transition_density(signal_index));
     activity.set_fall_transition_density(window_activity.get_fall_transition_density(signal_index));
     activity.set_static_probability(window_activity.get_static_probability(signal_index));
-    if (annotateVcdSignal(signal_name_list[signal_index], activity)) {
-      matched_net_num++;
+    activity.set_origin(PowerActivityOrigin::kVcd);
+    activity.set_is_valid(true);
+    for (uint32_t pin_index : pin_index_list) {
+      database.setVcdActivity(pin_index, activity);
     }
   }
   return matched_net_num;
