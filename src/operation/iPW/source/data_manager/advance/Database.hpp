@@ -52,7 +52,8 @@ class Database
     TimingCell* timing_cell = nullptr;    // 黑盒 -> nullptr
     TimingCellPort* cell_port = nullptr;  // 该 pin 对应的 cell port
     bool is_output_pin = false;           // == 原 isOutputPin(pin_name)
-    bool is_clock_point = false;          // == timing_point_map[pin].get_is_clock_point()
+    bool is_clock_point = false;          // 建图时的快照（ClockPropagator 之后会改写，读者请走 timing_point）
+    TimingPoint* timing_point = nullptr;  // 指向 timing_point_map 内的实点（地址稳定，读到的是实时值）
   };
 
   struct PowerWorkspace
@@ -201,6 +202,10 @@ class Database
   }
   // 传播路径的索引化视图（构建后只读）。
   std::vector<uint32_t>& get_signal_order_pin_index_list() { return _signal_order_pin_index_list; }
+  // 按 pin 索引的最长路径层号，以及"层桶"在 _signal_order_pin_index_list 上的边界。
+  // 一层一个桶时桶内 pin 的源已全部定值，可以并行算、再按原序串行提交（见 SignalPropagator）。
+  std::vector<uint32_t>& get_signal_level_list() { return _signal_level_list; }
+  std::vector<uint32_t>& get_signal_level_begin_list() { return _signal_level_begin_list; }
   std::vector<std::vector<uint32_t>>& get_outgoing_arc_index_list() { return _outgoing_arc_index_list; }
   std::vector<std::vector<uint32_t>>& get_incoming_arc_index_list() { return _incoming_arc_index_list; }
   PowerSummary& get_power_summary() { return get_workspace().power_summary; }
@@ -226,6 +231,8 @@ class Database
   std::unordered_map<std::string, bool> _pin_is_output_map;
   std::vector<PinStaticContext> _pin_static_context_list;
   std::vector<uint32_t> _signal_order_pin_index_list;
+  std::vector<uint32_t> _signal_level_list;
+  std::vector<uint32_t> _signal_level_begin_list;
   std::vector<std::vector<uint32_t>> _outgoing_arc_index_list;
   std::vector<std::vector<uint32_t>> _incoming_arc_index_list;
   std::vector<std::vector<InstancePortPinIndex>> _instance_port_pin_index_list;

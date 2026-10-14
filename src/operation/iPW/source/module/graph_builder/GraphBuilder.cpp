@@ -68,9 +68,79 @@ void GraphBuilder::build()
   buildSignalOrder();
   buildPinOutputFlagMap();
   buildPowerIndex();
+  // 依赖 buildPowerIndex 摊平出来的 signal_order_pin_index_list / outgoing_arc_index_list
+  buildSignalLevel();
   applyCaseAnalysis();
   printLoopInfo();
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
+}
+
+// 按 signal_order 做一趟最长路径，得到每 pin 的层号，并把"层桶"边界记下来。
+// FIFO Kahn 产出的 signal_order 本身按层非降序，所以桶 = signal_order 上的连续区间；
+// 断言不成立时退化成"一 pin 一桶"（等价于原来的逐 pin 串行，只是没有并行度）。
+void GraphBuilder::buildSignalLevel()
+{
+  Database& database = PWDM.getDatabase();
+  const std::vector<uint32_t>& pin_order = database.get_signal_order_pin_index_list();
+  const std::vector<std::vector<uint32_t>>& outgoing_arc_index_list = database.get_outgoing_arc_index_list();
+  std::vector<uint32_t>& level_list = database.get_signal_level_list();
+  std::vector<uint32_t>& level_begin_list = database.get_signal_level_begin_list();
+
+  level_list.assign(database.get_pin_static_context_list().size(), 0);
+  for (uint32_t pin_index : pin_order) {
+    const uint32_t sink_level = level_list[pin_index] + 1;
+    for (uint32_t arc_idx : outgoing_arc_index_list[pin_index]) {
+      Arc& arc = database.get_arc_list()[arc_idx];
+      if (isDisableArc(arc)) {
+        continue;
+      }
+      const uint32_t sink_pin_index = arc.get_sink_pin_index();
+      if (sink_pin_index < level_list.size() && level_list[sink_pin_index] < sink_level) {
+        level_list[sink_pin_index] = sink_level;
+      }
+    }
+  }
+
+  bool is_monotone = true;
+  uint32_t previous_level = 0;
+  for (std::size_t idx = 0; idx < pin_order.size(); idx++) {
+    const uint32_t current_level = level_list[pin_order[idx]];
+    if (idx > 0 && current_level < previous_level) {
+      is_monotone = false;
+      break;
+    }
+    previous_level = current_level;
+  }
+
+  level_begin_list.clear();
+  if (is_monotone) {
+    uint32_t bucket_level = 0;
+    level_begin_list.push_back(0);
+    for (std::size_t idx = 0; idx < pin_order.size(); idx++) {
+      const uint32_t current_level = level_list[pin_order[idx]];
+      if (current_level != bucket_level) {
+        bucket_level = current_level;
+        level_begin_list.push_back(static_cast<uint32_t>(idx));
+      }
+    }
+  } else {
+    // 兜底：保证每个桶只有一个 pin，任何情况下都与逐 pin 串行等价
+    level_begin_list.reserve(pin_order.size() + 1);
+    for (std::size_t idx = 0; idx <= pin_order.size(); idx++) {
+      level_begin_list.push_back(static_cast<uint32_t>(idx));
+    }
+    PWLOG.warn(Loc::current(), "Signal order is not level monotone; falling back to per-pin scheduling.");
+  }
+  level_begin_list.push_back(static_cast<uint32_t>(pin_order.size()));
+  PWLOG.info(
+      Loc::current(),
+      "Signal propagation: ",
+      pin_order.size(),
+      " pin(s) in ",
+      level_begin_list.size() - 1,
+      " bucket(s), max level ",
+      is_monotone ? level_list.empty() ? 0 : *std::max_element(level_list.begin(), level_list.end()) : 0
+  );
 }
 
 void GraphBuilder::applyCaseAnalysis()
@@ -296,8 +366,11 @@ void GraphBuilder::buildPowerIndex()
       }
     }
     auto timing_point_iter = database.get_timing_point_map().find(pin_pair.first);
-    pin_static_context.is_clock_point = timing_point_iter != database.get_timing_point_map().end()
-                                        && timing_point_iter->second.get_is_clock_point();
+    if (timing_point_iter != database.get_timing_point_map().end()) {
+      pin_static_context.is_clock_point = timing_point_iter->second.get_is_clock_point();
+      // 取地址：std::map 的节点地址稳定，ClockPropagator 之后原地改写也读得到实时值
+      pin_static_context.timing_point = &timing_point_iter->second;
+    }
   }
   // 弧端点索引（构建完成后一次性解析）
   for (Arc& arc : database.get_arc_list()) {

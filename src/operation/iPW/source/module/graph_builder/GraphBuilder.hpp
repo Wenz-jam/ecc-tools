@@ -124,6 +124,7 @@ class GraphBuilder
   bool isGray(std::map<std::string, GBColorType>& color_map, std::string& pin_name);
   bool disableLoopArc(Arc& arc);
   void buildSignalOrder();
+  void buildSignalLevel();
   std::map<std::string, std::size_t> makeIndegreeMap();
   void pushRootPinList(std::map<std::string, std::size_t>& indegree_map, std::queue<std::string>& pin_queue);
   void updateSinkIndegree(

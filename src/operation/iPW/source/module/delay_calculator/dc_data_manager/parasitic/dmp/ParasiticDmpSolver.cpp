@@ -25,6 +25,7 @@
 #include "ParasiticGraph.hpp"
 #include "ParasiticNet.hpp"
 #include "ParasiticNodeName.hpp"
+#include "SharedDriverResultCache.hpp"
 #include "ParasiticThresholds.hpp"
 #include "Pin.hpp"
 #include "PWHeader.hpp"
@@ -1074,7 +1075,11 @@ void ParasiticDmpSolver::cacheParasiticDmpDriverResult(
     ParasiticDelayResult& timing_result
 )
 {
-  PWDCACHE.cacheDmpDriverResult({output_pin, analysis_type, output_trans_type, driver_slew}, timing_result);
+  SharedDriverResultCache::getInst().insert(
+      SharedDriverResultCache::Kind::kDmp,
+      {output_pin, analysis_type, output_trans_type, driver_slew},
+      timing_result
+  );
 }
 
 std::optional<double> ParasiticDmpSolver::getCachedLoadSlew(
@@ -1087,8 +1092,10 @@ std::optional<double> ParasiticDmpSolver::getCachedLoadSlew(
   if (!std::isfinite(input_slew)) {
     return std::nullopt;
   }
-  ParasiticDelayResult* timing_result
-      = PWDCACHE.findDmpDriverResult({arc.get_source_pin(), analysis_type, trans_type, input_slew});
+  ParasiticDelayResult* timing_result = SharedDriverResultCache::getInst().find(
+      SharedDriverResultCache::Kind::kDmp,
+      {arc.get_source_pin(), analysis_type, trans_type, input_slew}
+  );
   if (timing_result == nullptr) {
     return std::nullopt;
   }

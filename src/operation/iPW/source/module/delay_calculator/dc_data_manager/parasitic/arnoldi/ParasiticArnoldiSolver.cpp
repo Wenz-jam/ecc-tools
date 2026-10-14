@@ -28,6 +28,7 @@
 #include "ParasiticGraph.hpp"
 #include "ParasiticNet.hpp"
 #include "ParasiticNodeName.hpp"
+#include "SharedDriverResultCache.hpp"
 #include "ParasiticThresholds.hpp"
 #include "Pin.hpp"
 #include "PWHeader.hpp"
@@ -252,7 +253,11 @@ void ParasiticArnoldiSolver::cacheParasiticArnoldiDriverResult(
     ParasiticDelayResult& timing_result
 )
 {
-  PWDCACHE.cacheArnoldiDriverResult({output_pin, analysis_type, output_trans_type, driver_slew}, timing_result);
+  SharedDriverResultCache::getInst().insert(
+      SharedDriverResultCache::Kind::kArnoldi,
+      {output_pin, analysis_type, output_trans_type, driver_slew},
+      timing_result
+  );
 }
 
 std::optional<double> ParasiticArnoldiSolver::getCachedLoadSlew(
@@ -265,8 +270,10 @@ std::optional<double> ParasiticArnoldiSolver::getCachedLoadSlew(
   if (!std::isfinite(input_slew)) {
     return std::nullopt;
   }
-  ParasiticDelayResult* timing_result
-      = PWDCACHE.findArnoldiDriverResult({arc.get_source_pin(), analysis_type, trans_type, input_slew});
+  ParasiticDelayResult* timing_result = SharedDriverResultCache::getInst().find(
+      SharedDriverResultCache::Kind::kArnoldi,
+      {arc.get_source_pin(), analysis_type, trans_type, input_slew}
+  );
   if (timing_result == nullptr) {
     return std::nullopt;
   }

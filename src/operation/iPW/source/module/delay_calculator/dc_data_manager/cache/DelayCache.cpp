@@ -29,10 +29,8 @@ void DelayCache::clear()
   _parasitic_corner_state_map.clear();
   _parasitic_dmp_model_map.clear();
   _parasitic_dmp_timing_result_map.clear();
-  _parasitic_dmp_driver_result_map.clear();
   _parasitic_arnoldi_model_map.clear();
   _parasitic_arnoldi_timing_result_map.clear();
-  _parasitic_arnoldi_driver_result_map.clear();
   _parasitic_input_port_result_map.clear();
 }
 

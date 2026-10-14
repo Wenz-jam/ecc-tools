@@ -60,17 +60,6 @@ class DelayCache
     return getOrBuild(_parasitic_dmp_timing_result_map, key, std::forward<Builder>(builder));
   }
 
-  void cacheDmpDriverResult(const ArcDriverKey& key, const ParasiticDelayResult& timing_result)
-  {
-    _parasitic_dmp_driver_result_map.insert_or_assign(key, timing_result);
-  }
-
-  ParasiticDelayResult* findDmpDriverResult(const ArcDriverKey& key)
-  {
-    auto iter = _parasitic_dmp_driver_result_map.find(key);
-    return iter == _parasitic_dmp_driver_result_map.end() ? nullptr : &iter->second;
-  }
-
   template <typename Builder>
   ParasiticArnoldiModel& arnoldiModel(const ParasiticModelKey& key, Builder&& builder)
   {
@@ -83,16 +72,9 @@ class DelayCache
     return getOrBuild(_parasitic_arnoldi_timing_result_map, key, std::forward<Builder>(builder));
   }
 
-  void cacheArnoldiDriverResult(const ArcDriverKey& key, const ParasiticDelayResult& timing_result)
-  {
-    _parasitic_arnoldi_driver_result_map.insert_or_assign(key, timing_result);
-  }
-
-  ParasiticDelayResult* findArnoldiDriverResult(const ArcDriverKey& key)
-  {
-    auto iter = _parasitic_arnoldi_driver_result_map.find(key);
-    return iter == _parasitic_arnoldi_driver_result_map.end() ? nullptr : &iter->second;
-  }
+  // 驱动侧结果缓存（cacheArnoldiDriverResult / cacheDmpDriverResult）已移到
+  // SharedDriverResultCache：它影响数值（命中与否会切换斜率模型），必须全局共享才
+  // 能让并行执行与串行执行逐位一致。
 
   template <typename Builder>
   ParasiticDelayResult& inputPortResult(const ArcDriverKey& key, Builder&& builder)
@@ -137,10 +119,8 @@ class DelayCache
   std::map<std::string, std::map<AnalysisType, std::map<TransType, ParasiticCornerState>>> _parasitic_corner_state_map;
   std::unordered_map<ParasiticModelKey, ParasiticDmpModel, ParasiticModelKeyHash> _parasitic_dmp_model_map;
   std::map<ArcTimingKey, ParasiticDelayResult> _parasitic_dmp_timing_result_map;
-  std::map<ArcDriverKey, ParasiticDelayResult> _parasitic_dmp_driver_result_map;
   std::unordered_map<ParasiticModelKey, ParasiticArnoldiModel, ParasiticModelKeyHash> _parasitic_arnoldi_model_map;
   std::map<ArcTimingKey, ParasiticDelayResult> _parasitic_arnoldi_timing_result_map;
-  std::map<ArcDriverKey, ParasiticDelayResult> _parasitic_arnoldi_driver_result_map;
   std::map<ArcDriverKey, ParasiticDelayResult> _parasitic_input_port_result_map;
 };
 
