@@ -981,6 +981,9 @@ struct Gate
 {
   std::size_t output;
   Program function;
+  // 产生这个 gate 的实例名（指向 instance_map 的 key，生命周期与 database 一致），
+  // 只用于多 driver net 的诊断输出。
+  const std::string* owner = nullptr;
 };
 struct Sequential
 {
@@ -1013,7 +1016,8 @@ class Simulator
   bool compile(LogicExpression& expression, std::map<std::string, std::size_t>& ports, Program& program);
   Word evaluate(const Program& program) const;
   bool build();
-  void orderGates();
+  std::size_t orderGates();
+  static bool isSelfReferential(const Gate& gate);
   void settle();
   bool advance();
   Word randomWord();
@@ -1029,6 +1033,9 @@ class Simulator
   double _period, _step;
   int _steps_per_period = 2;
   std::size_t _implied_root_count = 0;
+  // 多 driver net 合并（PTPX 的 multi driver net consolidation）的统计与样例
+  std::size_t _consolidated_net_count = 0;
+  std::vector<std::string> _consolidated_net_details;
   std::map<std::string, std::size_t> _node_index;
   std::map<std::string, std::size_t> _pin_nodes;
   // pin 名字 -> pin 索引：活动按 pin 写回（同一 net 上的多个 pin 共享 node，
@@ -1140,8 +1147,17 @@ Word Simulator::evaluate(const Program& program) const
 
 bool Simulator::build()
 {
-  if (!std::isfinite(_period) || _period <= 0.0 || _database.hasVcdActivity())
+  if (!std::isfinite(_period) || _period <= 0.0 || _database.hasVcdActivity()) {
+    PWLOG.warn(
+        Loc::current(),
+        "Vector simulation unavailable: invalid period or VCD activity present (period=",
+        _period,
+        " has_vcd=",
+        _database.hasVcdActivity() ? "true" : "false",
+        ")"
+    );
     return false;
+  }
   for (auto& [name, clock] : _database.get_timing_constraint().get_clock_map()) {
     if (clock.get_period() > 0 && clock.get_period() < _period)
       _period = clock.get_period();
@@ -1153,8 +1169,23 @@ bool Simulator::build()
   for (auto& [name, clock] : _database.get_timing_constraint().get_clock_map()) {
     for (double value : {clock.get_period(), clock.get_rise_edge(), clock.get_fall_edge()}) {
       double ticks = value / _step;
-      if (!std::isfinite(ticks) || std::abs(ticks - std::round(ticks)) > 1e-9)
+      if (!std::isfinite(ticks) || std::abs(ticks - std::round(ticks)) > 1e-9) {
+        PWLOG.warn(
+            Loc::current(),
+            "Vector simulation unavailable: clock '",
+            name,
+            "' does not fit the simulation step (period=",
+            clock.get_period(),
+            " rise=",
+            clock.get_rise_edge(),
+            " fall=",
+            clock.get_fall_edge(),
+            " step=",
+            _step,
+            ")"
+        );
         return false;
+      }
     }
   }
   for (auto& [name, net] : _database.get_net_map()) {
@@ -1191,8 +1222,19 @@ bool Simulator::build()
       model.state = ports[seq.get_state_port()];
       model.inverse = seq.get_inverted_state_port().empty() ? model.state : ports[seq.get_inverted_state_port()];
       model.latch = seq.get_is_latch();
-      if (!compile(seq.get_data(), ports, model.data) || !compile(seq.get_clock(), ports, model.clock))
+      if (!compile(seq.get_data(), ports, model.data) || !compile(seq.get_clock(), ports, model.clock)) {
+        PWLOG.warn(
+            Loc::current(),
+            "Vector simulation unavailable: sequential data/clock expression does not compile (instance=",
+            name,
+            " cell=",
+            instance.get_cell_name(),
+            " port=",
+            seq.get_state_port(),
+            ")"
+        );
         return false;
+      }
       if (!seq.get_clear().get_is_empty() && !compile(seq.get_clear(), ports, model.clear))
         return false;
       if (!seq.get_preset().get_is_empty() && !compile(seq.get_preset(), ports, model.preset))
@@ -1208,18 +1250,75 @@ bool Simulator::build()
       _sequentials.push_back(std::move(model));
     }
     // A sequential cell without its state function cannot be simulated safely.
-    if (cell.get_is_sequential() && cell.get_sequentials().empty() && !cell.get_is_clock_gating())
+    if (cell.get_is_sequential() && cell.get_sequentials().empty() && !cell.get_is_clock_gating()) {
+      PWLOG.warn(
+          Loc::current(),
+          "Vector simulation unavailable: sequential cell has no state function (instance=",
+          name,
+          " cell=",
+          instance.get_cell_name(),
+          ")"
+      );
       return false;
+    }
     for (auto& [port_name, port] : cell.get_port_map()) {
       if (!port.get_is_output() || !ports.count(port_name))
         continue;
-      Gate gate{ports[port_name], {}};
+      Gate gate{ports[port_name], {}, &name};
       if (compile(port.get_function_expression(), ports, gate.function)) {
-        if (!driven.insert(gate.output).second)
-          return false;
+        if (driven.count(gate.output)) {
+          // 一条 net 上有多个 driver（例如修复 buffer 的 A/Y 被短接在同一条 net 上）：
+          // PTPX 的语义是 multi driver net consolidation —— 合并该 net、只保留一个
+          // driver 的活动，并断掉环上的时序弧（PWR-303 / PTE-003），而不是放弃整个
+          // 设计的向量less 仿真。这里按同样的规则挑一个 driver 保留，其余从仿真图里摘掉；
+          // 被摘掉的实例其输出 pin 仍会写上"合并后 net 的活动"（活动按 pin 写回）。
+          std::size_t previous = _gates.size();
+          for (std::size_t idx = 0; idx < _gates.size(); ++idx) {
+            if (_gates[idx].output == gate.output) {
+              previous = idx;
+              break;
+            }
+          }
+          const bool new_self_loop = isSelfReferential(gate);
+          const bool old_self_loop = previous != _gates.size() && isSelfReferential(_gates[previous]);
+          // 非自环者优先（自环那条正对应 PTPX 断掉的弧）；都是或都不是自环时保留先入者，
+          // instance_map 是 std::map（实例名字典序），所以结果始终是确定的。
+          const bool keep_new = previous != _gates.size() && new_self_loop != old_self_loop && !new_self_loop;
+          ++_consolidated_net_count;
+          if (_consolidated_net_details.size() < 8) {
+            std::string net_name;
+            auto pin_iter = _database.get_pin_map().find(name + ":" + port_name);
+            if (pin_iter != _database.get_pin_map().end())
+              net_name = pin_iter->second.get_net_name();
+            const std::string previous_owner = (previous != _gates.size() && _gates[previous].owner != nullptr)
+                                                   ? *_gates[previous].owner
+                                                   : std::string("?");
+            _consolidated_net_details.push_back(
+                "net=" + net_name + " keep=" + (keep_new ? name : previous_owner) + " drop=" + (keep_new ? previous_owner : name)
+                + (new_self_loop || old_self_loop ? " (self-loop driver on the net)" : "")
+            );
+          }
+          if (keep_new) {
+            _gates.erase(_gates.begin() + static_cast<std::ptrdiff_t>(previous));
+            _gates.push_back(std::move(gate));
+          }
+          continue;
+        }
+        driven.insert(gate.output);
         _gates.push_back(std::move(gate));
-      } else if (!port.get_function_expression().get_is_empty())
+      } else if (!port.get_function_expression().get_is_empty()) {
+        PWLOG.warn(
+            Loc::current(),
+            "Vector simulation unavailable: output function does not compile (instance=",
+            name,
+            " cell=",
+            instance.get_cell_name(),
+            " port=",
+            port_name,
+            ")"
+        );
         return false;
+      }
     }
   }
   std::map<std::size_t, PowerActivity> root_activity;
@@ -1288,9 +1387,15 @@ bool Simulator::build()
     // retaining its exact marginal probability and density. Loads of one net
     // share a trajectory; separate annotated nets use separate random vectors.
     // Clock waveforms retain their phase relationship through the logic graph.
-    orderGates();
-    if (_gate_order.size() != _gates.size())
-      return false;
+    const std::size_t broken_cycles = orderGates();
+    if (broken_cycles > 0) {
+      PWLOG.warn(
+          Loc::current(),
+          "Broke ",
+          broken_cycles,
+          " gate cycle(s) in the vectorless simulator (PTPX semantics: timing arcs on a loop are disabled)"
+      );
+    }
     std::set<std::size_t> implied;
     for (auto idx : _gate_order) {
       auto& gate = _gates[idx];
@@ -1359,13 +1464,44 @@ bool Simulator::build()
     _values[id] = randomMask(probability);
     _roots.push_back(root);
   }
-  orderGates();
+  const std::size_t broken_cycles = orderGates();
+  if (broken_cycles > 0) {
+    PWLOG.warn(
+        Loc::current(),
+        "Broke ",
+        broken_cycles,
+        " gate cycle(s) in the vectorless simulator (PTPX semantics: timing arcs on a loop are disabled)"
+    );
+  }
+  if (_consolidated_net_count > 0) {
+    PWLOG.warn(
+        Loc::current(),
+        "Consolidated ",
+        _consolidated_net_count,
+        " multi-driver net(s) in the vectorless simulator (keep one driver, drop the rest; same semantics as PTPX)"
+    );
+    for (auto& detail : _consolidated_net_details)
+      PWLOG.warn(Loc::current(), "  ", detail);
+  }
   _next_state.resize(_sequentials.size());
   return _gate_order.size() == _gates.size();
 }
 
-void Simulator::orderGates()
+bool Simulator::isSelfReferential(const Gate& gate)
 {
+  for (auto& instruction : gate.function) {
+    if (instruction.op == LogicOperationType::kPort && instruction.node == gate.output)
+      return true;
+  }
+  return false;
+}
+
+// 返回为打破组合环而"断掉"的 gate 条数。没被拓扑排序覆盖的 gate 按构建顺序
+// （= 实例名字典序）追加到末尾：settle() 对它们相当于用上一步的值求值，等价于
+// PTPX 把环上的时序弧 disable 掉，而不是放弃整个设计的仿真。
+std::size_t Simulator::orderGates()
+{
+  _gate_order.clear();
   std::vector<std::vector<std::size_t>> fanout(_values.size());
   std::vector<int> indegree(_gates.size(), 0);
   std::set<std::size_t> gate_outputs;
@@ -1393,6 +1529,19 @@ void Simulator::orderGates()
       if (--indegree[next] == 0)
         ready.push(next);
   }
+  std::size_t broken = 0;
+  if (_gate_order.size() != _gates.size()) {
+    std::vector<char> ordered(_gates.size(), 0);
+    for (auto idx : _gate_order)
+      ordered[idx] = 1;
+    for (std::size_t idx = 0; idx < _gates.size(); ++idx) {
+      if (!ordered[idx]) {
+        _gate_order.push_back(idx);
+        ++broken;
+      }
+    }
+  }
+  return broken;
 }
 
 void Simulator::settle()

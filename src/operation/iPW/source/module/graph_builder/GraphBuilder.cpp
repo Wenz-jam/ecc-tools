@@ -826,7 +826,10 @@ void GraphBuilder::makeNetDriverLoad(const std::string& net_name, Net& net)
   }
 
   if (net.get_driver_pin_list().size() > 1) {
-    PWLOG.error(
+    // 一条 net 上有多个 driver（常见于修复 buffer 的输出与原 driver 同时挂在同一
+    // net 上）：下游 buildNetArcs() 对这类 net 是"warn + 跳过"，这里保持一致，
+    // 不再因为单个 net 中止整个流程。
+    PWLOG.warn(
         Loc::current(),
         "The net has multiple driver pins: net=",
         net_name,
