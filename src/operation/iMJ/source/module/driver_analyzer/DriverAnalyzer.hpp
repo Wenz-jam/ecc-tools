@@ -42,6 +42,9 @@ class DriverAnalyzer
   DriverAnalyzer& operator=(DriverAnalyzer&& other) = delete;
   // function
   DAModel initDAModel();
+  void buildGraph(DAModel& da_model);
+  void inferPinTypeList(DAModel& da_model);
+  void updateNetState(DAModel& da_model, DANet& net);
   void analyzeNetList(DAModel& da_model);
 #if 1  // exhibit
   void writeReport(DAModel& da_model);

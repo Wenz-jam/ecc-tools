@@ -48,6 +48,8 @@ void DriverAnalyzer::analyze()
   Monitor monitor;
   MJLOG.info(Loc::current(), "Starting...");
   DAModel da_model = initDAModel();
+  buildGraph(da_model);
+  inferPinTypeList(da_model);
   analyzeNetList(da_model);
   writeReport(da_model);
   MJLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
@@ -60,20 +62,90 @@ DAModel DriverAnalyzer::initDAModel()
   return da_model;
 }
 
-void DriverAnalyzer::analyzeNetList(DAModel& da_model)
+void DriverAnalyzer::buildGraph(DAModel& da_model)
 {
-  for (DANet& net : da_model.get_net_list()) {
-    std::set<std::tuple<bool, std::string, std::string>> pin_set;
+  std::map<std::tuple<bool, std::string, std::string>, int32_t> node_idx_map;
+  for (int32_t net_idx = 0; net_idx < static_cast<int32_t>(da_model.get_net_list().size()); net_idx++) {
+    DANet& net = da_model.get_net_list()[net_idx];
+    std::set<int32_t> node_idx_set;
     for (DAPin& pin : net.get_pin_list()) {
-      if (!pin_set.emplace(pin.get_is_io(), pin.get_instance_name(), pin.get_pin_name()).second) {
-        continue;
+      auto [node_iter, inserted] = node_idx_map.emplace(std::make_tuple(pin.get_is_io(), pin.get_instance_name(), pin.get_pin_name()),
+                                                        static_cast<int32_t>(da_model.get_node_list().size()));
+      if (inserted) {
+        DANode node;
+        node.set_pin(pin);
+        node.set_type(pin.get_type());
+        da_model.get_node_list().push_back(node);
       }
-      if (pin.get_type() == DAPinType::kDriver) {
-        net.set_driver_num(net.get_driver_num() + 1);
-      } else if (pin.get_type() != DAPinType::kLoad) {
-        net.set_unresolved_num(net.get_unresolved_num() + 1);
+      int32_t node_idx = node_iter->second;
+      if (node_idx_set.insert(node_idx).second) {
+        net.get_node_idx_list().push_back(node_idx);
+        da_model.get_node_list()[node_idx].get_net_idx_list().push_back(net_idx);
       }
     }
+  }
+}
+
+void DriverAnalyzer::inferPinTypeList(DAModel& da_model)
+{
+  std::queue<int32_t> net_queue;
+  std::vector<bool> is_queued_list(da_model.get_net_list().size(), true);
+  for (int32_t net_idx = 0; net_idx < static_cast<int32_t>(da_model.get_net_list().size()); net_idx++) {
+    net_queue.push(net_idx);
+  }
+  while (!net_queue.empty()) {
+    int32_t net_idx = net_queue.front();
+    net_queue.pop();
+    DANet& net = da_model.get_net_list()[net_idx];
+    updateNetState(da_model, net);
+    DAPinType inferred_type = DAPinType::kNone;
+    if (net.get_driver_num() == 1) {
+      inferred_type = DAPinType::kLoad;
+    } else if (net.get_driver_num() == 0 && net.get_unresolved_num() == 1) {
+      inferred_type = DAPinType::kDriver;
+    }
+    if (inferred_type != DAPinType::kNone) {
+      for (int32_t node_idx : net.get_node_idx_list()) {
+        DANode& node = da_model.get_node_list()[node_idx];
+        if (node.get_type() == DAPinType::kDriver || node.get_type() == DAPinType::kLoad) {
+          continue;
+        }
+        node.set_type(inferred_type);
+        for (int32_t adjacent_net_idx : node.get_net_idx_list()) {
+          if (!is_queued_list[adjacent_net_idx]) {
+            net_queue.push(adjacent_net_idx);
+            is_queued_list[adjacent_net_idx] = true;
+          }
+        }
+      }
+    }
+    is_queued_list[net_idx] = false;
+  }
+}
+
+void DriverAnalyzer::updateNetState(DAModel& da_model, DANet& net)
+{
+  net.set_driver_num(0);
+  net.set_unresolved_num(0);
+  for (int32_t node_idx : net.get_node_idx_list()) {
+    DAPinType type = da_model.get_node_list()[node_idx].get_type();
+    if (type == DAPinType::kDriver) {
+      net.set_driver_num(net.get_driver_num() + 1);
+    } else if (type != DAPinType::kLoad) {
+      net.set_unresolved_num(net.get_unresolved_num() + 1);
+    }
+  }
+}
+
+void DriverAnalyzer::analyzeNetList(DAModel& da_model)
+{
+  for (DANode& node : da_model.get_node_list()) {
+    if (node.isInferred()) {
+      da_model.set_inferred_pin_num(da_model.get_inferred_pin_num() + 1);
+    }
+  }
+  for (DANet& net : da_model.get_net_list()) {
+    updateNetState(da_model, net);
     if (net.get_driver_num() > 1) {
       da_model.set_multi_driver_net_num(da_model.get_multi_driver_net_num() + 1);
     } else if (net.get_unresolved_num() > 0) {
@@ -93,23 +165,35 @@ void DriverAnalyzer::writeReport(DAModel& da_model)
   *stream << "Design : " << da_model.get_design_name() << "\nSignalNets : " << da_model.get_net_list().size()
           << "\nExcludedPGNets : " << da_model.get_excluded_pg_net_num() << "\nMultiDriverNets : " << da_model.get_multi_driver_net_num()
           << "\nUnresolvedNets : " << da_model.get_unresolved_net_num() << "\nUndrivenNets : " << da_model.get_undriven_net_num()
-          << "\n\nINOUT and unknown directions are unresolved, not definite drivers.\n"
+          << "\nInferredPins : " << da_model.get_inferred_pin_num() << "\n\nINOUT and unknown directions are inferred under the single-driver assumption.\n"
+          << "Ambiguous directions remain unresolved; original pin directions are not modified.\n"
           << "Multiple output pins indicate structural drivers; enable exclusivity is not evaluated.\n";
   for (DANet& net : da_model.get_net_list()) {
-    if (net.get_driver_num() == 1 && net.get_unresolved_num() == 0) {
+    bool has_inferred_pin = false;
+    for (int32_t node_idx : net.get_node_idx_list()) {
+      has_inferred_pin = has_inferred_pin || da_model.get_node_list()[node_idx].isInferred();
+    }
+    if (net.get_driver_num() == 1 && net.get_unresolved_num() == 0 && !has_inferred_pin) {
       continue;
     }
-    std::string status = net.get_driver_num() > 1 ? "MULTI_DRIVER" : net.get_unresolved_num() > 0 ? "UNRESOLVED" : "UNDRIVEN";
+    std::string status = net.get_driver_num() > 1       ? "MULTI_DRIVER"
+                         : net.get_unresolved_num() > 0 ? "UNRESOLVED"
+                         : net.get_driver_num() == 0    ? "UNDRIVEN"
+                                                        : "SINGLE_DRIVER";
     *stream << "\nNet : " << net.get_name() << "\nStatus : " << status << "\nDrivers : " << net.get_driver_num()
             << "\nUnresolved : " << net.get_unresolved_num() << "\n";
-    std::set<std::tuple<bool, std::string, std::string>> pin_set;
-    for (DAPin& pin : net.get_pin_list()) {
-      if (pin.get_type() == DAPinType::kLoad || !pin_set.emplace(pin.get_is_io(), pin.get_instance_name(), pin.get_pin_name()).second) {
+    for (int32_t node_idx : net.get_node_idx_list()) {
+      DANode& node = da_model.get_node_list()[node_idx];
+      DAPin& pin = node.get_pin();
+      if (node.get_type() == DAPinType::kLoad && !node.isInferred()) {
         continue;
       }
       *stream << "  " << (pin.get_is_io() ? "PORT " : "INSTANCE ")
-              << (pin.get_is_io() ? pin.get_pin_name() : pin.get_instance_name() + "/" + pin.get_pin_name()) << " " << GetDAPinTypeName()(pin.get_type())
-              << "\n";
+              << (pin.get_is_io() ? pin.get_pin_name() : pin.get_instance_name() + "/" + pin.get_pin_name()) << " " << GetDAPinTypeName()(node.get_type());
+      if (node.isInferred()) {
+        *stream << " (inferred from " << GetDAPinTypeName()(pin.get_type()) << ")";
+      }
+      *stream << "\n";
     }
   }
   MJUTIL.closeFileStream(stream);

@@ -15,7 +15,8 @@ with tempfile.TemporaryDirectory(prefix="imj_bindings_") as temp:
     assert ecc_py.analyze_driver()
     report = (output / "driver_analyzer/driver_report.rpt").read_text()
     assert "MultiDriverNets : 1" in report
-    assert "UnresolvedNets : 1" in report
+    assert "UnresolvedNets : 0" in report
+    assert "PORT bus driver (inferred from inout)" in report
     try:
         ecc_py.analyze_driver(config_dict={"-source": "netlist"})
     except TypeError:

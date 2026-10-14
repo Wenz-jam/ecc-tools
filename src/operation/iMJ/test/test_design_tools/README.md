@@ -21,9 +21,19 @@ netlist_save -path ./cropped.v
 - `analyze_driver` takes no arguments and writes
   `driver_analyzer/driver_report.rpt`. It always uses the active design loaded
   from DEF or ordinary Verilog, never the separate LVS reference netlist.
-- Top-level inputs and instance outputs are structural drivers. INOUT and
-  unspecified directions are reported as unresolved, not silently classified.
-  POWER/GROUND nets and pins are excluded. Multiple tristate outputs remain
+- Top-level inputs and instance outputs are structural drivers. A module-local
+  pin-net graph preserves those known roles and propagates the single-driver
+  constraint: one known driver forces unknown peers to loads; no known driver
+  and exactly one unknown candidate forces that pin to a driver. Processing
+  repeats until no further roles can be inferred. Multiple candidates remain
+  unresolved; multiple known drivers remain a multi-driver finding.
+- The graph shares nodes by pin identity and deduplicates repeated connections.
+  It does not invent connections between different pins of a cell. Inferred
+  directions are conditional on the single-driver assumption, not independent
+  proof that a bidirectional circuit is electrically valid. Original IDB pin
+  directions are unchanged. `InferredPins` counts distinct inferred nodes, and
+  affected nets include `inferred from inout/unknown` annotations in the report.
+- POWER/GROUND nets and pins are excluded. Multiple tristate outputs remain
   multiple structural drivers; this command does not prove enable exclusivity.
 - `cut_def -rect {llx lly urx ury}` writes
   `def_cutter/cut.def` and `def_cutter/cut_report.rpt`. It does not replace or

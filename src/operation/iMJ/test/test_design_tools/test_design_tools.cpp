@@ -37,6 +37,7 @@ class DesignToolsTest
     testDEFCut();
     MJI.destroyMJ();
     testNetlist();
+    testDriverInference();
     dmInst->reset();
   }
 
@@ -77,7 +78,8 @@ class DesignToolsTest
     MJI.analyzeDriver();
     std::string report = readText(_output / "driver_analyzer/driver_report.rpt");
     require(report.find("MultiDriverNets : 1") != std::string::npos, "multiple outputs");
-    require(report.find("UnresolvedNets : 1") != std::string::npos, "inout classification");
+    require(report.find("UnresolvedNets : 0") != std::string::npos, "sole inout inferred as driver");
+    require(report.find("PORT bus driver (inferred from inout)") != std::string::npos, "inferred driver provenance");
     require(report.find("UndrivenNets : 2") != std::string::npos, "undriven net");
     require(report.find("ExcludedPGNets : 1") != std::string::npos, "PG exclusion");
     require(report.find("INSTANCE u0/Y driver") != std::string::npos, "driver identity");
@@ -254,9 +256,121 @@ class DesignToolsTest
     report = readText(_output / "active_design/driver_analyzer/driver_report.rpt");
     require(report.find("Design : crop_test\n") != std::string::npos && report.find("Design : driver_test\n") == std::string::npos,
             "driver analysis must use the active design, not the LVS reference");
-    require(report.find("MultiDriverNets : 1") != std::string::npos && report.find("UnresolvedNets : 1") != std::string::npos,
+    require(report.find("MultiDriverNets : 1") != std::string::npos && report.find("UnresolvedNets : 0") != std::string::npos,
             "active DEF driver classification");
     MJI.destroyMJ();
+  }
+
+  void testDriverInference()
+  {
+    loadDEF();
+    MJI.initMJ({{"-temp_directory_path", (_output / "inference").string()}});
+    idb::IdbDesign* design = dmInst->get_idb_design();
+    idb::IdbPin* driver = addInferencePin("known_driver", idb::IdbConnectDirection::kInput);
+    idb::IdbPin* other_driver = addInferencePin("other_driver", idb::IdbConnectDirection::kInput);
+    idb::IdbPin* load = addInferencePin("known_load", idb::IdbConnectDirection::kOutput);
+    idb::IdbPin* inout_load = addInferencePin("inout_load", idb::IdbConnectDirection::kInOut);
+    idb::IdbPin* unknown_load = addInferencePin("unknown_load", idb::IdbConnectDirection::kNone);
+    addInferenceNet("infer_load", {driver, inout_load, unknown_load, inout_load});
+    addInferenceNet("infer_driver", {addInferencePin("inout_driver", idb::IdbConnectDirection::kInOut), load});
+    addInferenceNet("infer_unknown", {addInferencePin("unknown_driver", idb::IdbConnectDirection::kNone), load});
+    addInferenceNet("ambiguous",
+                    {addInferencePin("ambiguous_a", idb::IdbConnectDirection::kInOut), addInferencePin("ambiguous_b", idb::IdbConnectDirection::kInOut), load});
+    addInferenceNet("known_multi", {driver, other_driver, addInferencePin("multi_inout", idb::IdbConnectDirection::kInOut)});
+
+    // Shared pin nodes exercise propagation back to nets already visited in the work queue.
+    idb::IdbPin* chain_a = addInferencePin("chain_a", idb::IdbConnectDirection::kInOut);
+    idb::IdbPin* chain_b = addInferencePin("chain_b", idb::IdbConnectDirection::kInOut);
+    idb::IdbPin* chain_c = addInferencePin("chain_c", idb::IdbConnectDirection::kInOut);
+    addInferenceNet("chain_first", {chain_a, chain_b});
+    addInferenceNet("chain_second", {chain_b, chain_c});
+    addInferenceNet("chain_seed", {driver, chain_c});
+    idb::IdbPin* cycle_a = addInferencePin("cycle_a", idb::IdbConnectDirection::kInOut);
+    idb::IdbPin* cycle_b = addInferencePin("cycle_b", idb::IdbConnectDirection::kInOut);
+    idb::IdbPin* cycle_c = addInferencePin("cycle_c", idb::IdbConnectDirection::kInOut);
+    idb::IdbPin* cycle_d = addInferencePin("cycle_d", idb::IdbConnectDirection::kInOut);
+    addInferenceNet("cycle_first", {cycle_a, cycle_b});
+    addInferenceNet("cycle_second", {cycle_b, cycle_c});
+    addInferenceNet("cycle_third", {cycle_c, cycle_d});
+    addInferenceNet("cycle_fourth", {cycle_d, cycle_a});
+
+    idb::IdbPin* instance_driver = design->get_instance_list()->find_instance("partial")->get_pin("A");
+    idb::IdbPin* instance_load = design->get_instance_list()->find_instance("unplaced")->get_pin("A");
+    for (idb::IdbPin* pin : {instance_driver, instance_load}) {
+      pin->set_term()->set_direction(idb::IdbConnectDirection::kInOut);
+      pin->get_term()->set_type(idb::IdbConnectType::kSignal);
+    }
+    addInferenceNet("instance_driver", {load}, {instance_driver});
+    addInferenceNet("instance_load", {driver}, {instance_load});
+
+    MJI.analyzeDriver();
+    std::string report = readText(_output / "inference/driver_analyzer/driver_report.rpt");
+    require(report.find("InferredPins : 10\n") != std::string::npos, "count distinct inferred graph nodes");
+    require(report.find("MultiDriverNets : 2\n") != std::string::npos, "known multiple drivers remain visible");
+    require(report.find("UnresolvedNets : 5\n") != std::string::npos, "ambiguous nets and cycle remain unresolved");
+    require(report.find("UndrivenNets : 2\n") != std::string::npos, "known undriven nets remain visible");
+    require(report.find("PORT inout_load load (inferred from inout)") != std::string::npos, "inout becomes load beside known driver");
+    require(report.find("PORT unknown_load load (inferred from unknown)") != std::string::npos, "missing direction becomes load");
+    require(report.find("PORT inout_driver driver (inferred from inout)") != std::string::npos, "sole inout becomes driver");
+    require(report.find("PORT unknown_driver driver (inferred from unknown)") != std::string::npos, "sole unknown becomes driver");
+    require(report.find("Net : known_multi\nStatus : MULTI_DRIVER\nDrivers : 2\nUnresolved : 1\n") != std::string::npos,
+            "do not infer from an already violated single-driver constraint");
+    require(report.find("Net : ambiguous\nStatus : UNRESOLVED\nDrivers : 0\nUnresolved : 2\n") != std::string::npos, "do not select an arbitrary driver");
+    require(report.find("PORT chain_a load (inferred from inout)") != std::string::npos
+                && report.find("PORT chain_b driver (inferred from inout)") != std::string::npos
+                && report.find("PORT chain_c load (inferred from inout)") != std::string::npos,
+            "iterate graph constraints to a fixed point");
+    require(report.find("INSTANCE partial/A driver (inferred from inout)") != std::string::npos
+                && report.find("INSTANCE unplaced/A load (inferred from inout)") != std::string::npos,
+            "keep separate instance pins with the same port name");
+    require(inout_load->get_term()->get_direction() == idb::IdbConnectDirection::kInOut
+                && unknown_load->get_term()->get_direction() == idb::IdbConnectDirection::kNone
+                && instance_driver->get_term()->get_direction() == idb::IdbConnectDirection::kInOut
+                && instance_load->get_term()->get_direction() == idb::IdbConnectDirection::kInOut,
+            "inference must not change IDB directions");
+    MJI.analyzeDriver();
+    require(readText(_output / "inference/driver_analyzer/driver_report.rpt") == report, "repeated analysis must be stable");
+
+    std::reverse(design->get_net_list()->get_net_list().begin(), design->get_net_list()->get_net_list().end());
+    for (idb::IdbNet* net : design->get_net_list()->get_net_list()) {
+      std::reverse(net->get_io_pins()->get_pin_list().begin(), net->get_io_pins()->get_pin_list().end());
+    }
+    MJI.analyzeDriver();
+    std::string reordered_report = readText(_output / "inference/driver_analyzer/driver_report.rpt");
+    require(getReportNetMap(reordered_report) == getReportNetMap(report), "inference must not depend on net/pin traversal order");
+    MJI.destroyMJ();
+  }
+
+  idb::IdbPin* addInferencePin(std::string name, idb::IdbConnectDirection direction)
+  {
+    idb::IdbPin* pin = dmInst->get_idb_design()->get_io_pin_list()->add_pin_list(name);
+    pin->set_as_io();
+    pin->set_term()->set_direction(direction);
+    pin->get_term()->set_type(idb::IdbConnectType::kSignal);
+    return pin;
+  }
+
+  void addInferenceNet(std::string name, const std::vector<idb::IdbPin*>& io_pin_list, const std::vector<idb::IdbPin*>& instance_pin_list = {})
+  {
+    idb::IdbNet* net = dmInst->get_idb_design()->get_net_list()->add_net(name, idb::IdbConnectType::kSignal);
+    net->get_io_pins()->get_pin_list() = io_pin_list;
+    net->get_instance_pin_list()->get_pin_list() = instance_pin_list;
+  }
+
+  std::map<std::string, std::multiset<std::string>> getReportNetMap(const std::string& report)
+  {
+    std::istringstream stream(report);
+    std::map<std::string, std::multiset<std::string>> net_map;
+    std::string net_name;
+    for (std::string line; std::getline(stream, line);) {
+      if (line.starts_with("Net : ")) {
+        net_name = line.substr(6);
+      }
+      if (!line.empty()) {
+        net_map[net_name].insert(line);
+      }
+    }
+    return net_map;
   }
 };
 
