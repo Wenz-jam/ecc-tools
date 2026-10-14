@@ -164,28 +164,24 @@ void MJInterface::wrapDriverDesign(DAModel& da_model)
     MJLOG.error(Loc::current(), "No design loaded for driver analysis.");
   }
   da_model.set_design_name(design->get_design_name());
+  std::set<std::string> pg_net_name_set = getDriverPGNetNameSet(design);
+  da_model.set_excluded_pg_net_num(static_cast<int32_t>(pg_net_name_set.size()));
   std::map<std::string, int32_t> net_idx_map;
-  // A signal net can legally be stored in SPECIALNETS; USE, not its section, determines whether it is PG.
   for (int32_t special = 0; special < 2; special++) {
     int32_t count = special ? design->get_special_net_list()->get_num() : design->get_net_list()->get_num();
     for (int32_t idx = 0; idx < count; idx++) {
       idb::IdbNet* net = special ? nullptr : design->get_net_list()->get_net_list()[idx];
       idb::IdbSpecialNet* pg_net = special ? design->get_special_net_list()->get_net_list()[idx] : nullptr;
-      idb::IdbConnectType type = special ? pg_net->get_connect_type() : net->get_connect_type();
-      if (type == idb::IdbConnectType::kPower || type == idb::IdbConnectType::kGround) {
-        da_model.set_excluded_pg_net_num(da_model.get_excluded_pg_net_num() + 1);
+      std::string net_name = special ? pg_net->get_net_name() : net->get_net_name();
+      if (pg_net_name_set.contains(net_name)) {
         continue;
       }
       DANet da_net;
-      da_net.set_name(special ? pg_net->get_net_name() : net->get_net_name());
+      da_net.set_name(net_name);
       for (int32_t io = 0; io < 2; io++) {
         std::vector<idb::IdbPin*> pin_list
             = special ? getSpecialNetPinList(design, pg_net, io != 0) : (io ? net->get_io_pins() : net->get_instance_pin_list())->get_pin_list();
         for (idb::IdbPin* pin : pin_list) {
-          if (pin->get_term() != nullptr
-              && (pin->get_term()->get_type() == idb::IdbConnectType::kPower || pin->get_term()->get_type() == idb::IdbConnectType::kGround)) {
-            continue;
-          }
           da_net.get_pin_list().push_back(wrapDriverPin(pin, io != 0));
         }
       }
@@ -198,6 +194,36 @@ void MJInterface::wrapDriverDesign(DAModel& da_model)
       }
     }
   }
+}
+
+std::set<std::string> MJInterface::getDriverPGNetNameSet(idb::IdbDesign* design)
+{
+  std::set<std::string> pg_net_name_set;
+  // Classify the whole logical net before wrapping either its NETS or SPECIALNETS record.
+  for (int32_t special = 0; special < 2; special++) {
+    int32_t count = special ? design->get_special_net_list()->get_num() : design->get_net_list()->get_num();
+    for (int32_t idx = 0; idx < count; idx++) {
+      idb::IdbNet* net = special ? nullptr : design->get_net_list()->get_net_list()[idx];
+      idb::IdbSpecialNet* special_net = special ? design->get_special_net_list()->get_net_list()[idx] : nullptr;
+      idb::IdbConnectType type = special ? special_net->get_connect_type() : net->get_connect_type();
+      bool is_pg = type == idb::IdbConnectType::kPower || type == idb::IdbConnectType::kGround;
+      for (int32_t io = 0; io < 2 && !is_pg; io++) {
+        std::vector<idb::IdbPin*> pin_list
+            = special ? getSpecialNetPinList(design, special_net, io != 0) : (io ? net->get_io_pins() : net->get_instance_pin_list())->get_pin_list();
+        for (idb::IdbPin* pin : pin_list) {
+          if (pin->get_term() != nullptr
+              && (pin->get_term()->get_type() == idb::IdbConnectType::kPower || pin->get_term()->get_type() == idb::IdbConnectType::kGround)) {
+            is_pg = true;
+            break;
+          }
+        }
+      }
+      if (is_pg) {
+        pg_net_name_set.insert(special ? special_net->get_net_name() : net->get_net_name());
+      }
+    }
+  }
+  return pg_net_name_set;
 }
 
 std::vector<idb::IdbPin*> MJInterface::getSpecialNetPinList(idb::IdbDesign* design, idb::IdbSpecialNet* net, bool is_io)

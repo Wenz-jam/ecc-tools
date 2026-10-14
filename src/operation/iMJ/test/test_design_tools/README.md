@@ -33,8 +33,16 @@ netlist_save -path ./cropped.v
   proof that a bidirectional circuit is electrically valid. Original IDB pin
   directions are unchanged. `InferredPins` counts distinct inferred nodes, and
   affected nets include `inferred from inout/unknown` annotations in the report.
-- POWER/GROUND nets and pins are excluded. Multiple tristate outputs remain
-  multiple structural drivers; this command does not prove enable exclusivity.
+- POWER/GROUND connectivity is excluded before graph construction. A net is
+  excluded if its IDB net type or any connected IO/instance terminal type is
+  POWER/GROUND. These attributes come from DEF/LEF `USE` and Verilog
+  `supply1`/`supply0`; ordinary Verilog wires connected to LEF PG terminals are
+  excluded too. Same-name ordinary/special records are excluded together and
+  counted once in `ExcludedPGNets`. Names such as VDD/VSS alone, or storage in
+  SPECIALNETS alone, do not establish PG status. Untyped supplies with no PG
+  terminal evidence cannot be recognized from connectivity alone.
+- Multiple tristate outputs remain multiple structural drivers; this command
+  does not prove enable exclusivity.
 - `cut_def -rect {llx lly urx ury}` writes
   `def_cutter/cut.def` and `def_cutter/cut_report.rpt`. It does not replace or
   mutate the loaded design. Load the output with `def_init` to work on it.

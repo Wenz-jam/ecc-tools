@@ -109,6 +109,7 @@ class MJInterface
   void input(std::map<std::string, std::any>& config_map);
   void wrapConfig(std::map<std::string, std::any>& config_map);
   void wrapDriverDesign(DAModel& da_model);
+  std::set<std::string> getDriverPGNetNameSet(idb::IdbDesign* design);
   std::vector<idb::IdbPin*> getSpecialNetPinList(idb::IdbDesign* design, idb::IdbSpecialNet* net, bool is_io);
   DAPin wrapDriverPin(idb::IdbPin* pin, bool is_io);
   void wrapCutDesign(DCModel& dc_model);

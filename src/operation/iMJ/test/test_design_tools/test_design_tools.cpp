@@ -37,6 +37,8 @@ class DesignToolsTest
     testDEFCut();
     MJI.destroyMJ();
     testNetlist();
+    testPGNetExclusion();
+    testPGNetlist();
     testDriverInference();
     dmInst->reset();
   }
@@ -258,6 +260,91 @@ class DesignToolsTest
             "driver analysis must use the active design, not the LVS reference");
     require(report.find("MultiDriverNets : 1") != std::string::npos && report.find("UnresolvedNets : 0") != std::string::npos,
             "active DEF driver classification");
+    MJI.destroyMJ();
+  }
+
+  void testPGNetExclusion()
+  {
+    loadDEF();
+    MJI.initMJ({{"-temp_directory_path", (_output / "pg_exclusion").string()}});
+    idb::IdbDesign* design = dmInst->get_idb_design();
+    idb::IdbPin* first = addInferencePin("first_supply", idb::IdbConnectDirection::kInput);
+    idb::IdbPin* second = addInferencePin("second_supply", idb::IdbConnectDirection::kInput);
+    // The explicit PG record is visited after its ordinary same-name record.
+    addInferenceNet("VDD", {first, second});
+    addInferenceNet("typed_power", {first, second});
+    design->get_net_list()->find_net("typed_power")->set_connect_type(idb::IdbConnectType::kPower);
+    addInferenceNet("typed_ground", {first, second});
+    design->get_net_list()->find_net("typed_ground")->set_connect_type(idb::IdbConnectType::kGround);
+    idb::IdbPin* supply_port = addInferencePin("supply_port", idb::IdbConnectDirection::kInOut);
+    addInferenceNet("lef_supply", {supply_port},
+                    {design->get_instance_list()->find_instance("u0")->get_pin("VPWR"), design->get_instance_list()->find_instance("u1")->get_pin("VPWR")});
+    idb::IdbPin* ground_port = addInferencePin("ground_port", idb::IdbConnectDirection::kInOut);
+    ground_port->get_term()->set_type(idb::IdbConnectType::kGround);
+    addInferenceNet("io_supply", {ground_port, first, second});
+    idb::IdbSpecialNet* wildcard = design->get_special_net_list()->add_net("wildcard_supply");
+    wildcard->set_connect_type(idb::IdbConnectType::kNone);
+    wildcard->add_pin_string("VPWR");
+    // Also cover a PG ordinary record followed by a signal special record.
+    idb::IdbSpecialNet* duplicate = design->get_special_net_list()->add_net("typed_power");
+    duplicate->set_connect_type(idb::IdbConnectType::kSignal);
+    duplicate->get_io_pins()->add_pin_ref_unique(first);
+    duplicate->get_io_pins()->add_pin_ref_unique(second);
+    addInferenceNet("VSS", {addInferencePin("VSS", idb::IdbConnectDirection::kInOut)});
+    idb::IdbSpecialNet* signal = design->get_special_net_list()->add_net("special_signal");
+    signal->set_connect_type(idb::IdbConnectType::kSignal);
+    signal->get_io_pins()->add_pin_ref_unique(addInferencePin("special_signal", idb::IdbConnectDirection::kInOut));
+
+    imj::DAModel model;
+    MJI.wrapDriverDesign(model);
+    std::set<std::string> net_name_set;
+    for (imj::DANet& net : model.get_net_list()) {
+      net_name_set.insert(net.get_name());
+    }
+    require(net_name_set == std::set<std::string>{"multi", "a", "out", "bus", "spare", "transit", "VSS", "special_signal"},
+            "PG nets must not reach the graph, while signal special nets and signal VSS remain");
+    require(model.get_excluded_pg_net_num() == 6, "count each logical PG net once across ordinary/special records");
+    MJI.analyzeDriver();
+    std::string report = readText(_output / "pg_exclusion/driver_analyzer/driver_report.rpt");
+    require(report.find("SignalNets : 8\n") != std::string::npos && report.find("ExcludedPGNets : 6\n") != std::string::npos, "PG report counts");
+    require(report.find("MultiDriverNets : 1\n") != std::string::npos && report.find("UnresolvedNets : 0\n") != std::string::npos
+                && report.find("UndrivenNets : 2\n") != std::string::npos && report.find("InferredPins : 3\n") != std::string::npos,
+            "PG pins must not contribute inferred roles or driver findings");
+    for (std::string name : {"VDD", "typed_power", "typed_ground", "lef_supply", "io_supply", "wildcard_supply"}) {
+      require(report.find("Net : " + name + "\n") == std::string::npos, "excluded PG net in report: " + name);
+    }
+    require(design->get_net_list()->find_net("lef_supply")->get_connect_type() == idb::IdbConnectType::kSignal
+                && supply_port->get_term()->get_direction() == idb::IdbConnectDirection::kInOut && wildcard->get_instance_pin_list()->get_pin_list().empty(),
+            "PG classification must not mutate IDB types, directions or wildcard connectivity");
+    MJI.destroyMJ();
+  }
+
+  void testPGNetlist()
+  {
+    dmInst->reset();
+    require(dmInst->readLef(std::vector<std::string>{(_data / "tech.lef").string()}, true), "read PG netlist tech");
+    require(dmInst->readLef(std::vector<std::string>{(_data / "cell.lef").string()}), "read PG netlist cell");
+    require(dmInst->readVerilog((_data / "power.v").string(), "power_test"), "read PG netlist");
+    MJI.initMJ({{"-temp_directory_path", (_output / "pg_netlist").string()}});
+    idb::IdbDesign* design = dmInst->get_idb_design();
+    require(design->get_net_list()->find_net("rail")->get_connect_type() == idb::IdbConnectType::kSignal
+                && design->get_instance_list()->find_instance("u0")->get_pin("VPWR")->get_term()->get_type() == idb::IdbConnectType::kPower,
+            "ordinary Verilog supply wire derives PG evidence from LEF terminals");
+    imj::DAModel model;
+    MJI.wrapDriverDesign(model);
+    std::set<std::string> net_name_set;
+    for (imj::DANet& net : model.get_net_list()) {
+      net_name_set.insert(net.get_name());
+    }
+    require(net_name_set == std::set<std::string>{"a", "VDD", "VSS", "y0", "y1", "y2"}, "exclude supply0/supply1/LEF PG, not signal names");
+    require(model.get_excluded_pg_net_num() == 3, "Verilog PG net count");
+    MJI.analyzeDriver();
+    std::string report = readText(_output / "pg_netlist/driver_analyzer/driver_report.rpt");
+    require(report.find("MultiDriverNets : 2\n") != std::string::npos && report.find("UnresolvedNets : 0\n") != std::string::npos
+                && report.find("UndrivenNets : 0\n") != std::string::npos && report.find("InferredPins : 1\n") != std::string::npos,
+            "only signal connectivity participates in Verilog driver inference");
+    require(report.find("PORT VSS driver (inferred from inout)") != std::string::npos && report.find("Net : rail\n") == std::string::npos,
+            "signal VSS is inferred but LEF supply rail is not");
     MJI.destroyMJ();
   }
 
