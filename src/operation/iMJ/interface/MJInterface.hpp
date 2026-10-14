@@ -127,13 +127,6 @@ class MJInterface
 
 #if 1  // output
   void output();
-  void writeCutDEF(DCModel& dc_model, std::string path);
-  void writeCutFloorplan(DCModel& dc_model, idb::IdbLayout* layout);
-  void writeCutInstanceList(DCModel& dc_model, idb::IdbDesign* design);
-  void writeCutPinList(DCModel& dc_model, idb::IdbDesign* design);
-  void writeCutNetList(DCModel& dc_model, idb::IdbDesign* design);
-  void connectCutPin(idb::IdbPin* pin, idb::IdbNet* net, idb::IdbSpecialNet* special_net);
-  void writeCutShapeList(DCModel& dc_model, idb::IdbDesign* design);
 #endif
 
 #endif

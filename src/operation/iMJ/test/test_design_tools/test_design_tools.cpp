@@ -35,7 +35,10 @@ class DesignToolsTest
     MJI.initMJ({{"-temp_directory_path", _output.string()}});
     testDriverAnalysis();
     testDEFCut();
-    MJI.destroyMJ();
+    testCutExternalConnections();
+    testCutRoutingFanout();
+    testCutIOCapacity();
+    testCutWithoutTracks();
     testNetlist();
     testPGNetExclusion();
     testPGNetlist();
@@ -109,12 +112,41 @@ class DesignToolsTest
       }
     }
     bus_pin->get_term()->set_placement_status(status);
+    idb::IdbLayout* source_layout = dmInst->get_idb_layout();
+    idb::IdbCellMaster* cell_master = source_layout->get_cell_master_list()->find_cell_master("BUF");
+    idb::IdbTerm* spare_term = source->get_io_pin_list()->find_pin("spare[0]")->get_term();
+    spare_term->set_antenna_gate_area(0.25);
+    spare_term->set_antenna_diff_area(0.5);
+    spare_term->add_antenna_partial_metal_area("M1", 0.125);
+    idb::IdbVia* pin_via = source->get_via_list()->find_via("VDEF")->clone();
+    pin_via->set_coordinate(0, 0);
+    spare_term->get_port_list().front()->add_via(pin_via);
+    source->get_io_pin_list()->find_pin("spare[0]")->set_bounding_box();
     require(dmInst->saveDef((_output / "before.def").string()), "save before");
     MJI.cutDEF({{"-rect", std::string("2.5 2.5 12 12")}});
-    require(dmInst->get_idb_design() == source, "active design changed");
+    require(dmInst->get_idb_design() == source, "active design address changed");
+    require(source->get_design_name() == "crop_test_cut", "cropped design not published");
+    require(dmInst->get_idb_builder()->get_def_service()->get_design() == source, "builder design is stale");
+    require(dmInst->get_idb_layout() == source_layout && source->get_layout() == source_layout, "LEF layout changed");
+    require(source_layout->get_cell_master_list()->find_cell_master("BUF") == cell_master, "LEF master changed");
+    require(!std::filesystem::exists(_output / "def_cutter/cut.def"), "unexpected intermediate DEF");
     require(dmInst->saveDef((_output / "after.def").string()), "save after");
-    require(readText(_output / "before.def") == readText(_output / "after.def"), "source mutated");
-    std::filesystem::copy_file(_output / "def_cutter/cut.def", _output / "die.def");
+    require(readText(_output / "before.def") != readText(_output / "after.def"), "active design was not cropped");
+    idb::IdbPin* spare_pin = source->get_io_pin_list()->find_pin("spare[0]");
+    require(spare_pin->get_term() != spare_term, "retained IO borrows the old term");
+    require(spare_pin->get_term()->get_antenna_gate_area() == 0.25 && spare_pin->get_term()->get_antenna_diff_area() == 0.5,
+            "retained IO antenna data changed");
+    require(spare_pin->get_term()->get_antenna_partial_metal_area().find("M1")->second == 0.125, "retained IO layer antenna data changed");
+    require(spare_pin->get_term()->get_port_list().front()->get_via_list().size() == 1, "retained IO via lost");
+    require(spare_pin->get_via_list().size() == 1, "retained IO via geometry not rebuilt");
+    require(source->get_bus_list()->findBus("spare").has_value(), "IO bus not rebuilt");
+    require(source->get_bus_list()->findBus("spare")->get().getPin(0) == spare_pin, "IO bus references stale pin");
+    require(source->get_via_list()->get_num_via() == 1, "DEF via definitions lost");
+    require(source->get_fill_list()->get_fill_list()[1]->get_via()->get_via()->get_instance() == source->get_via_list()->find_via("VDEF")->get_instance(),
+            "fill via references stale master");
+    require(spare_pin->get_term()->get_port_list().front()->get_via_list().front()->get_instance()
+                == source->get_via_list()->find_via("VDEF")->get_instance(),
+            "IO via references stale master");
     std::string report = readText(_output / "def_cutter/cut_report.rpt");
     require(report.find("RetainedInstances : 2/5") != std::string::npos, "partial/outside/unplaced instance");
     require(report.find("CutNet : a removed_pins=1") != std::string::npos, "boundary connectivity report");
@@ -134,17 +166,33 @@ class DesignToolsTest
       imj::DEFCutter::destroyInst();
     }
     require(rejected, "removed option accepted");
-
-    loadDEF();
-    require(dmInst->readDef((_output / "die.def").string()), "read cut die DEF");
+    require(dmInst->saveDef((_output / "rejected.def").string()), "save after rejected crop");
+    require(readText(_output / "after.def") == readText(_output / "rejected.def"), "rejected crop mutated IDB");
     checkCut(2500, 2500, 12000, 12000);
     idb::IdbLayout* layout = dmInst->get_idb_layout();
     require(layout->get_rows()->get_row_num() == 9, "row count");
     for (idb::IdbRow* row : layout->get_rows()->get_row_list()) {
       require(row->get_original_coordinate()->get_x() == 3000 && row->get_row_num_x() == 9 && row->get_step_x() == 1000, "site alignment");
     }
+    for (idb::IdbLayer* layer : layout->get_layers()->get_routing_layers()) {
+      idb::IdbLayerRouting* routing_layer = dynamic_cast<idb::IdbLayerRouting*>(layer);
+      require(routing_layer->get_track_grid_list().size() == 1, "routing layer track count");
+      idb::IdbTrackGrid* track = routing_layer->get_track_grid_list().front();
+      require(std::find(layout->get_track_grid_list()->get_track_grid_list().begin(), layout->get_track_grid_list()->get_track_grid_list().end(), track)
+                  != layout->get_track_grid_list()->get_track_grid_list().end(),
+              "routing layer references stale track");
+      require(track->get_track()->get_start() == 2600 && track->get_track_num() == 48, "cropped track range");
+    }
     imj::DCModel model;
     MJI.wrapCutDesign(model);
+    for (idb::IdbPin* pin : source->get_io_pin_list()->get_pin_list()) {
+      imj::DCRect bounding_box = MJI.wrapCutRect(pin->get_bounding_box());
+      for (idb::IdbLayerShape* shape : pin->get_port_box_list()) {
+        for (idb::IdbRect* rect : shape->get_rect_list()) {
+          require(bounding_box.contains(MJI.wrapCutRect(rect)), "IO bounding box does not enclose its ports");
+        }
+      }
+    }
     int32_t via_num = 0;
     bool has_flush_wire = false;
     bool has_clipped_via_top = false;
@@ -171,10 +219,6 @@ class DesignToolsTest
     require(dmInst->get_idb_design()->get_instance_list()->find_instance("u1")->get_orient() == idb::IdbOrient::kFS_MX, "orientation changed");
     checkIOPins(model);
     require(dmInst->saveDef((_output / "roundtrip.def").string()), "save standalone DEF");
-    require(dmInst->readDef((_output / "roundtrip.def").string()), "read standalone DEF");
-    imj::DCModel roundtrip_model;
-    MJI.wrapCutDesign(roundtrip_model);
-    checkIOPins(roundtrip_model);
     MJI.analyzeDriver();
     report = readText(_output / "driver_analyzer/driver_report.rpt");
     require(report.find("MultiDriverNets : 1") != std::string::npos, "cropping must not introduce multiple drivers");
@@ -185,6 +229,19 @@ class DesignToolsTest
     require(netlist->get_instance_list()->get_num() == 2, "standalone netlist instance count");
     require(netlist->get_io_pin_list()->find_pin("out")->get_term()->get_direction() == idb::IdbConnectDirection::kInput, "standalone input pin");
     require(netlist->get_io_pin_list()->find_pin("transit")->get_term()->get_direction() == idb::IdbConnectDirection::kInOut, "standalone inout pin");
+    MJI.cutDEF({{"-rect", std::string("2.5 2.5 12 12")}});
+    checkCut(2500, 2500, 12000, 12000);
+    require(netlist == dmInst->get_netlist_idb_design() && netlist->get_design_name() == "crop_test_cut", "reference netlist changed");
+    MJI.destroyMJ();
+    checkCut(2500, 2500, 12000, 12000);
+    require(dmInst->saveDef((_output / "destroyed.def").string()), "save after destroy_mj");
+    dmInst->saveVerilog((_output / "destroyed.v").string());
+    require(readText(_output / "destroyed.def").find("DESIGN crop_test_cut_cut ;") != std::string::npos, "DEF output after destroy_mj");
+    require(readText(_output / "destroyed.v").find("module crop_test_cut_cut") != std::string::npos, "netlist output after destroy_mj");
+    require(dmInst->readDef((_output / "roundtrip.def").string()), "read standalone DEF");
+    imj::DCModel roundtrip_model;
+    MJI.wrapCutDesign(roundtrip_model);
+    checkIOPins(roundtrip_model);
   }
 
   void checkCut(int32_t ll_x, int32_t ll_y, int32_t ur_x, int32_t ur_y)
@@ -192,8 +249,10 @@ class DesignToolsTest
     idb::IdbRect* die = dmInst->get_idb_layout()->get_die()->get_bounding_box();
     require(die->get_low_x() == ll_x && die->get_low_y() == ll_y && die->get_high_x() == ur_x && die->get_high_y() == ur_y, "die boundary");
     idb::IdbDesign* design = dmInst->get_idb_design();
+    idb::IdbConnectivityCheckResult connectivity = design->validateConnectivity();
+    require(connectivity.ok, connectivity.messages.empty() ? "cropped design connectivity is inconsistent" : connectivity.messages.front());
     require(design->get_instance_list()->get_num() == 2, "component count");
-    require(design->get_io_pin_list()->get_pin_num() == 7, "preserved and generated IO pin count");
+    require(design->get_io_pin_list()->get_pin_num() == 9, "preserved and generated IO pin count");
     require(design->get_net_list()->find_net("a")->get_instance_pin_list()->get_pin_num() == 1, "deleted instance reference");
     require(design->get_special_net_list()->find_net("VDD")->get_instance_pin_list()->get_pin_num() == 2, "PG connectivity");
     require(design->get_group_list()->get_num() == 2, "group references");
@@ -225,20 +284,192 @@ class DesignToolsTest
     require(transit_shapes
                 == std::set<std::tuple<std::string, int32_t, int32_t, int32_t, int32_t>>{{"M2", 8950, 2500, 9050, 2600}, {"M2", 8950, 11900, 9050, 12000}},
             "transit IO access must match the retained wire at both die edges");
-    require(design->get_net_list()->find_net("a")->get_io_pins()->get_pin_num() == 1, "reuse retained INPUT rather than adding a driver");
+    require(design->get_net_list()->find_net("a")->get_io_pins()->get_pin_num() == 2, "retain input and represent the removed load separately");
     require(design->get_io_pin_list()->find_pin("a")->get_term()->get_direction() == idb::IdbConnectDirection::kInput, "retained input direction");
-    require(design->get_io_pin_list()->find_pin("a")->get_term()->get_port_number() > 1, "retained input gets extra access PORT");
+    require(design->get_io_pin_list()->find_pin("a")->get_term()->get_port_number() == 1, "retained input geometry unchanged");
+    require(design->get_io_pin_list()->find_pin("a__cut_0")->get_term()->get_direction() == idb::IdbConnectDirection::kOutput, "external load is not a new driver");
     require(design->get_net_list()->find_net("bus")->get_io_pins()->get_pin_num() == 1, "reuse retained INOUT rather than creating an alias");
     require(design->get_io_pin_list()->find_pin("bus")->get_term()->get_port_number() > 1, "retained inout gets boundary access");
     std::vector<imj::DCLayerRect> input_shapes = MJI.wrapCutPinShapeList(design->get_io_pin_list()->find_pin("out"));
-    std::vector<imj::DCLayerRect> load_shapes = MJI.wrapCutPinShapeList(design->get_instance_list()->find_instance("u1")->get_pin("A"));
     for (imj::DCLayerRect& shape : input_shapes) {
-      bool connected = false;
-      for (imj::DCLayerRect& load_shape : load_shapes) {
-        connected = connected || (load_shape.get_layer_name() == shape.get_layer_name() && load_shape.get_rect().contains(shape.get_rect()));
-      }
-      require(connected, "unrouted input must use actual retained pin metal");
+      checkBoundaryShape(shape, model.get_input_die());
     }
+    require(design->get_net_list()->find_net("out")->get_io_pins()->get_pin_num() == 2, "external driver and load have distinct IOs");
+    require(design->get_io_pin_list()->find_pin("o")->get_term()->get_direction() == idb::IdbConnectDirection::kOutput, "removed top-level output direction");
+  }
+
+  void checkBoundaryShape(imj::DCLayerRect& shape, const imj::DCRect& die)
+  {
+    imj::DCRect& rect = shape.get_rect();
+    require(die.contains(rect), "generated IO outside die");
+    require(rect.get_ll_x() == die.get_ll_x() || rect.get_ur_x() == die.get_ur_x()
+                || rect.get_ll_y() == die.get_ll_y() || rect.get_ur_y() == die.get_ur_y(),
+            "generated IO is floating inside die");
+  }
+
+  void testCutExternalConnections()
+  {
+    dmInst->reset();
+    require(dmInst->readLef(std::vector<std::string>{(_data / "tech.lef").string()}, true), "fanout tech");
+    require(dmInst->readLef(std::vector<std::string>{(_data / "cell.lef").string()}), "fanout cells");
+    require(dmInst->readDef((_data / "fanout.def.in").string()), "fanout design");
+    MJI.initMJ({{"-temp_directory_path", (_output / "fanout").string()}});
+    MJI.cutDEF({{"-rect", std::string("2.5 2.5 12 12")}});
+    idb::IdbDesign* design = dmInst->get_idb_design();
+    require(design->validateConnectivity().ok, "fanout connectivity");
+    require(design->get_instance_list()->get_num() == 2, "retain only A and E");
+    idb::IdbNet* fanout = design->get_net_list()->find_net("fanout");
+    require(fanout->get_instance_pin_list()->get_pin_num() == 1, "retain A/Y");
+    require(fanout->get_io_pins()->get_pin_num() == 3, "A to B/C/D must have three IO pins");
+    for (idb::IdbPin* pin : fanout->get_io_pins()->get_pin_list()) {
+      require(pin->get_net() == fanout && pin->get_term()->get_direction() == idb::IdbConnectDirection::kOutput, "one OUTPUT per external load");
+    }
+    idb::IdbNet* mixed = design->get_net_list()->find_net("mixed");
+    require(mixed->get_io_pins()->get_pin_num() == 2, "mixed external driver/load count");
+    int32_t input_num = 0;
+    int32_t output_num = 0;
+    for (idb::IdbPin* pin : mixed->get_io_pins()->get_pin_list()) {
+      input_num += pin->get_term()->get_direction() == idb::IdbConnectDirection::kInput;
+      output_num += pin->get_term()->get_direction() == idb::IdbConnectDirection::kOutput;
+    }
+    require(input_num == 1 && output_num == 1, "external driver and load directions must differ");
+    require(design->get_net_list()->find_net("internal")->get_io_pins()->get_pin_num() == 0, "internal connection must not become IO");
+    require(design->get_special_net_list()->find_net("VDD")->get_io_pin_list()->get_pin_num() == 1, "PG connections must remain consolidated");
+    std::string report = readText(_output / "fanout/def_cutter/cut_report.rpt");
+    for (std::string terminal : {"B/A", "C/A", "D/A", "B/Y", "F/A"}) {
+      require(report.find("external=" + terminal + "\n") != std::string::npos, "missing external terminal provenance: " + terminal);
+    }
+    imj::DCRect die(2500, 2500, 12000, 12000);
+    std::vector<imj::DCLayerRect> shape_list;
+    for (idb::IdbPin* pin : design->get_io_pin_list()->get_pin_list()) {
+      std::vector<imj::DCLayerRect> shapes = MJI.wrapCutPinShapeList(pin);
+      require(shapes.size() == 1, "one edge shape for each unrouted IO");
+      for (imj::DCLayerRect& shape : shapes) {
+        checkBoundaryShape(shape, die);
+        imj::DCRect& rect = shape.get_rect();
+        idb::IdbLayerRouting* layer = dynamic_cast<idb::IdbLayerRouting*>(dmInst->get_idb_layout()->get_layers()->find_layer(shape.get_layer_name()));
+        int32_t center = layer->is_horizontal() ? (rect.get_ll_y() + rect.get_ur_y()) / 2 : (rect.get_ll_x() + rect.get_ur_x()) / 2;
+        require(center % 200 == 0, "IO not aligned to DEF track");
+        require(layer->is_horizontal() ? (rect.get_ll_x() == die.get_ll_x() || rect.get_ur_x() == die.get_ur_x())
+                                       : (rect.get_ll_y() == die.get_ll_y() || rect.get_ur_y() == die.get_ur_y()),
+                "IO edge does not match routing direction");
+        double area = static_cast<double>(rect.get_ur_x() - rect.get_ll_x()) * (rect.get_ur_y() - rect.get_ll_y());
+        require(area >= layer->get_area(), "IO violates layer minimum area");
+        for (imj::DCLayerRect& previous : shape_list) {
+          if (previous.get_layer_name() != shape.get_layer_name()) {
+            continue;
+          }
+          imj::DCRect& other = previous.get_rect();
+          int32_t x_gap = std::max(rect.get_ll_x() - other.get_ur_x(), other.get_ll_x() - rect.get_ur_x());
+          int32_t y_gap = std::max(rect.get_ll_y() - other.get_ur_y(), other.get_ll_y() - rect.get_ur_y());
+          require(x_gap >= 100 || y_gap >= 100, "IOs overlap or violate spacing");
+        }
+        shape_list.push_back(shape);
+      }
+    }
+    MJI.analyzeDriver();
+    report = readText(_output / "fanout/driver_analyzer/driver_report.rpt");
+    require(report.find("MultiDriverNets : 0\n") != std::string::npos && report.find("UndrivenNets : 0\n") != std::string::npos,
+            "IO splitting changed driver roles");
+    dmInst->saveVerilog((_output / "fanout.v").string());
+    require(dmInst->addVerilog((_output / "fanout.v").string(), "fanout_test_cut"), "read multi-port netlist");
+    idb::IdbDesign* netlist = dmInst->get_netlist_idb_design();
+    idb::IdbNet* output_net = netlist->get_instance_list()->find_instance("A")->get_pin("Y")->get_net();
+    require(output_net->get_io_pins()->get_pin_num() == 3, "netlist aliases lost external loads");
+    MJI.cutDEF({{"-rect", std::string("2.5 2.5 12 12")}});
+    require(design->get_io_pin_list()->get_pin_num() == 6, "repeated cut changed boundary IO count");
+    require(design->validateConnectivity().ok, "repeated fanout cut connectivity");
+    require(dmInst->saveDef((_output / "fanout.def").string()), "save multi-port DEF");
+    require(dmInst->readDef((_output / "fanout.def").string()), "read multi-port DEF");
+    require(dmInst->get_idb_design()->get_net_list()->find_net("fanout")->get_io_pins()->get_pin_num() == 3, "DEF roundtrip lost external loads");
+    MJI.destroyMJ();
+  }
+
+  void testCutRoutingFanout()
+  {
+    require(dmInst->readDef((_data / "fanout.def.in").string()), "routed fanout design");
+    idb::IdbDesign* design = dmInst->get_idb_design();
+    idb::IdbRegularWire* wire = design->get_net_list()->find_net("fanout")->get_wire_list()->add_wire();
+    wire->set_wire_state(idb::IdbWiringStatement::kRouted);
+    for (imj::DCRect rect : {imj::DCRect(11000, 4000, 13000, 4100), imj::DCRect(11000, 4200, 13000, 4300), imj::DCRect(11000, 4000, 13000, 4300)}) {
+      idb::IdbRegularWireSegment* segment = wire->add_segment();
+      segment->set_layer(dmInst->get_idb_layout()->get_layers()->find_layer("M1"));
+      segment->set_is_rect(true);
+      segment->add_point(rect.get_ll_x(), rect.get_ll_y());
+      segment->set_delta_rect(0, 0, rect.get_ur_x() - rect.get_ll_x(), rect.get_ur_y() - rect.get_ll_y());
+    }
+    MJI.initMJ({{"-temp_directory_path", (_output / "routed_fanout").string()}});
+    MJI.cutDEF({{"-rect", std::string("2.5 2.5 12 12")}});
+    idb::IdbNet* fanout = design->get_net_list()->find_net("fanout");
+    std::vector<idb::IdbPin*>& pins = fanout->get_io_pins()->get_pin_list();
+    require(pins.size() == 3, "routed fanout must preserve all external terminals");
+    bool has_cut_shape = false;
+    for (int32_t idx = 0; idx < static_cast<int32_t>(pins.size()); idx++) {
+      for (imj::DCLayerRect& shape : MJI.wrapCutPinShapeList(pins[idx])) {
+        checkBoundaryShape(shape, imj::DCRect(2500, 2500, 12000, 12000));
+        has_cut_shape = has_cut_shape || (shape.get_layer_name() == "M1" && shape.get_rect().get_ll_x() == 11700
+                                          && shape.get_rect().get_ll_y() == 4000 && shape.get_rect().get_ur_y() == 4300);
+        for (int32_t other_idx = idx + 1; other_idx < static_cast<int32_t>(pins.size()); other_idx++) {
+          for (imj::DCLayerRect& other : MJI.wrapCutPinShapeList(pins[other_idx])) {
+            require(shape.get_layer_name() != other.get_layer_name() || !shape.get_rect().intersect(other.get_rect()).isValid(),
+                    "overlapping route cuts must not produce overlapping logical IO pins");
+          }
+        }
+      }
+    }
+    require(has_cut_shape, "existing routing cut lost");
+    require(design->validateConnectivity().ok, "routed fanout connectivity");
+    MJI.destroyMJ();
+  }
+
+  void testCutIOCapacity()
+  {
+    require(dmInst->readDef((_data / "fanout.def.in").string()), "capacity design");
+    idb::IdbDesign* design = dmInst->get_idb_design();
+    for (idb::IdbLayer* layer : dmInst->get_idb_layout()->get_layers()->get_routing_layers()) {
+      idb::IdbRoutingBlockage* blockage = design->get_blockage_list()->add_blockage_routing(layer->get_name());
+      blockage->set_layer(layer);
+      blockage->add_rect(2500, 2500, 12000, 12000);
+    }
+    require(dmInst->saveDef((_output / "capacity_before.def").string()), "save blocked design");
+    MJI.initMJ({{"-temp_directory_path", (_output / "capacity").string()}});
+    bool rejected = false;
+    try {
+      MJI.cutDEF({{"-rect", std::string("2.5 2.5 12 12")}});
+    } catch (const std::runtime_error&) {
+      rejected = true;
+      imj::DEFCutter::destroyInst();
+    }
+    require(rejected, "insufficient edge capacity must not overlap pins or discard connections");
+    require(dmInst->get_idb_design() == design && design->get_design_name() == "fanout_test", "capacity failure replaced active IDB");
+    require(dmInst->saveDef((_output / "capacity_after.def").string()), "save after capacity failure");
+    require(readText(_output / "capacity_before.def") == readText(_output / "capacity_after.def"), "capacity failure changed IDB");
+    MJI.destroyMJ();
+  }
+
+  void testCutWithoutTracks()
+  {
+    require(dmInst->readDef((_data / "fanout.def.in").string()), "no-track design");
+    idb::IdbLayout* layout = dmInst->get_idb_layout();
+    for (idb::IdbLayer* layer : layout->get_layers()->get_routing_layers()) {
+      dynamic_cast<idb::IdbLayerRouting*>(layer)->get_track_grid_list().clear();
+    }
+    layout->get_track_grid_list()->reset();
+    MJI.initMJ({{"-temp_directory_path", (_output / "no_tracks").string()}});
+    MJI.cutDEF({{"-rect", std::string("2.5 2.5 12 12")}});
+    idb::IdbDesign* design = dmInst->get_idb_design();
+    require(design->get_io_pin_list()->get_pin_num() == 6, "LEF grid fallback IO count");
+    require(design->validateConnectivity().ok, "LEF grid fallback connectivity");
+    for (idb::IdbPin* pin : design->get_io_pin_list()->get_pin_list()) {
+      for (imj::DCLayerRect& shape : MJI.wrapCutPinShapeList(pin)) {
+        checkBoundaryShape(shape, imj::DCRect(2500, 2500, 12000, 12000));
+        imj::DCRect& rect = shape.get_rect();
+        idb::IdbLayerRouting* layer = dynamic_cast<idb::IdbLayerRouting*>(layout->get_layers()->find_layer(shape.get_layer_name()));
+        int32_t coord = layer->is_horizontal() ? (rect.get_ll_y() + rect.get_ur_y()) / 2 : (rect.get_ll_x() + rect.get_ur_x()) / 2;
+        require((coord - std::max(layer->get_offset_prefer(), 0)) % layer->get_pitch_prefer() == 0, "IO not aligned to LEF fallback grid");
+      }
+    }
+    MJI.destroyMJ();
   }
 
   void testNetlist()
@@ -302,7 +533,7 @@ class DesignToolsTest
     for (imj::DANet& net : model.get_net_list()) {
       net_name_set.insert(net.get_name());
     }
-    require(net_name_set == std::set<std::string>{"multi", "a", "out", "bus", "spare", "transit", "VSS", "special_signal"},
+    require(net_name_set == std::set<std::string>{"multi", "a", "out", "bus", "spare[0]", "transit", "VSS", "special_signal"},
             "PG nets must not reach the graph, while signal special nets and signal VSS remain");
     require(model.get_excluded_pg_net_num() == 6, "count each logical PG net once across ordinary/special records");
     MJI.analyzeDriver();

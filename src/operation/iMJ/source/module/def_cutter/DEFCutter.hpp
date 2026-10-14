@@ -17,6 +17,9 @@
 #pragma once
 
 #include "DCModel.hpp"
+#include "DCIOSlot.hpp"
+#include "IdbDesign.h"
+#include "IdbLayout.h"
 
 namespace imj {
 
@@ -48,12 +51,29 @@ class DEFCutter
   void cutNetList(DCModel& dc_model);
   void buildBoundaryShapeList(DCNet& net, DCRoute& route, DCRect& input_rect, DCRect& die);
   void buildIOPinList(DCModel& dc_model);
+  bool isBoundaryRect(const DCRect& rect, const DCRect& die);
+  DCPinType getExternalPinType(DCConnection& connection);
+  std::array<int32_t, 2> getIOPinTargetCoord(DCModel& dc_model, int32_t net_idx, int32_t connection_idx);
   DCPinType getIOPinType(DCModel& dc_model, std::vector<int32_t>& net_idx_list);
-  void buildFallbackShapeList(DCModel& dc_model, std::vector<int32_t>& net_idx_list, DCIOPin& pin);
+  void assignBoundaryShapeList(std::vector<DCIOPin>& pin_list, std::vector<DCLayerRect>& shape_list);
+  double getIOPinDistance(DCIOPin& pin, const DCRect& rect);
   void cutObjectList(std::vector<DCObject>& object_list, DCRect& boundary);
-#if 1  // output
-  void writeDEF(DCModel& dc_model);
-#endif
+  void placeIOPinList(DCModel& dc_model);
+  std::vector<DCIOSlot> buildIOSlotList(DCModel& dc_model);
+  void buildIOEdgeSlotList(DCModel& dc_model, idb::IdbLayerRouting* layer, int32_t origin, int32_t pitch, int32_t count,
+                           std::vector<DCIOSlot>& slot_list);
+  int32_t getIOPinDepth(DCModel& dc_model, idb::IdbLayerRouting* layer, int32_t width, bool low_side);
+  std::map<std::string, std::vector<DCRect>> buildIOObstacleMap(DCModel& dc_model);
+  bool hasIOPinSpacing(DCLayerRect& first, DCLayerRect& second);
+  void updateDesign(DCModel& dc_model);
+  void buildFloorplan(DCModel& dc_model, idb::IdbLayout* layout);
+  void buildInstanceList(DCModel& dc_model, idb::IdbDesign* design);
+  void buildPinList(DCModel& dc_model, idb::IdbDesign* design);
+  void copyPin(idb::IdbPin* source, idb::IdbPin* pin);
+  void buildNetList(DCModel& dc_model, idb::IdbDesign* design);
+  void connectPin(idb::IdbDesign* design, idb::IdbPin* pin, idb::IdbNet* net, idb::IdbSpecialNet* special_net);
+  void buildShapeList(DCModel& dc_model, idb::IdbDesign* design);
+  void updateFloorplan(idb::IdbLayout& layout);
 #if 1  // exhibit
   void writeReport(DCModel& dc_model);
 #endif

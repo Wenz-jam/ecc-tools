@@ -12,8 +12,7 @@ analyze_driver
 # Only for a physically placed DEF; coordinates are microns.
 cut_def -rect {10 10 40 40}
 destroy_mj
-# Continue working on the standalone cropped design.
-def_init -path ./mj_result/def_cutter/cut.def
+# Export the cropped design already in IDB.
 def_save -path ./cropped.def
 netlist_save -path ./cropped.v
 ```
@@ -51,9 +50,12 @@ netlist_save -path ./cropped.v
   separately from PG nets; `SignalNets` counts only nets actually analyzed.
   Direct top-level IO to core nets, PAD-to-core nets, and nets with additional
   terminals or ports remain in analysis. No IDB objects are removed or changed.
-- `cut_def -rect {llx lly urx ury}` writes
-  `def_cutter/cut.def` and `def_cutter/cut_report.rpt`. It does not replace or
-  mutate the loaded design. Load the output with `def_init` to work on it.
+- `cut_def -rect {llx lly urx ury}` replaces the active IDB design with the
+  cropped result and writes `def_cutter/cut_report.rpt`. It does not write an
+  intermediate DEF. Use `def_save` and `netlist_save` to export the result;
+  no `def_init` reload is needed, including after `destroy_mj`.
+- The LEF technology and separate LVS reference netlist are preserved. Repeated
+  cuts operate on the current cropped design, not on the original input.
 - The supplied rectangle is always the new DIEAREA and must lie inside the
   input die. There is no boundary option or core mode. Complete row sites are
   retained on the original site grid, rounded inward at the crop edges.
@@ -62,19 +64,29 @@ netlist_save -path ./cropped.v
   and special routing, rectangular blockages, fills, regions and slots are
   clipped. Complete vias are retained. For a partially clipped via, its cut is
   removed while its in-die routing enclosures remain as metal and IO access.
-- Cut nets receive IO pins with shapes over retained boundary metal. Where a
-  net has no boundary crossing, retained routing or placed terminal metal
-  provides the access shape. A cut net with no usable shape is rejected rather
-  than assigning a fabricated IO location.
-- One logical pin represents all cut locations on a net, using multiple PORTs.
-  An existing retained IO is extended instead of adding another logical driver.
-  Ordinary and special net records with the same name share the generated IO.
-  Outside drivers produce INPUTs; inside drivers produce OUTPUTs. PG nets,
-  bidirectional nets and unresolved driver roles use INOUT.
+- Each distinct removed signal terminal becomes a separate IO on its original
+  net. For example, an internal A connected to external B/C/D produces three
+  IOs, not one IO with three PORT shapes. External instance drivers become
+  INPUTs; external loads become OUTPUTs. Removed top-level ports retain their
+  direction. This preserves a single driver even when an externally driven net
+  also has external fanout loads. Internal-only nets do not gain IOs.
+- Boundary routing cuts supply the IO shapes where available. Unrouted IOs are
+  placed inside and flush with the new die boundary, on DEF tracks (or LEF
+  pitch/offset when no DEF tracks exist), using layer direction, minimum width,
+  minimum area and spacing. Retained metal, vias, IO, routing blockages and fill
+  reserve their space. Insufficient legal edge capacity fails before updating
+  IDB; the cutter does not overlap pins or enlarge the die to make them fit.
+- PG nets remain consolidated. Routing-only transit nets use one logical IO
+  with all their boundary access shapes. Existing retained IOs are preserved;
+  when no external terminal is removed, boundary access can extend an existing
+  port. Same-name ordinary/special records share generated IOs. PG and unknown
+  directions use INOUT.
 - The result has explicit ports and connectivity for DEF and Verilog export.
   It does not synthesize the deleted logic or reroute the retained metal: the
-  new ports describe the interface to the removed environment. Added/extended
-  IOs and their shapes are listed in the report.
+  new ports describe the interface to the removed environment. A newly placed
+  IO without a pre-existing routing cut is logically connected, not newly
+  routed. Added/extended IOs, external terminal identities and shapes are listed
+  in the report.
 - The current geometry path supports rectangular DIEAREA and Manhattan
   routing represented by IDB. Unsupported diagonal routing fails explicitly.
   Output uses the IDB DEF writer; geometry is preserved as clipped metal
@@ -90,6 +102,8 @@ ecc_py.init_mj(config_dict={"-temp_directory_path": "./mj_result"})
 ecc_py.analyze_driver()
 ecc_py.cut_def(config_dict={"-rect": "10 10 40 40"})
 ecc_py.destroy_mj()
+ecc_py.def_save("./cropped.def")
+ecc_py.netlist_save("./cropped.v")
 ```
 
 For commands with configuration options, an optional JSON file uses the existing

@@ -19,6 +19,7 @@
 #include "DataManager.hpp"
 #include "MJInterface.hpp"
 #include "Utility.hpp"
+#include "idm.h"
 
 namespace imj {
 
@@ -57,7 +58,8 @@ void DEFCutter::cut(std::map<std::string, std::any>& config_map)
   cutObjectList(dc_model.get_fill_list(), dc_model.get_die());
   cutObjectList(dc_model.get_region_list(), dc_model.get_die());
   cutObjectList(dc_model.get_slot_list(), dc_model.get_die());
-  writeDEF(dc_model);
+  placeIOPinList(dc_model);
+  updateDesign(dc_model);
   writeReport(dc_model);
   MJLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
@@ -239,61 +241,131 @@ void DEFCutter::buildIOPinList(DCModel& dc_model)
       net_idx_map[net.get_name()].push_back(idx);
     }
   }
-  int32_t name_idx = 0;
   for (auto& [net_name, net_idx_list] : net_idx_map) {
-    DCIOPin pin;
-    pin.set_net_idx(net_idx_list.front());
-    bool needs_io = false;
+    std::vector<DCIOPin> pin_list;
+    std::vector<DCLayerRect> shape_list;
+    std::set<std::tuple<std::string, int32_t, int32_t, int32_t, int32_t>> shape_set;
+    bool is_pg = false;
+    bool has_removed_pin = false;
     for (int32_t net_idx : net_idx_list) {
       DCNet& net = dc_model.get_net_list()[net_idx];
-      needs_io = needs_io || net.get_removed_pin_num() > 0 || !net.get_io_shape_list().empty();
-      pin.get_shape_list().insert(pin.get_shape_list().end(), net.get_io_shape_list().begin(), net.get_io_shape_list().end());
-      if (net.get_is_pg()) {
-        pin.set_net_idx(net_idx);
-      }
-    }
-    if (!needs_io) {
-      continue;
-    }
-    pin.set_type(getIOPinType(dc_model, net_idx_list));
-    // Reuse a retained top-level pin: extra access PORTs do not create another logical driver.
-    for (int32_t net_idx : net_idx_list) {
-      for (DCConnection& connection : dc_model.get_net_list()[net_idx].get_connection_list()) {
-        if (connection.get_is_io() && connection.get_retained() && pin.get_source_idx() < 0) {
-          pin.set_source_idx(connection.get_object_idx());
-          pin.set_name(connection.get_pin_name());
-          pin.set_type(connection.get_pin_type() == DCPinType::kNone ? DCPinType::kInout : connection.get_pin_type());
-          pin.get_shape_list().insert(pin.get_shape_list().end(), connection.get_shape_list().begin(), connection.get_shape_list().end());
+      is_pg = is_pg || net.get_is_pg();
+      has_removed_pin = has_removed_pin || net.get_removed_pin_num() > 0;
+      for (DCLayerRect& shape : net.get_io_shape_list()) {
+        DCRect& rect = shape.get_rect();
+        if (isBoundaryRect(rect, dc_model.get_die())
+            && shape_set.emplace(shape.get_layer_name(), rect.get_ll_x(), rect.get_ll_y(), rect.get_ur_x(), rect.get_ur_y()).second) {
+          shape_list.push_back(shape);
         }
       }
     }
-    if (pin.get_shape_list().empty()) {
-      buildFallbackShapeList(dc_model, net_idx_list, pin);
+    if (!has_removed_pin && shape_list.empty()) {
+      continue;
     }
-    if (pin.get_shape_list().empty()) {
-      MJLOG.error(Loc::current(), "Cannot create IO for cut net ", net_name, ": no retained routing or placed pin shape.");
-    }
-    std::set<std::tuple<std::string, int32_t, int32_t, int32_t, int32_t>> shape_set;
-    std::vector<DCLayerRect> shape_list;
-    for (DCLayerRect& shape : pin.get_shape_list()) {
-      DCRect& rect = shape.get_rect();
-      if (shape_set.emplace(shape.get_layer_name(), rect.get_ll_x(), rect.get_ll_y(), rect.get_ur_x(), rect.get_ur_y()).second) {
-        shape_list.push_back(shape);
+    if (!is_pg) {
+      std::set<std::tuple<bool, int32_t, std::string>> connection_set;
+      for (int32_t net_idx : net_idx_list) {
+        DCNet& net = dc_model.get_net_list()[net_idx];
+        for (int32_t idx = 0; idx < static_cast<int32_t>(net.get_connection_list().size()); idx++) {
+          DCConnection& connection = net.get_connection_list()[idx];
+          if (connection.get_retained()
+              || !connection_set.emplace(connection.get_is_io(), connection.get_object_idx(), connection.get_pin_name()).second) {
+            continue;
+          }
+          DCIOPin pin;
+          pin.set_net_idx(net_idx);
+          pin.set_connection_idx(idx);
+          pin.set_type(getExternalPinType(connection));
+          pin.set_target_coord(getIOPinTargetCoord(dc_model, net_idx, idx));
+          if (connection.get_is_io()) {
+            pin.set_name(connection.get_pin_name());
+          }
+          pin_list.push_back(pin);
+        }
       }
     }
-    pin.set_shape_list(shape_list);
-    if (pin.get_source_idx() < 0) {
-      std::string pin_name = net_name;
-      while (!pin_name_set.insert(pin_name).second) {
-        pin_name = net_name + "__cut_" + std::to_string(name_idx++);
+    if (pin_list.empty()) {
+      DCIOPin pin;
+      pin.set_net_idx(net_idx_list.front());
+      pin.set_type(getIOPinType(dc_model, net_idx_list));
+      pin.set_target_coord(getIOPinTargetCoord(dc_model, pin.get_net_idx(), -1));
+      for (int32_t net_idx : net_idx_list) {
+        DCNet& net = dc_model.get_net_list()[net_idx];
+        if (net.get_is_pg()) {
+          pin.set_net_idx(net_idx);
+        }
+        for (DCConnection& connection : net.get_connection_list()) {
+          if (connection.get_is_io() && connection.get_retained() && pin.get_source_idx() < 0) {
+            pin.set_source_idx(connection.get_object_idx());
+            pin.set_name(connection.get_pin_name());
+            pin.set_type(connection.get_pin_type() == DCPinType::kNone ? DCPinType::kInout : connection.get_pin_type());
+            pin.set_shape_list(connection.get_shape_list());
+          }
+        }
       }
-      pin.set_name(pin_name);
+      pin_list.push_back(pin);
     }
-    for (int32_t net_idx : net_idx_list) {
-      dc_model.get_net_list()[net_idx].set_cut_pin_idx(static_cast<int32_t>(dc_model.get_cut_pin_list().size()));
+    // A route can cross several edges before reaching one external terminal.
+    // Distribute available cuts first, then retain extra access shapes on the nearest port.
+    assignBoundaryShapeList(pin_list, shape_list);
+    int32_t name_idx = 0;
+    for (DCIOPin& pin : pin_list) {
+      if (pin.get_source_idx() < 0) {
+        std::string pin_name = pin.get_name().empty() ? net_name : pin.get_name();
+        while (pin_name_set.contains(pin_name) || (pin_name != net_name && net_idx_map.contains(pin_name))) {
+          pin_name = net_name + "__cut_" + std::to_string(name_idx++);
+        }
+        pin_name_set.insert(pin_name);
+        pin.set_name(pin_name);
+      }
+      for (int32_t net_idx : net_idx_list) {
+        dc_model.get_net_list()[net_idx].get_cut_pin_idx_list().push_back(static_cast<int32_t>(dc_model.get_cut_pin_list().size()));
+      }
+      dc_model.get_cut_pin_list().push_back(pin);
     }
-    dc_model.get_cut_pin_list().push_back(pin);
   }
+}
+
+bool DEFCutter::isBoundaryRect(const DCRect& rect, const DCRect& die)
+{
+  return die.contains(rect) && (rect.get_ll_x() == die.get_ll_x() || rect.get_ll_y() == die.get_ll_y()
+                               || rect.get_ur_x() == die.get_ur_x() || rect.get_ur_y() == die.get_ur_y());
+}
+
+DCPinType DEFCutter::getExternalPinType(DCConnection& connection)
+{
+  DCPinType type = connection.get_pin_type();
+  if (type != DCPinType::kInput && type != DCPinType::kOutput) {
+    return DCPinType::kInout;
+  }
+  if (connection.get_is_io()) {
+    return type;
+  }
+  return type == DCPinType::kInput ? DCPinType::kOutput : DCPinType::kInput;
+}
+
+std::array<int32_t, 2> DEFCutter::getIOPinTargetCoord(DCModel& dc_model, int32_t net_idx, int32_t connection_idx)
+{
+  DCNet& net = dc_model.get_net_list()[net_idx];
+  DCRect rect = dc_model.get_die();
+  if (connection_idx >= 0) {
+    DCConnection& connection = net.get_connection_list()[connection_idx];
+    std::vector<DCObject>& objects = connection.get_is_io() ? dc_model.get_io_pin_list() : dc_model.get_instance_list();
+    if (!connection.get_shape_list().empty()) {
+      rect = connection.get_shape_list().front().get_rect();
+    } else if (!objects[connection.get_object_idx()].get_rect_list().empty()) {
+      rect = objects[connection.get_object_idx()].get_rect_list().front();
+    }
+  } else {
+    for (DCConnection& connection : net.get_connection_list()) {
+      if (connection.get_retained() && !connection.get_shape_list().empty()) {
+        rect = connection.get_shape_list().front().get_rect();
+        break;
+      }
+    }
+  }
+  return {static_cast<int32_t>((static_cast<double>(rect.get_ll_x()) + rect.get_ur_x()) / 2),
+          static_cast<int32_t>((static_cast<double>(rect.get_ll_y()) + rect.get_ur_y()) / 2)};
 }
 
 DCPinType DEFCutter::getIOPinType(DCModel& dc_model, std::vector<int32_t>& net_idx_list)
@@ -330,37 +402,57 @@ DCPinType DEFCutter::getIOPinType(DCModel& dc_model, std::vector<int32_t>& net_i
   return DCPinType::kInout;
 }
 
-void DEFCutter::buildFallbackShapeList(DCModel& dc_model, std::vector<int32_t>& net_idx_list, DCIOPin& pin)
+void DEFCutter::assignBoundaryShapeList(std::vector<DCIOPin>& pin_list, std::vector<DCLayerRect>& shape_list)
 {
-  for (int32_t net_idx : net_idx_list) {
-    DCNet& net = dc_model.get_net_list()[net_idx];
-    for (DCRoute& route : net.get_route_list()) {
-      if (!route.get_retained()) {
-        continue;
-      }
-      if (route.get_via_idx() < 0) {
-        pin.get_shape_list().emplace_back(route.get_layer_name(), route.get_rect());
-      } else {
-        pin.get_shape_list().insert(pin.get_shape_list().end(), route.get_via_shape_list().begin(), route.get_via_shape_list().end());
-      }
-    }
-  }
-  if (!pin.get_shape_list().empty()) {
-    return;
-  }
-  for (int32_t net_idx : net_idx_list) {
-    for (DCConnection& connection : dc_model.get_net_list()[net_idx].get_connection_list()) {
-      if (!connection.get_retained()) {
-        continue;
-      }
-      for (DCLayerRect& shape : connection.get_shape_list()) {
-        DCRect rect = shape.get_rect().intersect(dc_model.get_die());
-        if (rect.isValid()) {
-          pin.get_shape_list().emplace_back(shape.get_layer_name(), rect);
+  for (DCLayerRect& shape : shape_list) {
+    int32_t best_idx = -1;
+    double best_distance = std::numeric_limits<double>::max();
+    bool has_empty_pin = false;
+    bool duplicate = false;
+    std::vector<int32_t> overlap_idx_list;
+    for (int32_t idx = 0; idx < static_cast<int32_t>(pin_list.size()); idx++) {
+      DCIOPin& pin = pin_list[idx];
+      has_empty_pin = has_empty_pin || pin.get_shape_list().empty();
+      for (DCLayerRect& existing : pin.get_shape_list()) {
+        if (shape.get_layer_name() == existing.get_layer_name() && shape.get_rect().intersect(existing.get_rect()).isValid()) {
+          overlap_idx_list.push_back(idx);
+          duplicate = duplicate || (existing.get_rect().contains(shape.get_rect()));
+          break;
         }
       }
     }
+    if (duplicate) {
+      continue;
+    }
+    if (!overlap_idx_list.empty()) {
+      std::vector<DCLayerRect>& merged_shape_list = pin_list[overlap_idx_list.front()].get_shape_list();
+      for (int32_t idx = 1; idx < static_cast<int32_t>(overlap_idx_list.size()); idx++) {
+        std::vector<DCLayerRect>& shapes = pin_list[overlap_idx_list[idx]].get_shape_list();
+        merged_shape_list.insert(merged_shape_list.end(), shapes.begin(), shapes.end());
+        shapes.clear();
+      }
+      merged_shape_list.push_back(shape);
+      continue;
+    }
+    for (int32_t idx = 0; idx < static_cast<int32_t>(pin_list.size()); idx++) {
+      DCIOPin& pin = pin_list[idx];
+      if (has_empty_pin && !pin.get_shape_list().empty()) {
+        continue;
+      }
+      double distance = getIOPinDistance(pin, shape.get_rect());
+      if (distance < best_distance) {
+        best_distance = distance;
+        best_idx = idx;
+      }
+    }
+    pin_list[best_idx].get_shape_list().push_back(shape);
   }
+}
+
+double DEFCutter::getIOPinDistance(DCIOPin& pin, const DCRect& rect)
+{
+  return std::abs((static_cast<double>(rect.get_ll_x()) + rect.get_ur_x()) / 2 - pin.get_target_coord()[0])
+         + std::abs((static_cast<double>(rect.get_ll_y()) + rect.get_ur_y()) / 2 - pin.get_target_coord()[1]);
 }
 
 void DEFCutter::cutObjectList(std::vector<DCObject>& object_list, DCRect& boundary)
@@ -379,14 +471,705 @@ void DEFCutter::cutObjectList(std::vector<DCObject>& object_list, DCRect& bounda
   }
 }
 
-#if 1  // output
-
-void DEFCutter::writeDEF(DCModel& dc_model)
+void DEFCutter::placeIOPinList(DCModel& dc_model)
 {
-  MJI.writeCutDEF(dc_model, MJDM.getConfig().dc_temp_directory_path + "cut.def");
+  int32_t unplaced_pin_num = 0;
+  for (DCIOPin& pin : dc_model.get_cut_pin_list()) {
+    unplaced_pin_num += pin.get_shape_list().empty();
+  }
+  if (unplaced_pin_num == 0) {
+    return;
+  }
+  std::vector<DCIOSlot> slot_list = buildIOSlotList(dc_model);
+  std::map<std::string, std::vector<DCRect>> obstacle_map = buildIOObstacleMap(dc_model);
+  for (DCIOSlot& slot : slot_list) {
+    for (DCRect& rect : obstacle_map[slot.get_shape().get_layer_name()]) {
+      DCLayerRect obstacle(slot.get_shape().get_layer_name(), rect);
+      if (!hasIOPinSpacing(slot.get_shape(), obstacle)) {
+        slot.set_available(false);
+        break;
+      }
+    }
+  }
+  for (DCIOPin& pin : dc_model.get_cut_pin_list()) {
+    if (!pin.get_shape_list().empty()) {
+      continue;
+    }
+    int32_t best_idx = -1;
+    double best_distance = std::numeric_limits<double>::max();
+    for (int32_t idx = 0; idx < static_cast<int32_t>(slot_list.size()); idx++) {
+      DCIOSlot& slot = slot_list[idx];
+      if (!slot.get_available()) {
+        continue;
+      }
+      double distance = getIOPinDistance(pin, slot.get_shape().get_rect());
+      if (distance < best_distance) {
+        best_distance = distance;
+        best_idx = idx;
+      }
+    }
+    if (best_idx < 0) {
+      MJLOG.error(Loc::current(), "Cannot place ", unplaced_pin_num, " remaining cut IO pins on the die boundary without overlap or spacing violations.");
+    }
+    DCLayerRect shape = slot_list[best_idx].get_shape();
+    pin.get_shape_list().push_back(shape);
+    unplaced_pin_num--;
+    for (DCIOSlot& slot : slot_list) {
+      if (slot.get_available() && !hasIOPinSpacing(slot.get_shape(), shape)) {
+        slot.set_available(false);
+      }
+    }
+  }
 }
 
-#endif
+std::vector<DCIOSlot> DEFCutter::buildIOSlotList(DCModel& dc_model)
+{
+  idb::IdbLayout* layout = dmInst->get_idb_layout();
+  std::vector<DCIOSlot> slot_list;
+  for (idb::IdbLayer* base : layout->get_layers()->get_routing_layers()) {
+    idb::IdbLayerRouting* layer = dynamic_cast<idb::IdbLayerRouting*>(base);
+    if (!layer->is_horizontal() && !layer->is_vertical()) {
+      continue;
+    }
+    int32_t axis = layer->is_horizontal() ? 1 : 0;
+    bool has_track = false;
+    for (DCGrid& grid : dc_model.get_track_list()) {
+      idb::IdbTrackGrid* track = layout->get_track_grid_list()->get_track_grid_list()[grid.get_source_idx()];
+      if (grid.get_axis() != axis || std::find(track->get_layer_list().begin(), track->get_layer_list().end(), layer) == track->get_layer_list().end()) {
+        continue;
+      }
+      has_track = true;
+      buildIOEdgeSlotList(dc_model, layer, grid.get_origin()[axis], grid.get_step()[axis], grid.get_count()[axis], slot_list);
+    }
+    if (!has_track) {
+      int32_t origin = std::max(layer->get_offset_prefer(), 0);
+      int32_t pitch = layer->get_pitch_prefer();
+      int32_t high = axis == 0 ? dc_model.get_die().get_ur_x() : dc_model.get_die().get_ur_y();
+      if (pitch > 0 && high >= origin) {
+        int32_t count = static_cast<int32_t>((static_cast<double>(high) - origin) / pitch) + 1;
+        buildIOEdgeSlotList(dc_model, layer, origin, pitch, count, slot_list);
+      }
+    }
+  }
+  return slot_list;
+}
+
+void DEFCutter::buildIOEdgeSlotList(DCModel& dc_model, idb::IdbLayerRouting* layer, int32_t origin, int32_t pitch, int32_t count,
+                                   std::vector<DCIOSlot>& slot_list)
+{
+  int32_t width = layer->get_min_width() > 0 ? layer->get_min_width() : layer->get_width();
+  if (width <= 0 || pitch <= 0 || count <= 0) {
+    return;
+  }
+  DCRect& die = dc_model.get_die();
+  bool horizontal = layer->is_horizontal();
+  int32_t low = horizontal ? die.get_ll_y() : die.get_ll_x();
+  int32_t high = horizontal ? die.get_ur_y() : die.get_ur_x();
+  int32_t lower_half = width / 2;
+  int32_t upper_half = width - lower_half;
+  int32_t begin = static_cast<int32_t>(std::max(0.0, std::ceil((static_cast<double>(low) + lower_half - origin) / pitch)));
+  int32_t end = static_cast<int32_t>(std::min(static_cast<double>(count - 1), std::floor((static_cast<double>(high) - upper_half - origin) / pitch)));
+  for (int32_t side = 0; side < 2; side++) {
+    int32_t depth = getIOPinDepth(dc_model, layer, width, side == 0);
+    int32_t span = horizontal ? die.get_ur_x() - die.get_ll_x() : die.get_ur_y() - die.get_ll_y();
+    if (depth <= 0 || depth > span) {
+      continue;
+    }
+    for (int32_t idx = begin; idx <= end; idx++) {
+      int32_t coord = static_cast<int32_t>(origin + static_cast<double>(idx) * pitch);
+      DCRect rect;
+      if (horizontal) {
+        int32_t x = side == 0 ? die.get_ll_x() : die.get_ur_x() - depth;
+        rect = DCRect(x, coord - lower_half, x + depth, coord + upper_half);
+      } else {
+        int32_t y = side == 0 ? die.get_ll_y() : die.get_ur_y() - depth;
+        rect = DCRect(coord - lower_half, y, coord + upper_half, y + depth);
+      }
+      DCIOSlot slot;
+      slot.set_shape(DCLayerRect(layer->get_name(), rect));
+      slot_list.push_back(slot);
+    }
+  }
+}
+
+int32_t DEFCutter::getIOPinDepth(DCModel& dc_model, idb::IdbLayerRouting* layer, int32_t width, bool low_side)
+{
+  DCRect& die = dc_model.get_die();
+  int32_t boundary = layer->is_horizontal() ? (low_side ? die.get_ll_x() : die.get_ur_x()) : (low_side ? die.get_ll_y() : die.get_ur_y());
+  int32_t half_width = (width + 1) / 2;
+  int32_t min_depth = std::max(width, static_cast<int32_t>(std::ceil(layer->get_area() / static_cast<double>(width))));
+  int32_t min_distance = std::max(half_width, min_depth - half_width);
+  double target = static_cast<double>(boundary) + (low_side ? min_distance : -min_distance);
+  int32_t best_order_distance = std::numeric_limits<int32_t>::max();
+  int32_t depth = min_depth;
+  idb::IdbLayout* layout = dmInst->get_idb_layout();
+  for (DCGrid& grid : dc_model.get_track_list()) {
+    int32_t axis = grid.get_axis();
+    if (axis != (layer->is_horizontal() ? 0 : 1) || grid.get_count()[axis] <= 0 || grid.get_step()[axis] <= 0) {
+      continue;
+    }
+    idb::IdbTrackGrid* track = layout->get_track_grid_list()->get_track_grid_list()[grid.get_source_idx()];
+    for (idb::IdbLayer* base : track->get_layer_list()) {
+      idb::IdbLayerRouting* access_layer = dynamic_cast<idb::IdbLayerRouting*>(base);
+      if (access_layer == nullptr || access_layer->is_horizontal() == layer->is_horizontal()) {
+        continue;
+      }
+      double idx = (target - grid.get_origin()[axis]) / grid.get_step()[axis];
+      idx = low_side ? std::max(0.0, std::ceil(idx)) : std::min(static_cast<double>(grid.get_count()[axis] - 1), std::floor(idx));
+      if (idx < 0 || idx >= grid.get_count()[axis]) {
+        continue;
+      }
+      int32_t candidate = static_cast<int32_t>(std::abs(grid.get_origin()[axis] + idx * grid.get_step()[axis] - boundary)) + half_width;
+      int32_t order_distance = std::abs(static_cast<int32_t>(access_layer->get_order()) - static_cast<int32_t>(layer->get_order()));
+      if (order_distance < best_order_distance || (order_distance == best_order_distance && candidate < depth)) {
+        best_order_distance = order_distance;
+        depth = candidate;
+      }
+    }
+  }
+  int32_t grid = std::max(layout->get_munufacture_grid(), 1);
+  return static_cast<int32_t>(std::ceil(depth / static_cast<double>(grid))) * grid;
+}
+
+std::map<std::string, std::vector<DCRect>> DEFCutter::buildIOObstacleMap(DCModel& dc_model)
+{
+  std::map<std::string, std::vector<DCRect>> obstacle_map;
+  for (DCNet& net : dc_model.get_net_list()) {
+    if (!net.get_retained()) {
+      continue;
+    }
+    for (DCRoute& route : net.get_route_list()) {
+      if (!route.get_retained()) {
+        continue;
+      }
+      if (route.get_via_idx() < 0) {
+        obstacle_map[route.get_layer_name()].push_back(route.get_rect());
+      } else {
+        for (DCLayerRect& shape : route.get_via_shape_list()) {
+          obstacle_map[shape.get_layer_name()].push_back(shape.get_rect());
+        }
+      }
+    }
+  }
+  for (DCIOPin& pin : dc_model.get_cut_pin_list()) {
+    for (DCLayerRect& shape : pin.get_shape_list()) {
+      obstacle_map[shape.get_layer_name()].push_back(shape.get_rect());
+    }
+  }
+  idb::IdbDesign* design = dmInst->get_idb_design();
+  for (DCObject& object : dc_model.get_instance_list()) {
+    if (!object.get_retained()) {
+      continue;
+    }
+    idb::IdbInstance* instance = design->get_instance_list()->get_instance_list()[object.get_source_idx()];
+    for (idb::IdbLayerShape* shape : instance->get_obs_box_list()) {
+      if (!shape->get_layer()->is_routing()) {
+        continue;
+      }
+      for (idb::IdbRect* rect : shape->get_rect_list()) {
+        obstacle_map[shape->get_layer()->get_name()].emplace_back(rect->get_low_x(), rect->get_low_y(), rect->get_high_x(), rect->get_high_y());
+      }
+    }
+    for (idb::IdbPin* pin : instance->get_pin_list()->get_pin_list()) {
+      for (DCLayerRect& shape : MJI.wrapCutPinShapeList(pin)) {
+        obstacle_map[shape.get_layer_name()].push_back(shape.get_rect());
+      }
+    }
+  }
+  for (DCObject& object : dc_model.get_io_pin_list()) {
+    if (object.get_retained()) {
+      for (DCLayerRect& shape : MJI.wrapCutPinShapeList(design->get_io_pin_list()->get_pin_list()[object.get_source_idx()])) {
+        obstacle_map[shape.get_layer_name()].push_back(shape.get_rect());
+      }
+    }
+  }
+  for (DCObject& object : dc_model.get_blockage_list()) {
+    idb::IdbBlockage* blockage = design->get_blockage_list()->get_blockage_list()[object.get_source_idx()];
+    if (object.get_retained() && blockage->is_routing_blockage()) {
+      std::vector<DCRect>& rect_list = obstacle_map[dynamic_cast<idb::IdbRoutingBlockage*>(blockage)->get_layer_name()];
+      rect_list.insert(rect_list.end(), object.get_rect_list().begin(), object.get_rect_list().end());
+    }
+  }
+  for (DCObject& object : dc_model.get_fill_list()) {
+    if (!object.get_retained()) {
+      continue;
+    }
+    idb::IdbFill* fill = design->get_fill_list()->get_fill_list()[object.get_source_idx()];
+    if (object.get_part_idx() < 0) {
+      std::vector<DCRect>& rect_list = obstacle_map[fill->get_layer()->get_layer()->get_name()];
+      rect_list.insert(rect_list.end(), object.get_rect_list().begin(), object.get_rect_list().end());
+    } else {
+      std::unique_ptr<idb::IdbVia> via(fill->get_via()->get_via()->clone());
+      idb::IdbCoordinate<int32_t>* coord = fill->get_via()->get_coordinate_list()[object.get_part_idx()];
+      via->set_coordinate(coord->get_x(), coord->get_y());
+      for (idb::IdbLayerShape shape : {via->get_bottom_layer_shape(), via->get_top_layer_shape()}) {
+        for (idb::IdbRect* rect : shape.get_rect_list()) {
+          obstacle_map[shape.get_layer()->get_name()].emplace_back(rect->get_low_x(), rect->get_low_y(), rect->get_high_x(), rect->get_high_y());
+        }
+      }
+    }
+  }
+  return obstacle_map;
+}
+
+bool DEFCutter::hasIOPinSpacing(DCLayerRect& first, DCLayerRect& second)
+{
+  if (first.get_layer_name() != second.get_layer_name()) {
+    return true;
+  }
+  DCRect& first_rect = first.get_rect();
+  DCRect& second_rect = second.get_rect();
+  idb::IdbLayerRouting* layer = dynamic_cast<idb::IdbLayerRouting*>(dmInst->get_idb_layout()->get_layers()->find_layer(first.get_layer_name()));
+  int32_t first_width = std::min(first_rect.get_ur_x() - first_rect.get_ll_x(), first_rect.get_ur_y() - first_rect.get_ll_y());
+  int32_t second_width = std::min(second_rect.get_ur_x() - second_rect.get_ll_x(), second_rect.get_ur_y() - second_rect.get_ll_y());
+  int32_t parallel_length = layer->is_horizontal() ? std::min(first_rect.get_ur_x(), second_rect.get_ur_x()) - std::max(first_rect.get_ll_x(), second_rect.get_ll_x())
+                                                 : std::min(first_rect.get_ur_y(), second_rect.get_ur_y()) - std::max(first_rect.get_ll_y(), second_rect.get_ll_y());
+  int32_t spacing = layer->get_spacing(std::max(first_width, second_width), std::max(parallel_length, 0));
+  double x_gap = std::max(static_cast<double>(first_rect.get_ll_x()) - second_rect.get_ur_x(), static_cast<double>(second_rect.get_ll_x()) - first_rect.get_ur_x());
+  double y_gap = std::max(static_cast<double>(first_rect.get_ll_y()) - second_rect.get_ur_y(), static_cast<double>(second_rect.get_ll_y()) - first_rect.get_ur_y());
+  return !first_rect.intersect(second_rect).isValid() && (x_gap >= spacing || y_gap >= spacing);
+}
+
+void DEFCutter::updateDesign(DCModel& dc_model)
+{
+  idb::IdbLayout layout;
+  idb::IdbDesign design(dmInst->get_idb_layout());
+  idb::IdbDesign* source = dmInst->get_idb_design();
+  design.set_design_name(dc_model.get_design_name() + "_cut");
+  design.set_version("5.8");
+  design.get_units()->set_microns_dbu(dc_model.get_micron_dbu());
+  design.set_bus_bit_chars(new idb::IdbBusBitChars(*source->get_bus_bit_chars()));
+  buildFloorplan(dc_model, &layout);
+  buildInstanceList(dc_model, &design);
+  buildPinList(dc_model, &design);
+  buildNetList(dc_model, &design);
+  buildShapeList(dc_model, &design);
+
+  // Cloned via placements reference these DEF masters; transfer their ownership with the result.
+  design.get_via_list()->get_via_list().swap(source->get_via_list()->get_via_list());
+  design.get_via_list()->set_num_via(design.get_via_list()->get_via_list().size());
+  source->get_via_list()->set_num_via(0);
+  source->swap(design);
+  updateFloorplan(layout);
+  dmInst->get_idb_builder()->buildNet();
+  dmInst->get_idb_builder()->buildBus();
+}
+
+void DEFCutter::buildFloorplan(DCModel& dc_model, idb::IdbLayout* layout)
+{
+  idb::IdbLayout* source = dmInst->get_idb_layout();
+  layout->get_units()->set_microns_dbu(dc_model.get_micron_dbu());
+  DCRect& die = dc_model.get_die();
+  layout->initDie(die.get_ll_x(), die.get_ll_y(), die.get_ur_x(), die.get_ur_y());
+  for (DCGrid& row : dc_model.get_row_list()) {
+    if (row.get_count()[0] == 0 || row.get_count()[1] == 0) {
+      continue;
+    }
+    idb::IdbRow* source_row = source->get_rows()->get_row_list()[row.get_source_idx()];
+    layout->get_rows()->createRow(source_row->get_name(), source_row->get_site(), row.get_origin()[0], row.get_origin()[1], source_row->get_orient(),
+                                  row.get_count()[0], row.get_count()[1], row.get_step()[0], row.get_step()[1]);
+  }
+  for (DCGrid& track : dc_model.get_track_list()) {
+    int32_t axis = track.get_axis();
+    if (track.get_count()[axis] == 0) {
+      continue;
+    }
+    idb::IdbTrackGrid* source_track = source->get_track_grid_list()->get_track_grid_list()[track.get_source_idx()];
+    idb::IdbTrackGrid* output_track = layout->get_track_grid_list()->add_track_grid();
+    output_track->get_track()->set_direction(source_track->get_track()->get_direction());
+    output_track->get_track()->set_start(track.get_origin()[axis]);
+    output_track->get_track()->set_pitch(track.get_step()[axis]);
+    output_track->set_track_number(track.get_count()[axis]);
+    for (idb::IdbLayer* layer : source_track->get_layer_list()) {
+      output_track->add_layer_list(layer);
+    }
+  }
+  for (DCGrid& gcell : dc_model.get_gcell_list()) {
+    int32_t axis = gcell.get_axis();
+    if (gcell.get_count()[axis] == 0) {
+      continue;
+    }
+    idb::IdbGCellGrid* output_grid = layout->get_gcell_grid_list()->add_gcell_grid();
+    output_grid->set_direction(source->get_gcell_grid_list()->get_gcell_grid_list()[gcell.get_source_idx()]->get_direction());
+    output_grid->set_start(gcell.get_origin()[axis]);
+    output_grid->set_num(gcell.get_count()[axis]);
+    output_grid->set_space(gcell.get_step()[axis]);
+  }
+}
+
+void DEFCutter::buildInstanceList(DCModel& dc_model, idb::IdbDesign* design)
+{
+  for (DCObject& object : dc_model.get_instance_list()) {
+    if (!object.get_retained()) {
+      continue;
+    }
+    idb::IdbInstance* source = dmInst->get_idb_design()->get_instance_list()->get_instance_list()[object.get_source_idx()];
+    idb::IdbInstance* instance = design->get_instance_list()->add_instance(source->get_name());
+    instance->set_cell_master(source->get_cell_master());
+    instance->set_type(source->get_type());
+    instance->set_orient(source->get_orient(), false);
+    instance->set_coodinate(source->get_coordinate()->get_x(), source->get_coordinate()->get_y(), false);
+    instance->set_status(source->get_status());
+    instance->set_weight(source->get_weight());
+    instance->set_bounding_box();
+    instance->set_pin_list_coodinate();
+    instance->set_obs_box_list();
+  }
+}
+
+void DEFCutter::buildPinList(DCModel& dc_model, idb::IdbDesign* design)
+{
+  std::set<int32_t> replaced_pin_set;
+  for (DCIOPin& pin : dc_model.get_cut_pin_list()) {
+    if (pin.get_source_idx() >= 0) {
+      replaced_pin_set.insert(pin.get_source_idx());
+    }
+  }
+  for (DCObject& object : dc_model.get_io_pin_list()) {
+    if (!object.get_retained() || replaced_pin_set.contains(object.get_source_idx())) {
+      continue;
+    }
+    idb::IdbPin* source = dmInst->get_idb_design()->get_io_pin_list()->get_pin_list()[object.get_source_idx()];
+    idb::IdbPin* pin = design->get_io_pin_list()->add_pin_list(source->get_pin_name());
+    copyPin(source, pin);
+  }
+  for (DCIOPin& io_pin : dc_model.get_cut_pin_list()) {
+    DCNet& net = dc_model.get_net_list()[io_pin.get_net_idx()];
+    idb::IdbDesign* source = dmInst->get_idb_design();
+    idb::IdbConnectType type = net.get_is_special() ? source->get_special_net_list()->get_net_list()[net.get_source_idx()]->get_connect_type()
+                                                    : source->get_net_list()->get_net_list()[net.get_source_idx()]->get_connect_type();
+    if (io_pin.get_source_idx() >= 0) {
+      type = source->get_io_pin_list()->get_pin_list()[io_pin.get_source_idx()]->get_term()->get_type();
+    }
+    idb::IdbPin* pin = design->get_io_pin_list()->add_pin_list(io_pin.get_name());
+    pin->set_as_io();
+    pin->set_net_name(net.get_name());
+    pin->set_orient(idb::IdbOrient::kN_R0);
+    idb::IdbTerm* term = pin->set_term();
+    term->set_name(io_pin.get_name());
+    term->set_direction(GetDCPinTypeName()(io_pin.get_type()));
+    term->set_type(type == idb::IdbConnectType::kNone ? idb::IdbConnectType::kSignal : type);
+    term->set_has_port(true);
+    term->set_special(net.get_is_special());
+    term->set_placement_status_fix();
+    DCRect bounding_box = io_pin.get_shape_list().front().get_rect();
+    for (DCLayerRect& shape : io_pin.get_shape_list()) {
+      DCRect& rect = shape.get_rect();
+      idb::IdbPort* port = term->add_port();
+      port->set_placement_status_fix();
+      port->set_orient(idb::IdbOrient::kN_R0);
+      idb::IdbLayerShape* layer_shape = port->add_layer_shape();
+      layer_shape->set_type_rect();
+      layer_shape->set_layer(dmInst->get_idb_layout()->get_layers()->find_layer(shape.get_layer_name()));
+      int32_t x = rect.get_ll_x() + (rect.get_ur_x() - rect.get_ll_x()) / 2;
+      int32_t y = rect.get_ll_y() + (rect.get_ur_y() - rect.get_ll_y()) / 2;
+      layer_shape->add_rect(rect.get_ll_x() - x, rect.get_ll_y() - y, rect.get_ur_x() - x, rect.get_ur_y() - y);
+      port->set_coordinate(x, y);
+      bounding_box.set_ll_x(std::min(bounding_box.get_ll_x(), rect.get_ll_x()));
+      bounding_box.set_ll_y(std::min(bounding_box.get_ll_y(), rect.get_ll_y()));
+      bounding_box.set_ur_x(std::max(bounding_box.get_ur_x(), rect.get_ur_x()));
+      bounding_box.set_ur_y(std::max(bounding_box.get_ur_y(), rect.get_ur_y()));
+    }
+    DCRect& rect = io_pin.get_shape_list().front().get_rect();
+    int32_t x = rect.get_ll_x() + (rect.get_ur_x() - rect.get_ll_x()) / 2;
+    int32_t y = rect.get_ll_y() + (rect.get_ur_y() - rect.get_ll_y()) / 2;
+    pin->set_location(x, y);
+    pin->set_average_coordinate(x, y);
+    term->get_bounding_box()->set_rect(bounding_box.get_ll_x() - x, bounding_box.get_ll_y() - y, bounding_box.get_ur_x() - x, bounding_box.get_ur_y() - y);
+    pin->set_bounding_box();
+  }
+}
+
+void DEFCutter::copyPin(idb::IdbPin* source, idb::IdbPin* pin)
+{
+  pin->set_as_io();
+  pin->set_net_name(source->get_net_name().empty() && source->get_net() != nullptr ? source->get_net()->get_net_name() : source->get_net_name());
+  pin->set_orient(source->get_orient());
+  pin->set_location(source->get_location()->get_x(), source->get_location()->get_y());
+  pin->set_average_coordinate(source->get_average_coordinate()->get_x(), source->get_average_coordinate()->get_y());
+  idb::IdbTerm* source_term = source->get_term();
+  idb::IdbTerm* term = pin->set_term();
+  term->set_name(source_term->get_name());
+  term->set_direction(source_term->get_direction());
+  term->set_type(source_term->get_type());
+  term->set_shape(source_term->get_shape());
+  term->set_placement_status(source_term->get_placement_status());
+  term->set_has_port(source_term->is_port_exist());
+  term->set_special(source_term->is_special_net());
+  term->set_average_position(source_term->get_average_position().get_x(), source_term->get_average_position().get_y());
+  *term->get_bounding_box() = *source_term->get_bounding_box();
+  if (source_term->has_antenna_gate_area()) {
+    term->set_antenna_gate_area(source_term->get_antenna_gate_area());
+  }
+  if (source_term->has_antenna_diff_area()) {
+    term->set_antenna_diff_area(source_term->get_antenna_diff_area());
+  }
+  for (const auto& [layer, area] : source_term->get_antenna_partial_metal_area()) {
+    term->add_antenna_partial_metal_area(layer, area);
+  }
+  for (const auto& [layer, area] : source_term->get_antenna_partial_metal_side_area()) {
+    term->add_antenna_partial_metal_side_area(layer, area);
+  }
+  for (const auto& [layer, area] : source_term->get_antenna_partial_cut_area()) {
+    term->add_antenna_partial_cut_area(layer, area);
+  }
+  for (idb::IdbPort* source_port : source_term->get_port_list()) {
+    idb::IdbPort* port = term->add_port();
+    port->set_port_class(source_port->get_port_class());
+    port->set_placement_status(source_port->get_placement_status());
+    port->set_orient(source_port->get_orient());
+    port->get_coordinate()->set_xy(source_port->get_coordinate()->get_x(), source_port->get_coordinate()->get_y());
+    port->set_io_average_coordinate(source_port->get_io_average_coordinate()->get_x(), source_port->get_io_average_coordinate()->get_y());
+    *port->get_io_bounding_box() = *source_port->get_io_bounding_box();
+    for (idb::IdbLayerShape* shape : source_port->get_layer_shape()) {
+      port->add_layer_shape(new idb::IdbLayerShape(*shape));
+    }
+    for (idb::IdbVia* via : source_port->get_via_list()) {
+      port->add_via(via->clone());
+    }
+  }
+  pin->set_bounding_box();
+}
+
+void DEFCutter::buildNetList(DCModel& dc_model, idb::IdbDesign* design)
+{
+  idb::IdbDesign* source = dmInst->get_idb_design();
+  for (DCNet& net : dc_model.get_net_list()) {
+    if (!net.get_retained()) {
+      continue;
+    }
+    idb::IdbNet* source_net = net.get_is_special() ? nullptr : source->get_net_list()->get_net_list()[net.get_source_idx()];
+    idb::IdbSpecialNet* source_pg_net = net.get_is_special() ? source->get_special_net_list()->get_net_list()[net.get_source_idx()] : nullptr;
+    idb::IdbNet* output_net = net.get_is_special() ? nullptr : design->get_net_list()->add_net(net.get_name(), source_net->get_connect_type());
+    idb::IdbSpecialNet* output_pg_net = net.get_is_special() ? design->get_special_net_list()->add_net(net.get_name()) : nullptr;
+    if (net.get_is_special()) {
+      output_pg_net->set_connect_type(source_pg_net->get_connect_type());
+    }
+    for (DCConnection& connection : net.get_connection_list()) {
+      if (!connection.get_retained()) {
+        continue;
+      }
+      idb::IdbPin* pin = nullptr;
+      if (connection.get_is_io()) {
+        pin = design->get_io_pin_list()->find_pin(connection.get_pin_name());
+      } else {
+        std::string instance_name = dc_model.get_instance_list()[connection.get_object_idx()].get_name();
+        pin = design->get_instance_list()->find_instance(instance_name)->get_pin(connection.get_pin_name());
+      }
+      if (pin == nullptr) {
+        MJLOG.error(Loc::current(), "Failed to rebuild retained pin ", connection.get_pin_name(), " on ", net.get_name());
+      }
+      connectPin(design, pin, output_net, output_pg_net);
+    }
+    for (int32_t pin_idx : net.get_cut_pin_idx_list()) {
+      connectPin(design, design->get_io_pin_list()->find_pin(dc_model.get_cut_pin_list()[pin_idx].get_name()), output_net, output_pg_net);
+    }
+    std::map<int32_t, idb::IdbRegularWire*> wire_map;
+    std::map<int32_t, idb::IdbSpecialWire*> pg_wire_map;
+    for (DCRoute& route : net.get_route_list()) {
+      if (!route.get_retained()) {
+        continue;
+      }
+      DCRect& rect = route.get_rect();
+      if (net.get_is_special()) {
+        idb::IdbSpecialWire* source_wire = source_pg_net->get_wire_list()->get_wire_list()[route.get_wire_idx()];
+        idb::IdbSpecialWireSegment* source_segment = source_wire->get_segment_list()[route.get_segment_idx()];
+        if (!pg_wire_map.contains(route.get_wire_idx())) {
+          idb::IdbSpecialWire* wire = output_pg_net->get_wire_list()->add_wire();
+          wire->set_wire_state(source_wire->get_wire_state());
+          wire->set_shield_name(source_wire->get_shiled_name());
+          pg_wire_map[route.get_wire_idx()] = wire;
+        }
+        idb::IdbSpecialWireSegment* segment = pg_wire_map[route.get_wire_idx()]->add_segment();
+        segment->set_layer(dmInst->get_idb_layout()->get_layers()->find_layer(route.get_layer_name()));
+        segment->set_layer_as_new();
+        segment->set_shape_type(source_segment->get_shape_type());
+        if (route.get_via_idx() >= 0) {
+          idb::IdbVia* via = source_segment->get_via()->clone();
+          segment->set_is_via(true);
+          segment->set_via(via);
+          segment->set_route_width(0);
+          segment->add_point(via->get_coordinate()->get_x(), via->get_coordinate()->get_y());
+        } else {
+          // Explicit zero end extensions serialize the exact clipped rectangle.
+          if (rect.get_ur_x() - rect.get_ll_x() >= rect.get_ur_y() - rect.get_ll_y()) {
+            int32_t width = rect.get_ur_y() - rect.get_ll_y();
+            segment->set_route_width(width);
+            segment->add_flush_point(rect.get_ll_x(), rect.get_ll_y() + width / 2, 0);
+            segment->add_flush_point(rect.get_ur_x(), rect.get_ll_y() + width / 2, 0);
+          } else {
+            int32_t width = rect.get_ur_x() - rect.get_ll_x();
+            segment->set_route_width(width);
+            segment->add_flush_point(rect.get_ll_x() + width / 2, rect.get_ll_y(), 0);
+            segment->add_flush_point(rect.get_ll_x() + width / 2, rect.get_ur_y(), 0);
+          }
+        }
+      } else {
+        idb::IdbRegularWire* source_wire = source_net->get_wire_list()->get_wire_list()[route.get_wire_idx()];
+        idb::IdbRegularWireSegment* source_segment = source_wire->get_segment_list()[route.get_segment_idx()];
+        if (!wire_map.contains(route.get_wire_idx())) {
+          idb::IdbRegularWire* wire = output_net->get_wire_list()->add_wire();
+          wire->set_wire_state(source_wire->get_wire_statement());
+          wire->set_shield_name(source_wire->get_shiled_name());
+          wire_map[route.get_wire_idx()] = wire;
+        }
+        idb::IdbRegularWireSegment* segment = wire_map[route.get_wire_idx()]->add_segment();
+        segment->set_layer(dmInst->get_idb_layout()->get_layers()->find_layer(route.get_layer_name()));
+        segment->set_layer_as_new();
+        if (route.get_via_idx() >= 0) {
+          idb::IdbVia* via = source_segment->get_via_list()[route.get_via_idx()];
+          segment->set_is_via(true);
+          segment->copy_via(via);
+          segment->add_point(via->get_coordinate()->get_x(), via->get_coordinate()->get_y());
+        } else {
+          segment->set_is_rect(true);
+          segment->add_point(rect.get_ll_x(), rect.get_ll_y());
+          segment->set_delta_rect(0, 0, rect.get_ur_x() - rect.get_ll_x(), rect.get_ur_y() - rect.get_ll_y());
+        }
+      }
+    }
+  }
+}
+
+void DEFCutter::connectPin(idb::IdbDesign* design, idb::IdbPin* pin, idb::IdbNet* net, idb::IdbSpecialNet* special_net)
+{
+  if (special_net != nullptr) {
+    design->connectPinToSpecialNet(pin, special_net);
+  } else {
+    design->connectPinToNet(pin, net);
+  }
+}
+
+void DEFCutter::buildShapeList(DCModel& dc_model, idb::IdbDesign* design)
+{
+  idb::IdbDesign* source = dmInst->get_idb_design();
+  std::vector<idb::IdbBlockage*> blockage_list = source->get_blockage_list()->get_blockage_list();
+  for (DCObject& object : dc_model.get_blockage_list()) {
+    if (!object.get_retained()) {
+      continue;
+    }
+    idb::IdbBlockage* input = blockage_list[object.get_source_idx()];
+    idb::IdbBlockage* output = nullptr;
+    if (input->is_routing_blockage()) {
+      idb::IdbRoutingBlockage* routing = dynamic_cast<idb::IdbRoutingBlockage*>(input);
+      idb::IdbRoutingBlockage* copy = design->get_blockage_list()->add_blockage_routing(routing->get_layer_name());
+      copy->set_layer(routing->get_layer());
+      copy->set_slots(routing->is_slots());
+      copy->set_fills(routing->is_fills());
+      copy->set_except_pgnet(routing->is_except_pgnet());
+      copy->set_min_spacing(routing->get_min_spacing());
+      copy->set_effective_width(routing->get_effective_width());
+      output = copy;
+    } else {
+      idb::IdbPlacementBlockage* placement = dynamic_cast<idb::IdbPlacementBlockage*>(input);
+      idb::IdbPlacementBlockage* copy = design->get_blockage_list()->add_blockage_placement();
+      copy->set_soft(placement->is_soft());
+      copy->set_fills(placement->is_partial());
+      copy->set_max_density(placement->get_max_density());
+      output = copy;
+    }
+    output->set_pushdown(input->is_pushdown());
+    idb::IdbInstance* instance = design->get_instance_list()->find_instance(input->get_instance_name());
+    if (instance != nullptr) {
+      output->set_instance(instance);
+      output->set_instance_name(instance->get_name());
+    }
+    for (DCRect& rect : object.get_rect_list()) {
+      output->add_rect(rect.get_ll_x(), rect.get_ll_y(), rect.get_ur_x(), rect.get_ur_y());
+    }
+  }
+  for (DCObject& object : dc_model.get_fill_list()) {
+    if (!object.get_retained()) {
+      continue;
+    }
+    idb::IdbFill* input = source->get_fill_list()->get_fill_list()[object.get_source_idx()];
+    if (object.get_part_idx() < 0) {
+      idb::IdbFillLayer* output = design->get_fill_list()->add_fill_layer(input->get_layer()->get_layer());
+      for (DCRect& rect : object.get_rect_list()) {
+        output->add_rect(rect.get_ll_x(), rect.get_ll_y(), rect.get_ur_x(), rect.get_ur_y());
+      }
+    } else {
+      idb::IdbFillVia* output = design->get_fill_list()->add_fill_via(input->get_via()->get_via()->clone());
+      idb::IdbCoordinate<int32_t>* coord = input->get_via()->get_coordinate_list()[object.get_part_idx()];
+      output->add_coordinate(coord->get_x(), coord->get_y());
+    }
+  }
+  for (DCObject& object : dc_model.get_region_list()) {
+    if (!object.get_retained()) {
+      continue;
+    }
+    idb::IdbRegion* input = source->get_region_list()->get_region_list()[object.get_source_idx()];
+    idb::IdbRegion* output = design->get_region_list()->add_region(input->get_name());
+    output->set_type(input->get_type());
+    for (DCRect& rect : object.get_rect_list()) {
+      output->add_boundary(rect.get_ll_x(), rect.get_ll_y(), rect.get_ur_x(), rect.get_ur_y());
+    }
+    for (idb::IdbInstance* input_instance : input->get_instance_list()) {
+      idb::IdbInstance* instance = design->get_instance_list()->find_instance(input_instance->get_name());
+      if (instance != nullptr) {
+        output->add_instance(instance);
+        instance->set_region(output);
+      }
+    }
+  }
+  for (idb::IdbGroup* input : source->get_group_list()->get_group_list()) {
+    std::vector<idb::IdbInstance*> instance_list;
+    for (idb::IdbInstance* input_instance : input->get_instance_list()->get_instance_list()) {
+      idb::IdbInstance* instance = design->get_instance_list()->find_instance(input_instance->get_name());
+      if (instance != nullptr) {
+        instance_list.push_back(instance);
+      }
+    }
+    if (instance_list.empty()) {
+      continue;
+    }
+    idb::IdbGroup* output = design->get_group_list()->add_group(input->get_group_name());
+    if (input->get_region() != nullptr) {
+      output->set_region(design->get_region_list()->find_region(input->get_region()->get_name()));
+    }
+    for (idb::IdbInstance* instance : instance_list) {
+      output->add_instance(instance);
+    }
+  }
+  for (DCObject& object : dc_model.get_slot_list()) {
+    if (!object.get_retained()) {
+      continue;
+    }
+    idb::IdbSlot* input = source->get_slot_list()->get_slot_list()[object.get_source_idx()];
+    idb::IdbSlot* output = design->get_slot_list()->add_slot();
+    output->set_layer_name(input->get_layer_name());
+    output->set_layer(input->get_layer());
+    for (DCRect& rect : object.get_rect_list()) {
+      output->add_rect(rect.get_ll_x(), rect.get_ll_y(), rect.get_ur_x(), rect.get_ur_y());
+    }
+  }
+}
+
+void DEFCutter::updateFloorplan(idb::IdbLayout& layout)
+{
+  idb::IdbLayout* target = dmInst->get_idb_layout();
+  idb::IdbRect* die = layout.get_die()->get_bounding_box();
+  target->initDie(die->get_low_x(), die->get_low_y(), die->get_high_x(), die->get_high_y());
+  target->get_rows()->reset();
+  for (idb::IdbRow* row : layout.get_rows()->get_row_list()) {
+    target->get_rows()->add_row_list(row);
+  }
+  layout.get_rows()->get_row_list().clear();
+  layout.get_rows()->set_row_number(0);
+  target->get_gcell_grid_list()->clear();
+  target->get_gcell_grid_list()->get_gcell_grid_list().swap(layout.get_gcell_grid_list()->get_gcell_grid_list());
+  for (idb::IdbLayer* layer : target->get_layers()->get_routing_layers()) {
+    dynamic_cast<idb::IdbLayerRouting*>(layer)->get_track_grid_list().clear();
+  }
+  target->get_track_grid_list()->reset();
+  for (idb::IdbTrackGrid* track : layout.get_track_grid_list()->get_track_grid_list()) {
+    target->get_track_grid_list()->add_track_grid(track);
+    for (idb::IdbLayer* layer : track->get_layer_list()) {
+      dynamic_cast<idb::IdbLayerRouting*>(layer)->add_track_grid(track);
+    }
+  }
+  layout.get_track_grid_list()->get_track_grid_list().clear();
+}
 
 #if 1  // exhibit
 
@@ -397,8 +1180,9 @@ void DEFCutter::writeReport(DCModel& dc_model)
   *stream << "Design : " << dc_model.get_design_name() << "\nCoordinates : absolute, DBU"
           << "\nDie : " << dc_model.get_die().get_ll_x() << " " << dc_model.get_die().get_ll_y() << " " << dc_model.get_die().get_ur_x() << " "
           << dc_model.get_die().get_ur_y() << "\nOnly complete placed instances, ports and vias are retained.\n"
-          << "Cut nets have IO pins on retained routing or terminal metal; each logical net reuses or adds one pin with multiple PORT shapes.\n"
-          << "IO directions follow inside/outside driver roles; PG and unresolved directions use INOUT.\n";
+          << "Each removed signal connection has its own IO on the same net. PG nets remain consolidated.\n"
+          << "IOs use boundary routing cuts or legal edge tracks; unrouted connections require routing to the new IOs.\n"
+          << "External drivers become INPUTs and external loads become OUTPUTs; PG and unresolved directions use INOUT.\n";
   int32_t kept_instance_num = 0;
   for (DCObject& object : dc_model.get_instance_list()) {
     if (object.get_retained()) {
@@ -414,17 +1198,25 @@ void DEFCutter::writeReport(DCModel& dc_model)
       continue;
     }
     kept_net_num++;
-    if (net.get_cut_pin_idx() >= 0) {
+    if (!net.get_cut_pin_idx_list().empty()) {
       cut_net_num++;
-      *stream << "CutNet : " << net.get_name() << " removed_pins=" << net.get_removed_pin_num() << "\n";
+      *stream << "CutNet : " << net.get_name() << " removed_pins=" << net.get_removed_pin_num() << " io_pins=" << net.get_cut_pin_idx_list().size() << "\n";
     }
   }
   int32_t added_pin_num = 0;
   for (DCIOPin& pin : dc_model.get_cut_pin_list()) {
     added_pin_num += pin.get_source_idx() < 0;
     *stream << "IOPin : " << pin.get_name() << " net=" << dc_model.get_net_list()[pin.get_net_idx()].get_name()
-            << " direction=" << GetDCPinTypeName()(pin.get_type()) << " ports=" << pin.get_shape_list().size() << " reused=" << (pin.get_source_idx() >= 0)
-            << "\n";
+            << " direction=" << GetDCPinTypeName()(pin.get_type()) << " ports=" << pin.get_shape_list().size() << " reused=" << (pin.get_source_idx() >= 0);
+    if (pin.get_connection_idx() >= 0) {
+      DCConnection& connection = dc_model.get_net_list()[pin.get_net_idx()].get_connection_list()[pin.get_connection_idx()];
+      *stream << " external=";
+      if (!connection.get_is_io()) {
+        *stream << dc_model.get_instance_list()[connection.get_object_idx()].get_name() << "/";
+      }
+      *stream << connection.get_pin_name();
+    }
+    *stream << "\n";
     for (DCLayerRect& shape : pin.get_shape_list()) {
       DCRect& rect = shape.get_rect();
       *stream << "  " << shape.get_layer_name() << " " << rect.get_ll_x() << " " << rect.get_ll_y() << " " << rect.get_ur_x() << " " << rect.get_ur_y() << "\n";
@@ -434,8 +1226,7 @@ void DEFCutter::writeReport(DCModel& dc_model)
           << dc_model.get_net_list().size() << "\nCutNets : " << cut_net_num << "\nAddedIOPins : " << added_pin_num
           << "\nExtendedIOPins : " << dc_model.get_cut_pin_list().size() - added_pin_num << "\n";
   MJUTIL.closeFileStream(stream);
-  MJLOG.info(Loc::current(), "Retained instances=", kept_instance_num, ", nets=", kept_net_num, ", cut nets=", cut_net_num,
-             ". DEF: ", MJDM.getConfig().dc_temp_directory_path, "cut.def; report: ", path);
+  MJLOG.info(Loc::current(), "Retained instances=", kept_instance_num, ", nets=", kept_net_num, ", cut nets=", cut_net_num);
 }
 
 #endif

@@ -15,6 +15,7 @@ target_link_libraries(imj_def_cutter
     imj_data_manager
     imj_module
     imj_toolkit
+    idm
 )
 
 target_include_directories(imj_def_cutter

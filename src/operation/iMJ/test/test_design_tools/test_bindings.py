@@ -25,17 +25,23 @@ with tempfile.TemporaryDirectory(prefix="imj_bindings_") as temp:
         raise AssertionError("analyze_driver must not accept source selection")
 
     config = Path(temp) / "cut.json"
-    config.write_text(json.dumps({"MJ": {"-rect": "3 3 12 12"}}))
+    config.write_text(json.dumps({"MJ": {"-rect": "2 2 13 13"}}))
     assert ecc_py.cut_def(config=str(config))
-    first_def = (output / "def_cutter/cut.def").read_text()
-    assert "DIEAREA ( 3000 3000 ) ( 12000 12000 )" in first_def
+    assert not (output / "def_cutter/cut.def").exists()
+    assert ecc_py.def_save(str(output / "first.def"))
+    first_def = (output / "first.def").read_text()
+    assert "DIEAREA ( 2000 2000 ) ( 13000 13000 )" in first_def
     assert ecc_py.cut_def(config=str(config), config_dict={"-rect": "2.5 2.5 12 12"})
-    die_def = (output / "def_cutter/cut.def").read_text()
+    assert not ecc_py.cut_def(config=str(Path(temp) / "missing.json"))
+    assert ecc_py.destroy_mj()
+    assert ecc_py.def_save(str(output / "cut.def"))
+    assert ecc_py.netlist_save(str(output / "cut.v"))
+    die_def = (output / "cut.def").read_text()
+    assert "DESIGN crop_test_cut_cut ;" in die_def
     assert "DIEAREA ( 2500 2500 ) ( 12000 12000 )" in die_def
-    assert "PINS 7 ;" in die_def
+    assert "PINS 9 ;" in die_def
     assert "- out + NET out + DIRECTION INPUT" in die_def
     assert "- multi + NET multi + DIRECTION OUTPUT" in die_def
     assert "- transit + NET transit + DIRECTION INOUT" in die_def
-    assert not ecc_py.cut_def(config=str(Path(temp) / "missing.json"))
-    assert ecc_py.destroy_mj()
-    assert ecc_py.def_init(str(output / "def_cutter/cut.def"))
+    assert "module crop_test_cut_cut" in (output / "cut.v").read_text()
+    assert ecc_py.def_init(str(output / "cut.def"))
