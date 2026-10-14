@@ -234,10 +234,9 @@ void DriverAnalyzer::writeReport(DAModel& da_model)
   }
   MJUTIL.closeFileStream(stream);
   if (da_model.get_multi_driver_net_num() > 0 || da_model.get_unresolved_net_num() > 0) {
-    MJLOG.warn(Loc::current(), "Multi-driver nets=", da_model.get_multi_driver_net_num(), ", unresolved nets=", da_model.get_unresolved_net_num(), ". See ",
-               path);
+    MJLOG.warn(Loc::current(), "Multi-driver nets=", da_model.get_multi_driver_net_num(), ", unresolved nets=", da_model.get_unresolved_net_num());
   } else {
-    MJLOG.info(Loc::current(), "No multiple drivers found. Undriven nets=", da_model.get_undriven_net_num(), ". See ", path);
+    MJLOG.info(Loc::current(), "No multiple drivers found. Undriven nets=", da_model.get_undriven_net_num());
   }
 }
 
