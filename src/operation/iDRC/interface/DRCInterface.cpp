@@ -87,11 +87,7 @@ void DRCInterface::runDRC()
 
   std::vector<DRCShape> env_shape_list = buildEnvShapeList();
   std::vector<DRCShape> result_shape_list = buildResultShapeList();
-  std::vector<ids::Violation> violation_list = getViolationList(std::move(env_shape_list), result_shape_list, {}, {});
-
-  // macro obs spacing
-  std::vector<ids::Violation> macro_violation_list = getMacroViolationList(std::move(result_shape_list));
-  violation_list.insert(violation_list.end(), macro_violation_list.begin(), macro_violation_list.end());
+  std::vector<ids::Violation> violation_list = getViolationList(std::move(env_shape_list), std::move(result_shape_list), {}, {});
 
   std::map<std::string, std::vector<ids::Violation>> type_violation_map;
   for (ids::Violation& violation : violation_list) {
@@ -162,7 +158,8 @@ std::vector<ids::Violation> DRCInterface::getViolationList(const std::vector<ids
 
 // 1. assume no instance is placed within "spacing" distance, only check routing shapes
 // 2. assume macros are seperated at least "spacing" distance, parallel check each macro
-std::vector<ids::Violation> DRCInterface::getMacroViolationList(std::vector<DRCShape> drc_result_shape_list)
+std::vector<Violation> DRCInterface::getMacroViolationList(std::vector<DRCShape> drc_result_shape_list,
+                                                           std::vector<DRCShape> drc_check_region_list)
 {
   const std::vector<MacroObs>& macro_obs_list = DRCDM.getDatabase().get_macro_obs_list();
 
@@ -174,6 +171,18 @@ std::vector<ids::Violation> DRCInterface::getMacroViolationList(std::vector<DRCS
     std::vector<Violation>& violation_list = violation_list_list[i];
     for (const MacroObsLayer& macro_obs_layer : macro_obs.obs_layer_list) {
       PlanarRect check_rect = DRCUTIL.getEnlargedRect(macro_obs_layer.bounding_box, macro_obs_layer.min_spacing);
+      if (!drc_check_region_list.empty()) {
+        bool is_in_check_region = false;
+        for (const DRCShape& drc_check_region : drc_check_region_list) {
+          if (DRCUTIL.isClosedOverlap(check_rect, drc_check_region.get_rect())) {
+            is_in_check_region = true;
+            break;
+          }
+        }
+        if (!is_in_check_region) {
+          continue;
+        }
+      }
       std::map<int32_t, GTLPolySetInt> net_polyset_map;
       for (const DRCShape& drc_result_shape : drc_result_shape_list) {
         if (drc_result_shape.get_layer_idx() != macro_obs_layer.layer_idx
@@ -230,7 +239,7 @@ std::vector<ids::Violation> DRCInterface::getMacroViolationList(std::vector<DRCS
   }
   std::sort(violation_list.begin(), violation_list.end(), CmpViolation());
   violation_list.erase(std::unique(violation_list.begin(), violation_list.end()), violation_list.end());
-  return convertToIDSViolationList(violation_list);
+  return violation_list;
 }
 
 bool DRCInterface::isMacroPinOverlapped(const std::vector<PlanarRect>& pin_rect_list, const PlanarRect& rect)
@@ -268,8 +277,13 @@ std::vector<ids::Violation> DRCInterface::getViolationList(std::vector<DRCShape>
                                                            std::set<ViolationType> drc_check_type_set,
                                                            std::vector<DRCShape> drc_check_region_list)
 {
-  std::vector<Violation> violation_list = DRCRV.verify(std::move(drc_env_shape_list), std::move(drc_result_shape_list),
-                                                       std::move(drc_check_type_set), std::move(drc_check_region_list));
+  std::vector<Violation> violation_list = DRCRV.verify(std::move(drc_env_shape_list), drc_result_shape_list, std::move(drc_check_type_set),
+                                                       drc_check_region_list);
+  bool need_check_macro = drc_check_type_set.empty() || DRCUTIL.exist(drc_check_type_set, ViolationType::kMacroObsSpacing);
+  if (need_check_macro) {
+    std::vector<Violation> macro_violation_list = getMacroViolationList(std::move(drc_result_shape_list), std::move(drc_check_region_list));
+    violation_list.insert(violation_list.end(), macro_violation_list.begin(), macro_violation_list.end());
+  }
   return convertToIDSViolationList(violation_list);
 }
 

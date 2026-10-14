@@ -121,7 +121,7 @@ class DRCInterface
   // function
   std::vector<ids::Violation> getViolationList(std::vector<DRCShape> drc_env_shape_list, std::vector<DRCShape> drc_result_shape_list,
                                                std::set<ViolationType> drc_check_type_set, std::vector<DRCShape> drc_check_region_list);
-  std::vector<ids::Violation> getMacroViolationList(std::vector<DRCShape> drc_result_shape_list);
+  std::vector<Violation> getMacroViolationList(std::vector<DRCShape> drc_result_shape_list, std::vector<DRCShape> drc_check_region_list);
   bool isMacroPinOverlapped(const std::vector<PlanarRect>& pin_rect_list, const PlanarRect& rect);
 };
 
