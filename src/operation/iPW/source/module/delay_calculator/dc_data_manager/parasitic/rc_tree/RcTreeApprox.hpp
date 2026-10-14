@@ -17,6 +17,8 @@
 
 #include <string>
 
+#include <cstdint>
+
 #include "AnalysisType.hpp"
 #include "TransType.hpp"
 
@@ -25,9 +27,10 @@ namespace ipw {
 class ParasiticNet;
 
 // 老 RC 树近似：逐节点求负载/延时/二阶矩冲量（当没有可用降阶模型时的兜底口径）。
+// 按 ParasiticGraph 的节点 id 操作稠密数组；四个遍历的顺序与旧字符串 map 版本逐位一致。
 void buildParasiticDelayMap(
     ParasiticNet& parasitic_net,
-    std::string& source_node_name,
+    uint32_t source_node_id,
     AnalysisType analysis_type,
     TransType trans_type
 );

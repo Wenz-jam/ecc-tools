@@ -15,248 +15,266 @@
 // ***************************************************************************************
 #include "RcTreeApprox.hpp"
 
+#include <algorithm>
+#include <cmath>
+
 #include "DataManager.hpp"
 #include "Database.hpp"
 #include "DelayCache.hpp"
 #include "OutputLoadEstimator.hpp"
+#include "ParasiticGraph.hpp"
 #include "ParasiticNet.hpp"
 #include "PWHeader.hpp"
-#include "RcTree.hpp"
 
 namespace ipw {
 
-static double updateParasiticLoadMap(
-    ParasiticNet& parasitic_net,
-    std::string& node_name,
-    std::string& parent_node_name,
-    std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map,
-    std::set<std::string>& visited_node_set,
-    AnalysisType analysis_type,
-    TransType trans_type
+namespace {
+
+// 四个遍历全部按节点 id 走稠密数组（visited 用 byte、状态用 double）：
+// - 邻接表插入序 == 旧 buildParasiticResistorMap 的顺序
+// - 遍历/累加顺序、每处 ×1E-3 的位置都与旧实现一致，保证结果逐位相同
+// - 数组默认 0.0 等价于旧代码 std::map::operator[] 的"读即插入 0.0"
+
+double updateParasiticLoadMap(
+    const ParasiticGraph& graph,
+    const std::vector<double>& pin_cap_list,
+    uint32_t node_id,
+    uint32_t parent_node_id,
+    std::vector<uint8_t>& visited_node_list,
+    std::vector<double>& node_load_map
 )
 {
-  if (visited_node_set.count(node_name) > 0) {
+  if (visited_node_list[node_id] != 0) {
     return 0.0;
   }
-  visited_node_set.insert(node_name);
+  visited_node_list[node_id] = 1;
 
-  double subtree_load = getParasiticNodeLoad(parasitic_net, node_name, analysis_type, trans_type);
-  if (resistor_map.count(node_name) == 0) {
-    PWDCACHE.nodeLoadMap(parasitic_net.get_net_name(), analysis_type, trans_type)[node_name] = subtree_load;
+  double subtree_load = parasiticNodeLoad(graph, pin_cap_list, node_id);
+  const std::vector<ParasiticGraphEdge>& edge_list = graph.adjacency[node_id];
+  if (edge_list.empty()) {
+    node_load_map[node_id] = subtree_load;
     return subtree_load;
   }
 
-  for (std::pair<std::string, double>& next_node_pair : resistor_map[node_name]) {
-    if (next_node_pair.first == parent_node_name) {
+  for (const ParasiticGraphEdge& next_edge : edge_list) {
+    if (next_edge.node == parent_node_id) {
       continue;
     }
     subtree_load += updateParasiticLoadMap(
-        parasitic_net,
-        next_node_pair.first,
-        node_name,
-        resistor_map,
-        visited_node_set,
-        analysis_type,
-        trans_type
+        graph,
+        pin_cap_list,
+        next_edge.node,
+        node_id,
+        visited_node_list,
+        node_load_map
     );
   }
-  PWDCACHE.nodeLoadMap(parasitic_net.get_net_name(), analysis_type, trans_type)[node_name] = subtree_load;
+  node_load_map[node_id] = subtree_load;
   return subtree_load;
 }
 
-static void updateParasiticDelayMap(
-    ParasiticNet& parasitic_net,
-    std::string& node_name,
-    std::string& parent_node_name,
-    std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map,
-    std::set<std::string>& visited_node_set,
-    AnalysisType analysis_type,
-    TransType trans_type
+void updateParasiticDelayMap(
+    const ParasiticGraph& graph,
+    uint32_t node_id,
+    uint32_t parent_node_id,
+    std::vector<uint8_t>& visited_node_list,
+    const std::vector<double>& node_load_map,
+    std::vector<double>& node_delay_map,
+    std::vector<uint8_t>& node_delay_valid_list
 )
 {
-  if (visited_node_set.count(node_name) > 0) {
+  if (visited_node_list[node_id] != 0) {
     return;
   }
-  visited_node_set.insert(node_name);
-  if (resistor_map.count(node_name) == 0) {
+  visited_node_list[node_id] = 1;
+  const std::vector<ParasiticGraphEdge>& edge_list = graph.adjacency[node_id];
+  if (edge_list.empty()) {
     return;
   }
 
-  std::string& net_name = parasitic_net.get_net_name();
-  for (std::pair<std::string, double>& next_node_pair : resistor_map[node_name]) {
-    if (next_node_pair.first == parent_node_name || visited_node_set.count(next_node_pair.first) > 0) {
+  for (const ParasiticGraphEdge& next_edge : edge_list) {
+    if (next_edge.node == parent_node_id || visited_node_list[next_edge.node] != 0) {
       continue;
     }
-    double node_delay = PWDCACHE.nodeDelayMap(net_name, analysis_type, trans_type)[node_name];
-    double next_node_load = PWDCACHE.nodeLoadMap(net_name, analysis_type, trans_type)[next_node_pair.first];
-    PWDCACHE.nodeDelayMap(net_name, analysis_type, trans_type)[next_node_pair.first]
-        = node_delay + next_node_pair.second * next_node_load * 1E-3;
+    double node_delay = node_delay_map[node_id];
+    double next_node_load = node_load_map[next_edge.node];
+    node_delay_map[next_edge.node] = node_delay + next_edge.resistance * next_node_load * 1E-3;
+    node_delay_valid_list[next_edge.node] = 1;
     updateParasiticDelayMap(
-        parasitic_net,
-        next_node_pair.first,
-        node_name,
-        resistor_map,
-        visited_node_set,
-        analysis_type,
-        trans_type
+        graph,
+        next_edge.node,
+        node_id,
+        visited_node_list,
+        node_load_map,
+        node_delay_map,
+        node_delay_valid_list
     );
   }
 }
 
-static double updateParasiticLoadDelayMap(
-    ParasiticNet& parasitic_net,
-    std::string& node_name,
-    std::string& parent_node_name,
-    std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map,
-    std::set<std::string>& visited_node_set,
-    AnalysisType analysis_type,
-    TransType trans_type,
-    std::map<std::string, double>& load_delay_map
+double updateParasiticLoadDelayMap(
+    const ParasiticGraph& graph,
+    const std::vector<double>& pin_cap_list,
+    uint32_t node_id,
+    uint32_t parent_node_id,
+    std::vector<uint8_t>& visited_node_list,
+    const std::vector<double>& node_delay_map,
+    std::vector<double>& load_delay_map
 )
 {
-  if (visited_node_set.count(node_name) > 0) {
+  if (visited_node_list[node_id] != 0) {
     return 0.0;
   }
-  visited_node_set.insert(node_name);
+  visited_node_list[node_id] = 1;
 
-  double load_delay = getParasiticNodeLoad(parasitic_net, node_name, analysis_type, trans_type)
-                      * PWDCACHE.nodeDelayMap(parasitic_net.get_net_name(), analysis_type, trans_type)[node_name];
-  if (resistor_map.count(node_name) == 0) {
-    load_delay_map[node_name] = load_delay;
+  double load_delay = parasiticNodeLoad(graph, pin_cap_list, node_id) * node_delay_map[node_id];
+  const std::vector<ParasiticGraphEdge>& edge_list = graph.adjacency[node_id];
+  if (edge_list.empty()) {
+    load_delay_map[node_id] = load_delay;
     return load_delay;
   }
 
-  for (std::pair<std::string, double>& next_node_pair : resistor_map[node_name]) {
-    if (next_node_pair.first == parent_node_name) {
+  for (const ParasiticGraphEdge& next_edge : edge_list) {
+    if (next_edge.node == parent_node_id) {
       continue;
     }
     load_delay += updateParasiticLoadDelayMap(
-        parasitic_net,
-        next_node_pair.first,
-        node_name,
-        resistor_map,
-        visited_node_set,
-        analysis_type,
-        trans_type,
+        graph,
+        pin_cap_list,
+        next_edge.node,
+        node_id,
+        visited_node_list,
+        node_delay_map,
         load_delay_map
     );
   }
-  load_delay_map[node_name] = load_delay;
+  load_delay_map[node_id] = load_delay;
   return load_delay;
 }
 
-static void updateParasiticImpulseMap(
-    ParasiticNet& parasitic_net,
-    std::string& node_name,
-    std::string& parent_node_name,
-    std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map,
-    std::set<std::string>& visited_node_set,
-    AnalysisType analysis_type,
-    TransType trans_type,
-    std::map<std::string, double>& load_delay_map,
-    std::map<std::string, double>& beta_map
+void updateParasiticImpulseMap(
+    const ParasiticGraph& graph,
+    uint32_t node_id,
+    uint32_t parent_node_id,
+    std::vector<uint8_t>& visited_node_list,
+    const std::vector<double>& node_delay_map,
+    const std::vector<double>& load_delay_map,
+    std::vector<double>& beta_map,
+    std::vector<double>& node_impulse_map,
+    std::vector<uint8_t>& node_impulse_valid_list
 )
 {
-  if (visited_node_set.count(node_name) > 0) {
+  if (visited_node_list[node_id] != 0) {
     return;
   }
-  visited_node_set.insert(node_name);
+  visited_node_list[node_id] = 1;
 
-  std::string& net_name = parasitic_net.get_net_name();
-  if (resistor_map.count(node_name) > 0) {
-    for (std::pair<std::string, double>& next_node_pair : resistor_map[node_name]) {
-      if (next_node_pair.first == parent_node_name || visited_node_set.count(next_node_pair.first) > 0) {
+  const std::vector<ParasiticGraphEdge>& edge_list = graph.adjacency[node_id];
+  if (!edge_list.empty()) {
+    for (const ParasiticGraphEdge& next_edge : edge_list) {
+      if (next_edge.node == parent_node_id || visited_node_list[next_edge.node] != 0) {
         continue;
       }
-      beta_map[next_node_pair.first]
-          = beta_map[node_name] + next_node_pair.second * load_delay_map[next_node_pair.first] * 1E-3;
+      beta_map[next_edge.node] = beta_map[node_id] + next_edge.resistance * load_delay_map[next_edge.node] * 1E-3;
       updateParasiticImpulseMap(
-          parasitic_net,
-          next_node_pair.first,
-          node_name,
-          resistor_map,
-          visited_node_set,
-          analysis_type,
-          trans_type,
+          graph,
+          next_edge.node,
+          node_id,
+          visited_node_list,
+          node_delay_map,
           load_delay_map,
-          beta_map
+          beta_map,
+          node_impulse_map,
+          node_impulse_valid_list
       );
     }
   }
 
-  double node_delay = PWDCACHE.nodeDelayMap(net_name, analysis_type, trans_type)[node_name];
-  double impulse = 2.0 * beta_map[node_name] - std::pow(node_delay, 2);
-  PWDCACHE.nodeImpulseMap(net_name, analysis_type, trans_type)[node_name] = std::max(0.0, impulse);
+  double node_delay = node_delay_map[node_id];
+  double impulse = 2.0 * beta_map[node_id] - std::pow(node_delay, 2);
+  node_impulse_map[node_id] = std::max(0.0, impulse);
+  node_impulse_valid_list[node_id] = 1;
 }
+
+}  // namespace
 
 void buildParasiticDelayMap(
     ParasiticNet& parasitic_net,
-    std::string& source_node_name,
+    uint32_t source_node_id,
     AnalysisType analysis_type,
     TransType trans_type
 )
 {
-  std::string& net_name = parasitic_net.get_net_name();
-  if (PWDCACHE.nodeDelayMap(net_name, analysis_type, trans_type).count(source_node_name) > 0
-      && PWDCACHE.nodeImpulseMap(net_name, analysis_type, trans_type).count(source_node_name) > 0) {
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
+  const std::vector<double>& pin_cap_list = getParasiticPinCapList(parasitic_net, analysis_type, trans_type);
+  DelayCache::ParasiticCornerState& corner_state
+      = DelayCache::threadCache().parasiticCornerState(parasitic_net.get_net_name(), analysis_type, trans_type);
+  if (corner_state.node_load.size() != graph.size()) {
+    corner_state.node_load.assign(graph.size(), 0.0);
+    corner_state.node_delay.assign(graph.size(), 0.0);
+    corner_state.node_impulse.assign(graph.size(), 0.0);
+    corner_state.load_delay.assign(graph.size(), 0.0);
+    corner_state.beta.assign(graph.size(), 0.0);
+    corner_state.node_delay_valid.assign(graph.size(), 0);
+    corner_state.node_impulse_valid.assign(graph.size(), 0);
+    corner_state.visited_scratch.assign(graph.size(), 0);
+  }
+  // 旧实现的早退判据：nodeDelayMap 与 nodeImpulseMap 里都已经有 source 的条目。
+  // 注意这里按"节点是否写过"判断（不是按"是否用同一个 source 建过"），与旧 map 语义一致。
+  if (corner_state.node_delay_valid[source_node_id] != 0 && corner_state.node_impulse_valid[source_node_id] != 0) {
     return;
   }
 
-  if (!PWDCACHE.hasResistorMap(net_name)) {
-    buildParasiticResistorMap(parasitic_net, PWDCACHE.resistorMap(net_name));
-  }
-  std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map = PWDCACHE.resistorMap(net_name);
+  // 旧实现里 load_delay / beta 是每次调用新建的空 map，这里每轮清零复刻该语义。
+  std::fill(corner_state.load_delay.begin(), corner_state.load_delay.end(), 0.0);
+  std::fill(corner_state.beta.begin(), corner_state.beta.end(), 0.0);
 
-  std::string parent_node_name;
-  std::set<std::string> load_visited_node_set;
+  std::fill(corner_state.visited_scratch.begin(), corner_state.visited_scratch.end(), 0);
   updateParasiticLoadMap(
-      parasitic_net,
-      source_node_name,
-      parent_node_name,
-      resistor_map,
-      load_visited_node_set,
-      analysis_type,
-      trans_type
+      graph,
+      pin_cap_list,
+      source_node_id,
+      kInvalidParasiticNode,
+      corner_state.visited_scratch,
+      corner_state.node_load
   );
 
-  PWDCACHE.nodeDelayMap(net_name, analysis_type, trans_type)[source_node_name] = 0.0;
-  std::set<std::string> delay_visited_node_set;
+  std::fill(corner_state.visited_scratch.begin(), corner_state.visited_scratch.end(), 0);
+  corner_state.node_delay[source_node_id] = 0.0;
+  corner_state.node_delay_valid[source_node_id] = 1;
   updateParasiticDelayMap(
-      parasitic_net,
-      source_node_name,
-      parent_node_name,
-      resistor_map,
-      delay_visited_node_set,
-      analysis_type,
-      trans_type
+      graph,
+      source_node_id,
+      kInvalidParasiticNode,
+      corner_state.visited_scratch,
+      corner_state.node_load,
+      corner_state.node_delay,
+      corner_state.node_delay_valid
   );
 
-  std::map<std::string, double> load_delay_map;
-  std::set<std::string> load_delay_visited_node_set;
+  std::fill(corner_state.visited_scratch.begin(), corner_state.visited_scratch.end(), 0);
   updateParasiticLoadDelayMap(
-      parasitic_net,
-      source_node_name,
-      parent_node_name,
-      resistor_map,
-      load_delay_visited_node_set,
-      analysis_type,
-      trans_type,
-      load_delay_map
+      graph,
+      pin_cap_list,
+      source_node_id,
+      kInvalidParasiticNode,
+      corner_state.visited_scratch,
+      corner_state.node_delay,
+      corner_state.load_delay
   );
 
-  std::map<std::string, double> beta_map;
-  beta_map[source_node_name] = 0.0;
-  std::set<std::string> impulse_visited_node_set;
+  std::fill(corner_state.visited_scratch.begin(), corner_state.visited_scratch.end(), 0);
+  corner_state.beta[source_node_id] = 0.0;
   updateParasiticImpulseMap(
-      parasitic_net,
-      source_node_name,
-      parent_node_name,
-      resistor_map,
-      impulse_visited_node_set,
-      analysis_type,
-      trans_type,
-      load_delay_map,
-      beta_map
+      graph,
+      source_node_id,
+      kInvalidParasiticNode,
+      corner_state.visited_scratch,
+      corner_state.node_delay,
+      corner_state.load_delay,
+      corner_state.beta,
+      corner_state.node_impulse,
+      corner_state.node_impulse_valid
   );
 }
 

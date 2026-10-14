@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "AnalysisType.hpp"
+#include "ParasiticGraph.hpp"
 #include "DmpSolverModel.hpp"
 #include "ParasiticDelayResult.hpp"
 #include "ParasiticDmpLoadModel.hpp"
@@ -230,11 +231,12 @@ class ParasiticDmpSolver
 
   void buildParasiticDmpLoadModelList(
       ParasiticDmpModel& dmp_model,
-      std::vector<std::string>& node_name_list,
+      const ParasiticGraph& graph,
+      std::vector<uint32_t>& node_id_list,
       std::vector<int32_t>& parent_idx_list,
       std::vector<double>& resistance_list,
       std::vector<double>& capacitance_list,
-      std::string& source_node_name
+      uint32_t source_node_id
   );
 
   ParasiticDmpLoadModel buildParasiticDmpLoadModel(double moment1, double moment2, double moment3);

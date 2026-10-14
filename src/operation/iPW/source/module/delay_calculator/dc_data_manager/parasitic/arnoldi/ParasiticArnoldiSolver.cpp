@@ -25,6 +25,7 @@
 #include "Instance.hpp"
 #include "Net.hpp"
 #include "OutputLoadEstimator.hpp"
+#include "ParasiticGraph.hpp"
 #include "ParasiticNet.hpp"
 #include "ParasiticNodeName.hpp"
 #include "ParasiticThresholds.hpp"
@@ -211,11 +212,13 @@ ParasiticDelayResult ParasiticArnoldiSolver::calcParasiticArnoldiTimingResult(
   timing_result.set_driver_slew(slew_list.front());
   bool suppress_min_slew = PWDM.getConfig().min_slew_degradation == 0 && analysis_type == AnalysisType::kMin
                            && arnoldi_model.get_pi_resistance() > kMinSlewResistanceThreshold * drive_resistance;
+  const ParasiticGraph& term_graph = getParasiticGraph(parasitic_net);
   for (std::size_t term_idx = 0; term_idx < arnoldi_model.get_term_node_list().size(); term_idx++) {
     std::string& term_node_name = arnoldi_model.get_term_node_list()[term_idx];
     double wire_delay = delay_list[term_idx] - delay_list.front();
     double load_slew = slew_list[term_idx];
-    std::string pin_name = getPinNameByParasiticNodeName(term_node_name);
+    const uint32_t term_node_id = term_graph.find(term_node_name);
+    std::string pin_name = term_node_id == kInvalidParasiticNode ? term_node_name : term_graph.pin_name_of(term_node_id);
     if (term_idx > 0) {
       adjustParasiticLoadThreshold(timing_arc, pin_name, output_trans_type, wire_delay, load_slew);
       if (suppress_min_slew && isParasiticLoadSlewCompatible(timing_arc, pin_name, output_trans_type)) {
@@ -295,37 +298,48 @@ ParasiticArnoldiModel ParasiticArnoldiSolver::buildParasiticArnoldiModel(
 )
 {
   ParasiticArnoldiModel arnoldi_model;
-  std::vector<std::string> node_name_list;
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
+  const uint32_t source_node_id = graph.find(source_node_name);
+  if (source_node_id == kInvalidParasiticNode) {
+    return arnoldi_model;
+  }
+  std::vector<uint32_t> node_id_list;
   std::vector<int32_t> parent_idx_list;
   std::vector<double> resistance_list;
   std::vector<double> capacitance_list;
   flattenRcTree(
       parasitic_net,
-      source_node_name,
+      source_node_id,
       analysis_type,
       trans_type,
-      node_name_list,
+      node_id_list,
       parent_idx_list,
       resistance_list,
       capacitance_list
   );
-  if (node_name_list.empty()) {
+  if (node_id_list.empty()) {
     return arnoldi_model;
   }
 
-  initParasiticArnoldiTerm(arnoldi_model, node_name_list, source_node_name);
+  initParasiticArnoldiTerm(arnoldi_model, graph, node_id_list, source_node_id);
   if (arnoldi_model.get_term_node_list().empty()) {
     return arnoldi_model;
   }
 
+  // 节点 id -> 展平序位置（终端定位由 O(nodes x terms) 的线性名字搜索变成 O(1) 查表）
+  std::vector<uint32_t> node_position_list(graph.size(), kInvalidParasiticNode);
+  for (std::size_t node_idx = 0; node_idx < node_id_list.size(); node_idx++) {
+    node_position_list[node_id_list[node_idx]] = static_cast<uint32_t>(node_idx);
+  }
   std::vector<std::size_t> term_point_idx_list;
+  term_point_idx_list.reserve(arnoldi_model.get_term_node_list().size());
   for (std::string& term_node_name : arnoldi_model.get_term_node_list()) {
-    for (std::size_t node_idx = 0; node_idx < node_name_list.size(); node_idx++) {
-      if (node_name_list[node_idx] == term_node_name) {
-        term_point_idx_list.push_back(node_idx);
-        break;
-      }
+    const uint32_t term_node_id = graph.find(term_node_name);
+    if (term_node_id == kInvalidParasiticNode || node_position_list[term_node_id] == kInvalidParasiticNode) {
+      term_point_idx_list.clear();
+      break;
     }
+    term_point_idx_list.push_back(node_position_list[term_node_id]);
   }
   if (term_point_idx_list.size() != arnoldi_model.get_term_node_list().size()) {
     return arnoldi_model;
@@ -334,7 +348,8 @@ ParasiticArnoldiModel ParasiticArnoldiSolver::buildParasiticArnoldiModel(
   updateParasiticArnoldiModel(
       arnoldi_model,
       parasitic_net,
-      node_name_list,
+      graph,
+      node_id_list,
       parent_idx_list,
       resistance_list,
       capacitance_list,
@@ -345,23 +360,26 @@ ParasiticArnoldiModel ParasiticArnoldiSolver::buildParasiticArnoldiModel(
 
 void ParasiticArnoldiSolver::initParasiticArnoldiTerm(
     ParasiticArnoldiModel& arnoldi_model,
-    std::vector<std::string>& node_name_list,
-    std::string& source_node_name
+    const ParasiticGraph& graph,
+    std::vector<uint32_t>& node_id_list,
+    uint32_t source_node_id
 )
 {
-  Database& database = PWDM.getDatabase();
-  arnoldi_model.get_term_node_list().push_back(source_node_name);
-  arnoldi_model.get_term_pin_list().push_back(getPinNameByParasiticNodeName(source_node_name));
-  arnoldi_model.get_term_index_map()[source_node_name] = 0;
+  // pin 归属与名字都在 ParasiticGraph 里预解析过，这里不再逐节点走
+  // getPinNameByParasiticNodeName() + pin_map 查找。
+  arnoldi_model.get_term_node_list().push_back(*graph.node_name[source_node_id]);
+  arnoldi_model.get_term_pin_list().push_back(graph.pin_name_of(source_node_id));
+  arnoldi_model.get_term_index_map()[arnoldi_model.get_term_node_list().front()] = 0;
   arnoldi_model.get_term_index_map()[arnoldi_model.get_term_pin_list().front()] = 0;
-  for (std::string& node_name : node_name_list) {
-    if (node_name == source_node_name) {
+  for (uint32_t node_id : node_id_list) {
+    if (node_id == source_node_id) {
       continue;
     }
-    std::string pin_name = getPinNameByParasiticNodeName(node_name);
-    if (database.get_pin_map().count(pin_name) == 0) {
+    if (!graph.is_pin(node_id)) {
       continue;
     }
+    const std::string& node_name = *graph.node_name[node_id];
+    const std::string& pin_name = graph.pin_name_of(node_id);
     std::size_t term_idx = arnoldi_model.get_term_node_list().size();
     arnoldi_model.get_term_node_list().push_back(node_name);
     arnoldi_model.get_term_pin_list().push_back(pin_name);
@@ -373,7 +391,8 @@ void ParasiticArnoldiSolver::initParasiticArnoldiTerm(
 void ParasiticArnoldiSolver::updateParasiticArnoldiModel(
     ParasiticArnoldiModel& arnoldi_model,
     ParasiticNet& parasitic_net,
-    std::vector<std::string>& node_name_list,
+    const ParasiticGraph& graph,
+    std::vector<uint32_t>& node_id_list,
     std::vector<int32_t>& parent_idx_list,
     std::vector<double>& resistance_list,
     std::vector<double>& capacitance_list,
@@ -399,15 +418,17 @@ void ParasiticArnoldiSolver::updateParasiticArnoldiModel(
   std::vector<std::vector<double>> projection_list(order, std::vector<double>(term_point_idx_list.size(), 0.0));
   int32_t final_order = order;
 
-  std::map<std::string, std::size_t> node_idx_map;
-  for (std::size_t node_idx = 0; node_idx < node_name_list.size(); node_idx++) {
-    node_idx_map[node_name_list[node_idx]] = node_idx;
+  std::vector<uint32_t> node_position_list(graph.size(), kInvalidParasiticNode);
+  for (std::size_t node_idx = 0; node_idx < node_id_list.size(); node_idx++) {
+    node_position_list[node_id_list[node_idx]] = static_cast<uint32_t>(node_idx);
   }
   std::size_t network_resistance_num = 0;
   for (ParasiticResistor& parasitic_resistor : parasitic_net.get_resistor_list()) {
-    if (node_idx_map.count(parasitic_resistor.get_source_node()) == 0
-        || node_idx_map.count(parasitic_resistor.get_sink_node()) == 0
-        || parasitic_resistor.get_source_node() == parasitic_resistor.get_sink_node()) {
+    const uint32_t source_node_id = graph.find(parasitic_resistor.get_source_node());
+    const uint32_t sink_node_id = graph.find(parasitic_resistor.get_sink_node());
+    if (source_node_id == kInvalidParasiticNode || sink_node_id == kInvalidParasiticNode
+        || node_position_list[source_node_id] == kInvalidParasiticNode
+        || node_position_list[sink_node_id] == kInvalidParasiticNode || source_node_id == sink_node_id) {
       continue;
     }
     network_resistance_num++;
@@ -428,12 +449,15 @@ void ParasiticArnoldiSolver::updateParasiticArnoldiModel(
   if (has_resistance_loop) {
     std::vector<Eigen::Triplet<double>> conductance_triplet_list;
     for (ParasiticResistor& parasitic_resistor : parasitic_net.get_resistor_list()) {
-      if (node_idx_map.count(parasitic_resistor.get_source_node()) == 0
-          || node_idx_map.count(parasitic_resistor.get_sink_node()) == 0) {
+      const uint32_t source_node_id = graph.find(parasitic_resistor.get_source_node());
+      const uint32_t sink_node_id = graph.find(parasitic_resistor.get_sink_node());
+      if (source_node_id == kInvalidParasiticNode || sink_node_id == kInvalidParasiticNode
+          || node_position_list[source_node_id] == kInvalidParasiticNode
+          || node_position_list[sink_node_id] == kInvalidParasiticNode) {
         continue;
       }
-      std::size_t source_idx = node_idx_map[parasitic_resistor.get_source_node()];
-      std::size_t sink_idx = node_idx_map[parasitic_resistor.get_sink_node()];
+      std::size_t source_idx = node_position_list[source_node_id];
+      std::size_t sink_idx = node_position_list[sink_node_id];
       if (source_idx == sink_idx) {
         continue;
       }

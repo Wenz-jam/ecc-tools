@@ -18,6 +18,7 @@
 #include "DataManager.hpp"
 #include "DCTask.hpp"
 #include "DelayCache.hpp"
+#include "ParasiticGraph.hpp"
 #include "ParasiticNodeName.hpp"
 #include "Database.hpp"
 #include "Instance.hpp"
@@ -439,11 +440,14 @@ double ArcTimingLookup::calcParasiticSlew(Arc& arc, AnalysisType analysis_type, 
     return input_slew;
   }
   ParasiticNet& parasitic_net = parasitic_net_iter->second;
-  std::string source_node_name = getParasiticNodeName(parasitic_net, arc.get_source_pin());
-  std::string sink_node_name = getParasiticNodeName(parasitic_net, arc.get_sink_pin());
-  if (source_node_name.empty() || sink_node_name.empty()) {
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
+  const uint32_t source_node_id = getParasiticNodeId(parasitic_net, arc.get_source_pin());
+  const uint32_t sink_node_id = getParasiticNodeId(parasitic_net, arc.get_sink_pin());
+  if (source_node_id == kInvalidParasiticNode || sink_node_id == kInvalidParasiticNode) {
     return input_slew;
   }
+  std::string source_node_name = *graph.node_name[source_node_id];
+  std::string sink_node_name = *graph.node_name[sink_node_id];
 
   std::optional<double> cached_load_slew
       = _arnoldi_solver.getCachedLoadSlew(arc, analysis_type, trans_type, input_slew);
@@ -461,14 +465,13 @@ double ArcTimingLookup::calcParasiticSlew(Arc& arc, AnalysisType analysis_type, 
     return *input_port_slew;
   }
 
-  buildParasiticDelayMap(parasitic_net, source_node_name, analysis_type, trans_type);
-  std::map<std::string, double>& impulse_map
-      = PWDCACHE.nodeImpulseMap(parasitic_net.get_net_name(), analysis_type, trans_type);
-  auto impulse_iter = impulse_map.find(sink_node_name);
-  if (impulse_iter == impulse_map.end()) {
+  buildParasiticDelayMap(parasitic_net, source_node_id, analysis_type, trans_type);
+  DelayCache::ParasiticCornerState& corner_state
+      = DelayCache::threadCache().parasiticCornerState(parasitic_net.get_net_name(), analysis_type, trans_type);
+  if (corner_state.node_impulse_valid[sink_node_id] == 0) {
     return input_slew;
   }
-  double impulse = impulse_iter->second;
+  double impulse = corner_state.node_impulse[sink_node_id];
   double output_slew = std::sqrt(input_slew * input_slew + impulse);
   if (input_slew < 0.0) {
     return -output_slew;

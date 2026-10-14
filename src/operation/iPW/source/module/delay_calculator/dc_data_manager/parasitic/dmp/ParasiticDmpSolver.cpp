@@ -22,6 +22,7 @@
 #include "Instance.hpp"
 #include "Net.hpp"
 #include "OutputLoadEstimator.hpp"
+#include "ParasiticGraph.hpp"
 #include "ParasiticNet.hpp"
 #include "ParasiticNodeName.hpp"
 #include "ParasiticThresholds.hpp"
@@ -110,9 +111,11 @@ ParasiticDelayResult ParasiticDmpSolver::calcParasiticDmpTimingResult(
   timing_result.get_load_slew_map()[source_node_name] = driver_slew;
   timing_result.get_load_slew_map()[output_pin] = driver_slew;
 
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
   for (std::pair<const std::string, ParasiticDmpLoadModel>& load_model_pair : dmp_model.get_load_model_map()) {
     std::string load_node_name = load_model_pair.first;
-    std::string load_pin_name = getPinNameByParasiticNodeName(load_node_name);
+    const uint32_t load_node_id = graph.find(load_node_name);
+    std::string load_pin_name = load_node_id == kInvalidParasiticNode ? load_node_name : graph.pin_name_of(load_node_id);
     double wire_delay = 0.0;
     double load_slew = driver_slew;
     if (!calcParasiticDmpLoadDelay(
@@ -1120,21 +1123,26 @@ ParasiticDmpModel ParasiticDmpSolver::buildParasiticDmpModel(
 )
 {
   ParasiticDmpModel dmp_model;
-  std::vector<std::string> node_name_list;
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
+  const uint32_t source_node_id = graph.find(source_node_name);
+  if (source_node_id == kInvalidParasiticNode) {
+    return dmp_model;
+  }
+  std::vector<uint32_t> node_id_list;
   std::vector<int32_t> parent_idx_list;
   std::vector<double> resistance_list;
   std::vector<double> capacitance_list;
   flattenRcTree(
       parasitic_net,
-      source_node_name,
+      source_node_id,
       analysis_type,
       trans_type,
-      node_name_list,
+      node_id_list,
       parent_idx_list,
       resistance_list,
       capacitance_list
   );
-  if (node_name_list.empty()) {
+  if (node_id_list.empty()) {
     return dmp_model;
   }
 
@@ -1144,33 +1152,34 @@ ParasiticDmpModel ParasiticDmpSolver::buildParasiticDmpModel(
   }
   buildParasiticDmpLoadModelList(
       dmp_model,
-      node_name_list,
+      graph,
+      node_id_list,
       parent_idx_list,
       resistance_list,
       capacitance_list,
-      source_node_name
+      source_node_id
   );
   return dmp_model;
 }
 
 void ParasiticDmpSolver::buildParasiticDmpLoadModelList(
     ParasiticDmpModel& dmp_model,
-    std::vector<std::string>& node_name_list,
+    const ParasiticGraph& graph,
+    std::vector<uint32_t>& node_id_list,
     std::vector<int32_t>& parent_idx_list,
     std::vector<double>& resistance_list,
     std::vector<double>& capacitance_list,
-    std::string& source_node_name
+    uint32_t source_node_id
 )
 {
-  Database& database = PWDM.getDatabase();
-  std::vector<std::vector<double>> moment_list(4, std::vector<double>(node_name_list.size(), 0.0));
+  std::vector<std::vector<double>> moment_list(4, std::vector<double>(node_id_list.size(), 0.0));
   for (int32_t moment_idx = 1; moment_idx < 4; moment_idx++) {
-    std::vector<double> branch_current_list(node_name_list.size(), 0.0);
-    for (std::size_t node_idx = 0; node_idx < node_name_list.size(); node_idx++) {
+    std::vector<double> branch_current_list(node_id_list.size(), 0.0);
+    for (std::size_t node_idx = 0; node_idx < node_id_list.size(); node_idx++) {
       double previous_moment = moment_idx == 1 ? 1.0 : moment_list[moment_idx - 1][node_idx];
       branch_current_list[node_idx] = capacitance_list[node_idx] * previous_moment;
     }
-    for (std::size_t node_idx = node_name_list.size() - 1; node_idx > 0; node_idx--) {
+    for (std::size_t node_idx = node_id_list.size() - 1; node_idx > 0; node_idx--) {
       int32_t parent_idx = parent_idx_list[node_idx];
       if (parent_idx < 0) {
         return;
@@ -1178,26 +1187,25 @@ void ParasiticDmpSolver::buildParasiticDmpLoadModelList(
       branch_current_list[parent_idx] += branch_current_list[node_idx];
     }
     moment_list[moment_idx].front() = 0.0;
-    for (std::size_t node_idx = 1; node_idx < node_name_list.size(); node_idx++) {
+    for (std::size_t node_idx = 1; node_idx < node_id_list.size(); node_idx++) {
       int32_t parent_idx = parent_idx_list[node_idx];
       moment_list[moment_idx][node_idx]
           = moment_list[moment_idx][parent_idx] - resistance_list[node_idx] * branch_current_list[node_idx];
     }
   }
 
-  for (std::size_t node_idx = 0; node_idx < node_name_list.size(); node_idx++) {
-    std::string& node_name = node_name_list[node_idx];
-    if (node_name == source_node_name) {
+  for (std::size_t node_idx = 0; node_idx < node_id_list.size(); node_idx++) {
+    const uint32_t node_id = node_id_list[node_idx];
+    if (node_id == source_node_id) {
       continue;
     }
-    std::string pin_name = getPinNameByParasiticNodeName(node_name);
-    if (database.get_pin_map().count(pin_name) == 0) {
+    if (!graph.is_pin(node_id)) {
       continue;
     }
     ParasiticDmpLoadModel load_model
         = buildParasiticDmpLoadModel(moment_list[1][node_idx], moment_list[2][node_idx], moment_list[3][node_idx]);
     if (load_model.get_is_valid()) {
-      dmp_model.get_load_model_map()[node_name] = load_model;
+      dmp_model.get_load_model_map()[*graph.node_name[node_id]] = load_model;
     }
   }
 }

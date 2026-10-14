@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "AnalysisType.hpp"
+#include "ParasiticGraph.hpp"
 #include "ParasiticArnoldiModel.hpp"
 #include "ParasiticArnoldiPoleResidue.hpp"
 #include "ParasiticDelayResult.hpp"
@@ -98,14 +99,16 @@ class ParasiticArnoldiSolver
 
   void initParasiticArnoldiTerm(
       ParasiticArnoldiModel& arnoldi_model,
-      std::vector<std::string>& node_name_list,
-      std::string& source_node_name
+      const ParasiticGraph& graph,
+      std::vector<uint32_t>& node_id_list,
+      uint32_t source_node_id
   );
 
   void updateParasiticArnoldiModel(
       ParasiticArnoldiModel& arnoldi_model,
       ParasiticNet& parasitic_net,
-      std::vector<std::string>& node_name_list,
+      const ParasiticGraph& graph,
+      std::vector<uint32_t>& node_id_list,
       std::vector<int32_t>& parent_idx_list,
       std::vector<double>& resistance_list,
       std::vector<double>& capacitance_list,

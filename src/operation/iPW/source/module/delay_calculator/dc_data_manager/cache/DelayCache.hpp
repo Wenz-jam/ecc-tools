@@ -24,6 +24,7 @@
 #include "ParasiticArnoldiModel.hpp"
 #include "ParasiticDelayResult.hpp"
 #include "ParasiticDmpModel.hpp"
+#include "ParasiticGraph.hpp"
 
 namespace ipw {
 
@@ -32,7 +33,7 @@ namespace ipw {
 // 延时计算的缓存全部收口在这里：
 // - 每个线程一份（峰值流程按窗口并行，各线程不能共享可写缓存）
 // - 结果类缓存用 getOrBuild：命中直接返回，未命中才用 builder 构造
-// - 老 RC 树遍历的四张表按 net / 节点直接取内层 map（树递归需要按节点反复读写）
+// - RC 图（ParasiticGraph）与每 corner 的节点数值按 net / corner 存成稠密数组
 class DelayCache
 {
  public:
@@ -97,40 +98,35 @@ class DelayCache
     return getOrBuild(_parasitic_input_port_result_map, key, std::forward<Builder>(builder));
   }
 
-  // ===== 老 RC 树遍历缓存（按 net / 节点访问）=====
+  // ===== 索引化的 RC 图与逐 corner 数值（按 net / 节点 id 访问）=====
 
-  std::map<std::string, std::vector<std::pair<std::string, double>>>& resistorMap(const std::string& net_name)
+  // 每节点一组数值：node_load / node_delay / node_impulse 是旧的四层嵌套 map 的等价物，
+  // 但按节点 id 存放（id 由 ParasiticGraph 分配），并附带写标记位以复刻 map::count 语义。
+  struct ParasiticCornerState
   {
-    return _parasitic_resistor_map[net_name];
-  }
+    std::vector<double> node_load;
+    std::vector<double> node_delay;
+    std::vector<double> node_impulse;
+    std::vector<double> load_delay;   // 中间量（每轮 build 前清零）
+    std::vector<double> beta;         // 中间量（每轮 build 前清零）
+    std::vector<double> node_pin_cap; // 该 corner 下节点的 pin 电容
+    std::vector<uint8_t> node_delay_valid;
+    std::vector<uint8_t> node_impulse_valid;
+    std::vector<uint8_t> visited_scratch;  // 四个遍历共用，避免每次调用分配
+    bool pin_cap_ready = false;
+  };
 
-  bool hasResistorMap(const std::string& net_name) const { return _parasitic_resistor_map.count(net_name) > 0; }
+  ParasiticGraph& parasiticGraph(const std::string& net_name) { return _parasitic_graph_map[net_name]; }
 
-  std::map<std::string, double>& nodeLoadMap(
+  bool hasParasiticGraph(const std::string& net_name) const { return _parasitic_graph_map.count(net_name) > 0; }
+
+  ParasiticCornerState& parasiticCornerState(
       const std::string& net_name,
       AnalysisType analysis_type,
       TransType trans_type
   )
   {
-    return _parasitic_node_load_map[net_name][analysis_type][trans_type];
-  }
-
-  std::map<std::string, double>& nodeDelayMap(
-      const std::string& net_name,
-      AnalysisType analysis_type,
-      TransType trans_type
-  )
-  {
-    return _parasitic_node_delay_map[net_name][analysis_type][trans_type];
-  }
-
-  std::map<std::string, double>& nodeImpulseMap(
-      const std::string& net_name,
-      AnalysisType analysis_type,
-      TransType trans_type
-  )
-  {
-    return _parasitic_node_impulse_map[net_name][analysis_type][trans_type];
+    return _parasitic_corner_state_map[net_name][analysis_type][trans_type];
   }
 
  private:
@@ -144,13 +140,8 @@ class DelayCache
     return iter->second;
   }
 
-  std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, double>>>> _parasitic_resistor_map;
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>
-      _parasitic_node_load_map;
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>
-      _parasitic_node_delay_map;
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>>
-      _parasitic_node_impulse_map;
+  std::map<std::string, ParasiticGraph> _parasitic_graph_map;
+  std::map<std::string, std::map<AnalysisType, std::map<TransType, ParasiticCornerState>>> _parasitic_corner_state_map;
   std::map<ParasiticModelKey, ParasiticDmpModel> _parasitic_dmp_model_map;
   std::map<ArcTimingKey, ParasiticDelayResult> _parasitic_dmp_timing_result_map;
   std::map<ArcDriverKey, ParasiticDelayResult> _parasitic_dmp_driver_result_map;

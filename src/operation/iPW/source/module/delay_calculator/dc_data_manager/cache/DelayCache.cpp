@@ -25,10 +25,8 @@ DelayCache& DelayCache::threadCache()
 
 void DelayCache::clear()
 {
-  _parasitic_resistor_map.clear();
-  _parasitic_node_load_map.clear();
-  _parasitic_node_delay_map.clear();
-  _parasitic_node_impulse_map.clear();
+  _parasitic_graph_map.clear();
+  _parasitic_corner_state_map.clear();
   _parasitic_dmp_model_map.clear();
   _parasitic_dmp_timing_result_map.clear();
   _parasitic_dmp_driver_result_map.clear();

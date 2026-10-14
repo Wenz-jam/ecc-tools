@@ -17,7 +17,9 @@
 
 #include "DelayCache.hpp"
 
+#include "DelayCache.hpp"
 #include "Net.hpp"
+#include "ParasiticGraph.hpp"
 #include "RcTreeApprox.hpp"
 #include "TimingConstraint.hpp"
 
@@ -25,7 +27,6 @@
 #include "Database.hpp"
 #include "Instance.hpp"
 #include "ParasiticNet.hpp"
-#include "ParasiticNodeName.hpp"
 #include "Pin.hpp"
 #include "PWHeader.hpp"
 #include "TimingCell.hpp"
@@ -43,32 +44,33 @@ double getPinCapacitance(std::string& pin_name, AnalysisType analysis_type, Tran
   if (pin_iter == database.get_pin_map().end()) {
     return 0.0;
   }
-  Pin& pin = pin_iter->second;
-  if (pin.get_is_port()) {
+  return getPinCapacitance(static_cast<uint32_t>(pin_iter->second.get_index()), analysis_type, trans_type);
+}
+
+double getPinCapacitance(uint32_t pin_index, AnalysisType analysis_type, TransType trans_type)
+{
+  Database& database = PWDM.getDatabase();
+  const std::vector<Database::PinStaticContext>& pin_static_context_list = database.get_pin_static_context_list();
+  if (pin_index >= pin_static_context_list.size()) {
+    return 0.0;
+  }
+  const Database::PinStaticContext& pin_static_context = pin_static_context_list[pin_index];
+  if (pin_static_context.pin == nullptr) {
+    return 0.0;
+  }
+  if (pin_static_context.pin->get_is_port()) {
     std::map<std::string, TimingPortConstraint>& port_constraint_map
         = database.get_timing_constraint().get_port_constraint_map();
-    auto port_constraint_iter = port_constraint_map.find(pin_name);
+    auto port_constraint_iter = port_constraint_map.find(*pin_static_context.full_name);
     if (port_constraint_iter != port_constraint_map.end() && port_constraint_iter->second.get_has_load()) {
       return port_constraint_iter->second.get_load(analysis_type, trans_type);
     }
     return 0.0;
   }
-  auto instance_iter = database.get_instance_map().find(pin.get_instance_name());
-  if (instance_iter == database.get_instance_map().end()) {
+  if (pin_static_context.cell_port == nullptr) {
     return 0.0;
   }
-  Instance& instance = instance_iter->second;
-  std::map<std::string, TimingCell>& timing_cell_map = database.get_timing_library().get_cell_map();
-  auto timing_cell_iter = timing_cell_map.find(instance.get_cell_name());
-  if (timing_cell_iter == timing_cell_map.end()) {
-    return 0.0;
-  }
-  TimingCell& timing_cell = timing_cell_iter->second;
-  auto port_iter = timing_cell.get_port_map().find(pin.get_pin_name());
-  if (port_iter == timing_cell.get_port_map().end()) {
-    return 0.0;
-  }
-  TimingCellPort& timing_cell_port = port_iter->second;
+  TimingCellPort& timing_cell_port = *pin_static_context.cell_port;
   auto capacitance_iter = timing_cell_port.get_trans_capacitance_map().find(analysis_type);
   if (capacitance_iter != timing_cell_port.get_trans_capacitance_map().end()) {
     auto trans_iter = capacitance_iter->second.find(trans_type);
@@ -81,22 +83,13 @@ double getPinCapacitance(std::string& pin_name, AnalysisType analysis_type, Tran
 
 double getParasiticNodeLoad(
     ParasiticNet& parasitic_net,
-    std::string& node_name,
+    uint32_t node_id,
     AnalysisType analysis_type,
     TransType trans_type
 )
 {
-  double node_load = 0.0;
-  auto capacitance_iter = parasitic_net.get_node_capacitance_map().find(node_name);
-  if (capacitance_iter != parasitic_net.get_node_capacitance_map().end()) {
-    node_load += capacitance_iter->second;
-  }
-
-  // getPinCapacitance() returns 0.0 for unknown pins, so the former pin_map
-  // membership probe here was a third lookup of the same key.
-  std::string pin_name = getPinNameByParasiticNodeName(node_name);
-  node_load += getPinCapacitance(pin_name, analysis_type, trans_type);
-  return node_load;
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
+  return parasiticNodeLoad(graph, getParasiticPinCapList(parasitic_net, analysis_type, trans_type), node_id);
 }
 
 double getArcOutputLoad(Arc& arc, AnalysisType analysis_type, TransType output_trans_type)
@@ -173,21 +166,25 @@ double getParasiticNetOutputLoad(
   if (net.get_driver_pin_list().empty()) {
     return getParasiticTotalLoad(parasitic_net, analysis_type, trans_type);
   }
-  std::string source_node_name = getParasiticNodeName(parasitic_net, net.get_driver_pin_list().back());
-  if (source_node_name.empty()) {
+  const uint32_t source_node_id = getParasiticNodeId(parasitic_net, net.get_driver_pin_list().back());
+  if (source_node_id == kInvalidParasiticNode) {
     return getParasiticTotalLoad(parasitic_net, analysis_type, trans_type);
   }
 
-  buildParasiticDelayMap(parasitic_net, source_node_name, analysis_type, trans_type);
-  return PWDCACHE.nodeLoadMap(parasitic_net.get_net_name(), analysis_type, trans_type)[source_node_name];
+  buildParasiticDelayMap(parasitic_net, source_node_id, analysis_type, trans_type);
+  return DelayCache::threadCache()
+      .parasiticCornerState(parasitic_net.get_net_name(), analysis_type, trans_type)
+      .node_load[source_node_id];
 }
 
 double getParasiticTotalLoad(ParasiticNet& parasitic_net, AnalysisType analysis_type, TransType trans_type)
 {
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
+  const std::vector<double>& pin_cap_list = getParasiticPinCapList(parasitic_net, analysis_type, trans_type);
   double total_load = 0.0;
-  for (std::pair<const std::string, double>& node_pair : parasitic_net.get_node_capacitance_map()) {
-    std::string node_name = node_pair.first;
-    total_load += getParasiticNodeLoad(parasitic_net, node_name, analysis_type, trans_type);
+  // id 序 == node_capacitance_map 的迭代序，求和顺序与改造前一致
+  for (uint32_t node_id = 0; node_id < graph.capacitance_node_num; node_id++) {
+    total_load += parasiticNodeLoad(graph, pin_cap_list, node_id);
   }
   return total_load;
 }

@@ -28,12 +28,10 @@ class ParasiticNet;
 
 // 负载估算：管脚电容、网表负载与寄生网络的输出负载
 double getPinCapacitance(std::string& pin_name, AnalysisType analysis_type, TransType trans_type);
-double getParasiticNodeLoad(
-    ParasiticNet& parasitic_net,
-    std::string& node_name,
-    AnalysisType analysis_type,
-    TransType trans_type
-);
+// 按 pin 索引取电容：用 PinStaticContext 的预解析结果，省掉 pin→instance→cell→port 的字符串查找链。
+double getPinCapacitance(uint32_t pin_index, AnalysisType analysis_type, TransType trans_type);
+// 节点负载：节点自身电容 + 该节点的 pin 电容（旧按名字版本的索引化等价物）。
+double getParasiticNodeLoad(ParasiticNet& parasitic_net, uint32_t node_id, AnalysisType analysis_type, TransType trans_type);
 
 double getArcOutputLoad(Arc& arc, AnalysisType analysis_type, TransType output_trans_type);
 double getOutputPinLoad(std::string& output_pin, AnalysisType analysis_type, TransType output_trans_type);

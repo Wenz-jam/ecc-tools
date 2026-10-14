@@ -20,50 +20,40 @@
 #include "DelayCache.hpp"
 #include "OutputLoadEstimator.hpp"
 #include "ParasiticDmpModel.hpp"
+#include "ParasiticGraph.hpp"
+#include "ParasiticResistor.hpp"
+#include "Pin.hpp"
 #include "ParasiticNet.hpp"
 #include "PWHeader.hpp"
+#include <algorithm>
 
 namespace ipw {
 
-void buildParasiticResistorMap(
-    ParasiticNet& parasitic_net,
-    std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map
-)
-{
-  resistor_map.clear();
-  for (ParasiticResistor& parasitic_resistor : parasitic_net.get_resistor_list()) {
-    resistor_map[parasitic_resistor.get_source_node()].push_back(
-        std::make_pair(parasitic_resistor.get_sink_node(), parasitic_resistor.get_resistance())
-    );
-    resistor_map[parasitic_resistor.get_sink_node()].push_back(
-        std::make_pair(parasitic_resistor.get_source_node(), parasitic_resistor.get_resistance())
-    );
-  }
-}
-
 void flattenRcTree(
     ParasiticNet& parasitic_net,
-    std::string& source_node_name,
+    uint32_t source_node_id,
     AnalysisType analysis_type,
     TransType trans_type,
-    std::vector<std::string>& node_name_list,
+    std::vector<uint32_t>& node_id_list,
     std::vector<int32_t>& parent_idx_list,
     std::vector<double>& resistance_list,
     std::vector<double>& capacitance_list
 )
 {
-  std::string& net_name = parasitic_net.get_net_name();
-  if (!PWDCACHE.hasResistorMap(net_name)) {
-    buildParasiticResistorMap(parasitic_net, PWDCACHE.resistorMap(net_name));
-  }
-  std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map = PWDCACHE.resistorMap(net_name);
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
+  const std::vector<double>& pin_cap_list = getParasiticPinCapList(parasitic_net, analysis_type, trans_type);
 
-  std::set<std::string> visited_node_set;
-  node_name_list.push_back(source_node_name);
+  node_id_list.clear();
+  parent_idx_list.clear();
+  resistance_list.clear();
+  capacitance_list.clear();
+
+  std::vector<uint8_t> visited_node_list(graph.size(), 0);
+  node_id_list.push_back(source_node_id);
   parent_idx_list.push_back(-1);
   resistance_list.push_back(0.0);
-  capacitance_list.push_back(getParasiticNodeLoad(parasitic_net, source_node_name, analysis_type, trans_type));
-  visited_node_set.insert(source_node_name);
+  capacitance_list.push_back(parasiticNodeLoad(graph, pin_cap_list, source_node_id));
+  visited_node_list[source_node_id] = 1;
 
   std::vector<std::size_t> stack_node_idx_list;
   std::vector<std::size_t> stack_next_edge_idx_list;
@@ -71,14 +61,13 @@ void flattenRcTree(
   stack_next_edge_idx_list.push_back(0);
   while (!stack_node_idx_list.empty()) {
     std::size_t node_idx = stack_node_idx_list.back();
-    std::string& node_name = node_name_list[node_idx];
-    if (resistor_map.count(node_name) == 0) {
+    const std::vector<ParasiticGraphEdge>& edge_list = graph.adjacency[node_id_list[node_idx]];
+    if (edge_list.empty()) {
       stack_node_idx_list.pop_back();
       stack_next_edge_idx_list.pop_back();
       continue;
     }
 
-    std::vector<std::pair<std::string, double>>& edge_list = resistor_map[node_name];
     std::size_t& edge_idx = stack_next_edge_idx_list.back();
     if (edge_idx >= edge_list.size()) {
       stack_node_idx_list.pop_back();
@@ -86,19 +75,18 @@ void flattenRcTree(
       continue;
     }
 
-    std::pair<std::string, double>& next_node_pair = edge_list[edge_idx];
+    const ParasiticGraphEdge& next_edge = edge_list[edge_idx];
     edge_idx++;
-    std::string& next_node_name = next_node_pair.first;
-    if (visited_node_set.count(next_node_name) > 0) {
+    if (visited_node_list[next_edge.node] != 0) {
       continue;
     }
 
-    visited_node_set.insert(next_node_name);
-    node_name_list.push_back(next_node_name);
+    visited_node_list[next_edge.node] = 1;
+    node_id_list.push_back(next_edge.node);
     parent_idx_list.push_back(static_cast<int32_t>(node_idx));
-    resistance_list.push_back(next_node_pair.second * 1E-3);
-    capacitance_list.push_back(getParasiticNodeLoad(parasitic_net, next_node_name, analysis_type, trans_type));
-    stack_node_idx_list.push_back(node_name_list.size() - 1);
+    resistance_list.push_back(next_edge.resistance * 1E-3);
+    capacitance_list.push_back(parasiticNodeLoad(graph, pin_cap_list, next_edge.node));
+    stack_node_idx_list.push_back(node_id_list.size() - 1);
     stack_next_edge_idx_list.push_back(0);
   }
 }
@@ -159,6 +147,132 @@ void buildPiModel(
   dmp_model.set_driver_capacitance(driver_capacitance);
   dmp_model.set_pi_resistance(pi_resistance);
   dmp_model.set_load_capacitance(load_capacitance);
+}
+
+
+
+
+
+namespace {
+
+// 与旧 getPinNameByParasiticNodeName() 一致：先按原名查 pin，再把 '/' 换成 ':' 查一次。
+const std::string* findPinName(const std::string& node_name)
+{
+  Database& database = PWDM.getDatabase();
+  auto pin_iter = database.get_pin_map().find(node_name);
+  if (pin_iter != database.get_pin_map().end()) {
+    return &pin_iter->first;
+  }
+  std::string converted_name = node_name;
+  std::replace(converted_name.begin(), converted_name.end(), '/', ':');
+  pin_iter = database.get_pin_map().find(converted_name);
+  if (pin_iter != database.get_pin_map().end()) {
+    return &pin_iter->first;
+  }
+  return nullptr;
+}
+
+void buildParasiticGraph(ParasiticNet& parasitic_net, ParasiticGraph& graph)
+{
+  Database& database = PWDM.getDatabase();
+  const std::string* net_name = &parasitic_net.get_net_name();
+
+  graph.node_name.clear();
+  graph.adjacency.clear();
+  graph.node_capacitance.clear();
+  graph.node_pin_index.clear();
+  graph.node_pin_name.clear();
+  graph.node_id_map.clear();
+
+  auto add_node = [&](const std::string& node_name) -> uint32_t {
+    auto iter = graph.node_id_map.find(std::string_view(node_name));
+    if (iter != graph.node_id_map.end()) {
+      return iter->second;
+    }
+    const uint32_t node_id = graph.size();
+    graph.node_name.push_back(&node_name);
+    graph.adjacency.emplace_back();
+    graph.node_capacitance.push_back(0.0);
+    graph.node_pin_index.push_back(kInvalidParasiticNode);
+    graph.node_pin_name.push_back(nullptr);
+    graph.node_id_map.emplace(std::string_view(node_name), node_id);
+    const std::string* pin_name = findPinName(node_name);
+    if (pin_name != nullptr) {
+      auto pin_iter = database.get_pin_map().find(*pin_name);
+      if (pin_iter != database.get_pin_map().end()) {
+        graph.node_pin_index[node_id] = static_cast<uint32_t>(pin_iter->second.get_index());
+        graph.node_pin_name[node_id] = pin_name;
+      }
+    }
+    return node_id;
+  };
+
+  // 先按 node_capacitance_map 的迭代序建点（id 序 == map 序，保持按 id 求和的顺序与旧代码一致）
+  for (std::pair<const std::string, double>& node_pair : parasitic_net.get_node_capacitance_map()) {
+    const uint32_t node_id = add_node(node_pair.first);
+    graph.node_capacitance[node_id] = node_pair.second;
+  }
+  graph.capacitance_node_num = graph.size();
+  // 再追加只出现在 resistor_list 里的节点（顺序 = resistor_list 迭代序）
+  for (ParasiticResistor& parasitic_resistor : parasitic_net.get_resistor_list()) {
+    add_node(parasitic_resistor.get_source_node());
+    add_node(parasitic_resistor.get_sink_node());
+  }
+  // 邻接表：与旧 buildParasiticResistorMap 同样的插入序
+  for (ParasiticResistor& parasitic_resistor : parasitic_net.get_resistor_list()) {
+    const uint32_t source_id = graph.find(parasitic_resistor.get_source_node());
+    const uint32_t sink_id = graph.find(parasitic_resistor.get_sink_node());
+    graph.adjacency[source_id].push_back({sink_id, parasitic_resistor.get_resistance()});
+    graph.adjacency[sink_id].push_back({source_id, parasitic_resistor.get_resistance()});
+  }
+  (void) net_name;
+}
+
+}  // namespace
+
+const ParasiticGraph& getParasiticGraph(ParasiticNet& parasitic_net)
+{
+  DelayCache& cache = DelayCache::threadCache();
+  const std::string& net_name = parasitic_net.get_net_name();
+  if (cache.hasParasiticGraph(net_name)) {
+    return cache.parasiticGraph(net_name);
+  }
+  ParasiticGraph& graph = cache.parasiticGraph(net_name);
+  buildParasiticGraph(parasitic_net, graph);
+  return graph;
+}
+
+uint32_t getParasiticNodeId(ParasiticNet& parasitic_net, const std::string& pin_name)
+{
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
+  uint32_t node_id = graph.find(pin_name);
+  if (node_id != kInvalidParasiticNode) {
+    return node_id;
+  }
+  std::string spef_pin_name = pin_name;
+  std::replace(spef_pin_name.begin(), spef_pin_name.end(), ':', '/');
+  return graph.find(spef_pin_name);
+}
+
+const std::vector<double>& getParasiticPinCapList(
+    ParasiticNet& parasitic_net,
+    AnalysisType analysis_type,
+    TransType trans_type
+)
+{
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
+  DelayCache::ParasiticCornerState& state
+      = DelayCache::threadCache().parasiticCornerState(parasitic_net.get_net_name(), analysis_type, trans_type);
+  if (!state.pin_cap_ready) {
+    state.node_pin_cap.assign(graph.size(), 0.0);
+    state.pin_cap_ready = true;
+    for (uint32_t node_id = 0; node_id < graph.size(); node_id++) {
+      if (graph.is_pin(node_id)) {
+        state.node_pin_cap[node_id] = getPinCapacitance(graph.node_pin_index[node_id], analysis_type, trans_type);
+      }
+    }
+  }
+  return state.node_pin_cap;
 }
 
 }  // namespace ipw
