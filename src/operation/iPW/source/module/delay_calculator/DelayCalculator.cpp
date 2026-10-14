@@ -150,6 +150,8 @@ bool DelayCalculator::calculateDrivingCell(std::string& output_pin, TimingCellAr
 
 DelayCalculator* DelayCalculator::_dc_instance = nullptr;
 
+thread_local DCModel DelayCalculator::_dc_model;
+
 void DelayCalculator::clearParasiticCache()
 {
   _dc_model.clear();

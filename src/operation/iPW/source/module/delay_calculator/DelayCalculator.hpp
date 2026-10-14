@@ -45,7 +45,8 @@ class DelayCalculator
  private:
   // self
   static DelayCalculator* _dc_instance;
-  DCModel _dc_model;
+  // Parasitic caches are memo tables that every worker fills on its own, so keep one per thread.
+  static thread_local DCModel _dc_model;
   static constexpr int32_t kStartTimeIndex = 0;
   static constexpr int32_t kTransitionTimeIndex = 1;
   static constexpr int32_t kEffectiveCapacitanceIndex = 2;
