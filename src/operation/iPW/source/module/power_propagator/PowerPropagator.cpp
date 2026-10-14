@@ -818,13 +818,14 @@ std::map<std::string, PowerActivity> PowerPropagator::getInputActivityMap(Instan
 {
   Database& database = PWDM.getDatabase();
   std::map<std::string, PowerActivity> input_activity_map;
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) == 0) {
+  const uint64_t instance_id = instance.get_instance_id();
+  std::vector<std::vector<Database::InstancePortPinIndex>>& instance_port_pin_index_list
+      = database.get_instance_port_pin_index_list();
+  if (instance_id >= instance_port_pin_index_list.size()) {
     return input_activity_map;
   }
-  TimingCell& timing_cell = database.get_timing_library().get_cell_map()[instance.get_cell_name()];
-  for (std::pair<const std::string, TimingCellPort>& port_pair : timing_cell.get_port_map()) {
-    std::string pin_name = instance.get_instance_name() + ":" + port_pair.first;
-    input_activity_map[port_pair.first] = getPinActivity(pin_name);
+  for (Database::InstancePortPinIndex& port_pin_index : instance_port_pin_index_list[instance_id]) {
+    input_activity_map[*port_pin_index.port_name] = getPinActivity(port_pin_index.pin_index);
   }
   return input_activity_map;
 }

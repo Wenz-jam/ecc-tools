@@ -138,6 +138,7 @@ class PowerAnalyzer
   PowerActivity getPortActivity(Instance& instance, const std::string& port_name, PAInstanceModel& pa_instance_model);
   std::map<std::string, PowerActivity>& getPortActivityMap(Instance& instance, PAInstanceModel& pa_instance_model);
   PowerActivity getPinActivity(const std::string& pin_name);
+  PowerActivity getPinActivity(uint32_t pin_index);
   double getPinSlew(const std::string& pin_name, TransType trans_type);
   double getInstanceVoltage(Instance& instance);
   PowerGroupType getPowerGroupType(Instance& instance);

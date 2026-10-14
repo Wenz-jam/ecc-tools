@@ -614,12 +614,11 @@ void PowerAnalyzer::recordNetPower(
 
 void PowerAnalyzer::analyzeLeakagePower(Instance& instance, PowerValue& power_value, PAInstanceModel& pa_instance_model)
 {
-  Database& database = PWDM.getDatabase();
-  auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
-  if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
+  const PAInstanceStaticContext* static_context = pa_instance_model.get_static_context();
+  if (static_context == nullptr || static_context->timing_cell == nullptr) {
     return;
   }
-  TimingCell& timing_cell = timing_cell_iter->second;
+  TimingCell& timing_cell = *static_context->timing_cell;
   if (timing_cell.get_leakage_power_list().empty()) {
     power_value.add_leakage_power(timing_cell.get_cell_leakage_power());
     return;
@@ -685,15 +684,13 @@ std::map<std::string, PowerActivity>& PowerAnalyzer::getPortActivityMap(
   }
 
   Database& database = PWDM.getDatabase();
-  auto timing_cell_iter = database.get_timing_library().get_cell_map().find(instance.get_cell_name());
-  if (timing_cell_iter == database.get_timing_library().get_cell_map().end()) {
-    pa_instance_model.set_is_port_activity_map_built(true);
-    return port_activity_map;
-  }
-  TimingCell& timing_cell = timing_cell_iter->second;
-  for (std::pair<const std::string, TimingCellPort>& port_pair : timing_cell.get_port_map()) {
-    std::string pin_name = instance.get_instance_name() + ":" + port_pair.first;
-    port_activity_map[port_pair.first] = getPinActivity(pin_name);
+  const uint64_t instance_id = instance.get_instance_id();
+  std::vector<std::vector<Database::InstancePortPinIndex>>& instance_port_pin_index_list
+      = database.get_instance_port_pin_index_list();
+  if (instance_id < instance_port_pin_index_list.size()) {
+    for (Database::InstancePortPinIndex& port_pin_index : instance_port_pin_index_list[instance_id]) {
+      port_activity_map[*port_pin_index.port_name] = getPinActivity(port_pin_index.pin_index);
+    }
   }
   pa_instance_model.set_is_port_activity_map_built(true);
   return port_activity_map;
@@ -706,7 +703,12 @@ PowerActivity PowerAnalyzer::getPinActivity(const std::string& pin_name)
   if (pin_iter == database.get_pin_map().end()) {
     return PowerActivity();
   }
-  const PowerActivity* activity = database.findPowerActivity(static_cast<uint32_t>(pin_iter->second.get_index()));
+  return getPinActivity(static_cast<uint32_t>(pin_iter->second.get_index()));
+}
+
+PowerActivity PowerAnalyzer::getPinActivity(const uint32_t pin_index)
+{
+  const PowerActivity* activity = PWDM.getDatabase().findPowerActivity(pin_index);
   return activity != nullptr ? *activity : PowerActivity();
 }
 

@@ -188,6 +188,17 @@ class Database
   std::vector<NetPower>& get_net_power_list() { return get_workspace().net_power_list; }
   std::vector<uint8_t>& get_net_power_written() { return get_workspace().net_power_written; }
   std::vector<PinStaticContext>& get_pin_static_context_list() { return _pin_static_context_list; }
+  // 每实例：cell port 名 -> pin 索引（构建后只读）。热路径据此避免
+  // 拼接 "instance:port" 字符串与 pin_map 查找。
+  struct InstancePortPinIndex
+  {
+    const std::string* port_name = nullptr;
+    uint32_t pin_index = 0;
+  };
+  std::vector<std::vector<InstancePortPinIndex>>& get_instance_port_pin_index_list()
+  {
+    return _instance_port_pin_index_list;
+  }
   // 传播路径的索引化视图（构建后只读）。
   std::vector<uint32_t>& get_signal_order_pin_index_list() { return _signal_order_pin_index_list; }
   std::vector<std::vector<uint32_t>>& get_outgoing_arc_index_list() { return _outgoing_arc_index_list; }
@@ -217,6 +228,7 @@ class Database
   std::vector<uint32_t> _signal_order_pin_index_list;
   std::vector<std::vector<uint32_t>> _outgoing_arc_index_list;
   std::vector<std::vector<uint32_t>> _incoming_arc_index_list;
+  std::vector<std::vector<InstancePortPinIndex>> _instance_port_pin_index_list;
   std::map<std::string, Net> _net_map;
   std::vector<Arc> _arc_list;
   std::map<std::string, std::vector<std::size_t>> _outgoing_arc_list_map;

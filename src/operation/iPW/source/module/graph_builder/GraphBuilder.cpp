@@ -340,6 +340,30 @@ void GraphBuilder::buildPowerIndex()
   };
   fill_arc_index_list(database.get_outgoing_arc_list_map(), outgoing_arc_index_list);
   fill_arc_index_list(database.get_incoming_arc_list_map(), incoming_arc_index_list);
+  // 每实例的 port -> pin 索引（分析/传播路径用它替代 "instance:port" 拼接 + pin_map 查找）
+  std::vector<std::vector<Database::InstancePortPinIndex>>& instance_port_pin_index_list
+      = database.get_instance_port_pin_index_list();
+  instance_port_pin_index_list.assign(database.get_instance_map().size(), std::vector<Database::InstancePortPinIndex>());
+  for (std::pair<const std::string, Instance>& instance_pair : database.get_instance_map()) {
+    auto cell_iter = database.get_timing_library().get_cell_map().find(instance_pair.second.get_cell_name());
+    if (cell_iter == database.get_timing_library().get_cell_map().end()) {
+      continue;
+    }
+    std::vector<Database::InstancePortPinIndex>& port_pin_index_list
+        = instance_port_pin_index_list[instance_pair.second.get_instance_id()];
+    std::map<std::string, TimingCellPort>& port_map = cell_iter->second.get_port_map();
+    port_pin_index_list.reserve(port_map.size());
+    for (std::pair<const std::string, TimingCellPort>& port_pair : port_map) {
+      auto pin_iter = database.get_pin_map().find(instance_pair.first + ":" + port_pair.first);
+      if (pin_iter == database.get_pin_map().end()) {
+        continue;
+      }
+      Database::InstancePortPinIndex port_pin_index;
+      port_pin_index.port_name = &port_pair.first;
+      port_pin_index.pin_index = static_cast<uint32_t>(pin_iter->second.get_index());
+      port_pin_index_list.push_back(port_pin_index);
+    }
+  }
   // 注意：每窗口容器（resizePowerWorkspace）在 PWInterface::wrapPowerIndex() 里
   // 已经分配好；这里不能重复分配，否则会清掉 init 阶段写入的 VCD 注解。
 }
