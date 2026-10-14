@@ -138,6 +138,8 @@ void DetailedRouter::routeDRModel(DRModel& dr_model)
   // repair_iter_param_list.emplace_back(prefer_wire_unit, non_prefer_wire_unit, off_track_wire_unit, bend_unit, via_unit, 54, 0, 1, 4 * fixed_rect_unit, 4 * routed_rect_unit, 4 * violation_unit, 12, 10, true);
   // clang-format on
 
+  int32_t prev_violation_num = 0;
+  bool abort_routing = false;
   for (int32_t i = 0, iter = 1; i < static_cast<int32_t>(dr_iter_param_list.size()); i++, iter++) {
     Monitor monitor;
     int32_t iter_num = static_cast<int32_t>(dr_iter_param_list.size());
@@ -166,13 +168,23 @@ void DetailedRouter::routeDRModel(DRModel& dr_model)
     RTLOG.info(Loc::current(), "***** End Iteration ", iter, "/", iter_num, "(", RTUTIL.getPercentage(iter, iter_num), ")", monitor.getStatsInfo(),
                "*****");
 
+    int32_t curr_violation_num = getRouteViolationNum(dr_model);
+    if (9 <= iter && prev_violation_num + 1000 < curr_violation_num) {
+      RTLOG.warn(Loc::current(), "***** Violations increased by more than 1000 in iteration ", iter, ", stop iterating *****");
+      abort_routing = true;
+      break;
+    }
+    prev_violation_num = curr_violation_num;
+
     dr_model.set_initial_routing(false);
     if (stopIteration(dr_model)) {
       break;
     }
   }
   selectBestResult(dr_model);
-  repairViolation(dr_model, repair_iter_param_list);
+  if (!abort_routing) {
+    repairViolation(dr_model, repair_iter_param_list);
+  }
   uploadDRModel(dr_model);
 }
 

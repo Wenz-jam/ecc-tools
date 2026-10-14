@@ -245,7 +245,6 @@ std::vector<Segment<PlanarCoord>> PlanarRouter::getPlanarTopoList(const PRGridGr
   tb_task.set_planar_coord_list(node_coord_list);
   tb_task.set_planar_search_region(PlanarRect(0, 0, _grid_graph.get_x_size() - 1, _grid_graph.get_y_size() - 1));
   tb_task.set_point_legal_query([this](const PlanarCoord& coord) { return _grid_graph.isCellLegal(coord); });
-  return RTTB.getPlanarTopoList(tb_task);
   
   bool use_congestion_topology = pr_topo_mode == PRTopoMode::kCongestion && needCongestionAware(trial);
   tb_task.set_topo_mode(use_congestion_topology ? TBTopoMode::kCongestion : TBTopoMode::kGeometry);
