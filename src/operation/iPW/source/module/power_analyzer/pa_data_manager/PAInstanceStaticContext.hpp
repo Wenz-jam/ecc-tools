@@ -42,6 +42,9 @@ struct PAInstanceStaticContext
   TimingCell* timing_cell = nullptr;
   std::vector<PAArcStaticContext> arc_context_list;              // aligned with TimingCell::get_power_arc_list()
   std::unordered_map<std::string, double> port_output_load_map;  // per output port
+  // 该实例的 port -> pin 索引表（来自 Database::get_instance_port_pin_index_list()，
+  // 顺序与 cell port_map 一致）；热路径据此避免拼 "instance:port" 字符串。
+  const std::vector<Database::InstancePortPinIndex>* port_pin_index_list = nullptr;
 };
 
 }  // namespace ipw

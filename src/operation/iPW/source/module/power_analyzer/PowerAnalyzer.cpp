@@ -15,6 +15,8 @@
 // ***************************************************************************************
 #include "PowerAnalyzer.hpp"
 
+#include <limits>
+
 #include "DataManager.hpp"
 #include "DelayCalculator.hpp"
 #include "Logger.hpp"
@@ -98,6 +100,19 @@ void PowerAnalyzer::prepareStaticContext()
   Database& database = PWDM.getDatabase();
   // Window-independent per-instance data. Both the average flow (single shot)
   // and the peak flow (once per run, before the window loop) use this.
+  // pin 索引 -> net 索引（等价于旧路径的 pin_map.find(name) + get_net_name() + net_map.find(name)
+  // 三步；不存在/无 net 的情况与旧实现一样落到"不记录 net 功耗"）。
+  _pin_net_index_list.assign(database.get_pin_map().size(), std::numeric_limits<uint32_t>::max());
+  for (std::pair<const std::string, Pin>& pin_pair : database.get_pin_map()) {
+    if (pin_pair.second.get_net_name().empty()) {
+      continue;
+    }
+    auto net_iter = database.get_net_map().find(pin_pair.second.get_net_name());
+    if (net_iter == database.get_net_map().end()) {
+      continue;
+    }
+    _pin_net_index_list[pin_pair.second.get_index()] = static_cast<uint32_t>(net_iter->second.get_index());
+  }
   _instance_static_context_list.assign(database.get_instance_map().size(), PAInstanceStaticContext());
   for (std::pair<const std::string, Instance>& instance_pair : database.get_instance_map()) {
     Instance& instance = instance_pair.second;
@@ -109,6 +124,12 @@ void PowerAnalyzer::prepareStaticContext()
       continue;
     }
     static_context.timing_cell = &timing_cell_iter->second;
+    const uint64_t instance_id = instance.get_instance_id();
+    std::vector<std::vector<Database::InstancePortPinIndex>>& instance_port_pin_index_list
+        = database.get_instance_port_pin_index_list();
+    if (instance_id < instance_port_pin_index_list.size()) {
+      static_context.port_pin_index_list = &instance_port_pin_index_list[instance_id];
+    }
     for (TimingPowerArc& timing_power_arc : timing_cell_iter->second.get_power_arc_list()) {
       PAArcStaticContext arc_static_context;
       arc_static_context.energy_rise = getTimingPowerArcEnergy(instance, timing_power_arc, TransType::kRise);
@@ -553,35 +574,48 @@ void PowerAnalyzer::analyzeSwitchingPower(
   if (static_context == nullptr || static_context->timing_cell == nullptr) {
     return;
   }
-  TimingCell& timing_cell = *static_context->timing_cell;
   double voltage = static_context->voltage;
-  for (std::pair<const std::string, TimingCellPort>& port_pair : timing_cell.get_port_map()) {
-    TimingCellPort& timing_cell_port = port_pair.second;
-    if (!timing_cell_port.get_is_output()) {
+  const std::vector<Database::InstancePortPinIndex>* port_pin_index_list = static_context->port_pin_index_list;
+  if (port_pin_index_list == nullptr) {
+    return;
+  }
+  const std::vector<Database::PinStaticContext>& pin_static_context_list = PWDM.getDatabase().get_pin_static_context_list();
+  // 与旧实现同样的顺序（cell port_map 的迭代序），只是改成按 port->pin 索引走，
+  // 省掉每个输出脚拼 "instance:port" 与 pin_map 查找。
+  for (const Database::InstancePortPinIndex& port_pin_index : *port_pin_index_list) {
+    const uint32_t pin_index = port_pin_index.pin_index;
+    if (pin_index >= pin_static_context_list.size()) {
       continue;
     }
-    std::string output_pin_name = instance.get_instance_name() + ":" + port_pair.first;
-    PowerActivity activity = getPortActivity(instance, port_pair.first, pa_instance_model);
-    auto output_load_iter = static_context->port_output_load_map.find(port_pair.first);
-    double output_load
-        = output_load_iter != static_context->port_output_load_map.end()
-              ? output_load_iter->second
-              : std::max(
-                    PWDC.getPowerOutputLoad(output_pin_name, AnalysisType::kMax, TransType::kRise),
-                    PWDC.getPowerOutputLoad(output_pin_name, AnalysisType::kMax, TransType::kFall)
-                );
+    const Database::PinStaticContext& pin_static_context = pin_static_context_list[pin_index];
+    if (pin_static_context.cell_port == nullptr || !pin_static_context.cell_port->get_is_output()) {
+      continue;
+    }
+    const std::string& port_name = *port_pin_index.port_name;
+    PowerActivity activity = getPortActivity(instance, port_name, pa_instance_model);
+    auto output_load_iter = static_context->port_output_load_map.find(port_name);
+    double output_load = 0.0;
+    if (output_load_iter != static_context->port_output_load_map.end()) {
+      output_load = output_load_iter->second;
+    } else {
+      std::string output_pin_name = instance.get_instance_name() + ":" + port_name;
+      output_load = std::max(
+          PWDC.getPowerOutputLoad(output_pin_name, AnalysisType::kMax, TransType::kRise),
+          PWDC.getPowerOutputLoad(output_pin_name, AnalysisType::kMax, TransType::kFall)
+      );
+    }
     if (!activity.get_is_valid()) {
-      recordNetPower(output_pin_name, voltage, output_load, activity, 0.0);
+      recordNetPower(pin_index, voltage, output_load, activity, 0.0);
       continue;
     }
     double switching_power = 0.5 * output_load * voltage * voltage * activity.get_transition_density() * 1E-3;
     power_value.add_switching_power(switching_power);
-    recordNetPower(output_pin_name, voltage, output_load, activity, switching_power);
+    recordNetPower(pin_index, voltage, output_load, activity, switching_power);
   }
 }
 
 void PowerAnalyzer::recordNetPower(
-    const std::string& output_pin_name,
+    const uint32_t pin_index,
     const double voltage,
     const double output_load,
     PowerActivity& activity,
@@ -589,10 +623,10 @@ void PowerAnalyzer::recordNetPower(
 )
 {
   Database& database = PWDM.getDatabase();
-  auto pin_iter = database.get_pin_map().find(output_pin_name);
-  if (pin_iter == database.get_pin_map().end() || pin_iter->second.get_net_name().empty()) {
+  if (pin_index >= _pin_net_index_list.size() || _pin_net_index_list[pin_index] == std::numeric_limits<uint32_t>::max()) {
     return;
   }
+  const uint32_t net_index = _pin_net_index_list[pin_index];
   NetPower net_power;
   net_power.set_voltage(voltage);
   net_power.set_total_net_load(output_load);
@@ -603,11 +637,6 @@ void PowerAnalyzer::recordNetPower(
     net_power.set_static_probability(activity.get_static_probability());
     net_power.set_transition_density(activity.get_transition_density());
   }
-  auto net_iter = database.get_net_map().find(pin_iter->second.get_net_name());
-  if (net_iter == database.get_net_map().end()) {
-    return;
-  }
-  const uint64_t net_index = net_iter->second.get_index();
   database.get_net_power_list()[net_index] = net_power;
   database.get_net_power_written()[net_index] = 1;
 }

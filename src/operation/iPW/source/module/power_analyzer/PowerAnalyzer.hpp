@@ -43,6 +43,8 @@ class PowerAnalyzer
   static PowerAnalyzer* _pa_instance;
 
   std::vector<PAInstanceStaticContext> _instance_static_context_list;
+  // pin 索引 -> net 索引（kInvalidIndex = 该 pin 没有可记录的 net）
+  std::vector<uint32_t> _pin_net_index_list;
   bool _is_static_context_ready = false;
 
   PowerAnalyzer() = default;
@@ -123,7 +125,7 @@ class PowerAnalyzer
   );
   void analyzeSwitchingPower(Instance& instance, PowerValue& power_value, PAInstanceModel& pa_instance_model);
   void recordNetPower(
-      const std::string& output_pin_name,
+      uint32_t pin_index,
       const double voltage,
       const double output_load,
       PowerActivity& activity,
