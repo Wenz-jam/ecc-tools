@@ -31,7 +31,6 @@ namespace idb {
 class IdbNet;
 class IdbLayerRouting;
 class IdbLayerCut;
-class IdbInstance;
 enum class IdbLayerDirection : uint8_t;
 }  // namespace idb
 
@@ -41,7 +40,6 @@ class CutLayer;
 class DRCShape;
 class Violation;
 class PlanarRect;
-struct MacroObs;
 enum class Direction;
 enum class ViolationType;
 }  // namespace idrc
@@ -124,8 +122,6 @@ class DRCInterface
   std::vector<ids::Violation> getViolationList(std::vector<DRCShape> drc_env_shape_list, std::vector<DRCShape> drc_result_shape_list,
                                                std::set<ViolationType> drc_check_type_set, std::vector<DRCShape> drc_check_region_list);
   std::vector<ids::Violation> getMacroViolationList(std::vector<DRCShape> drc_result_shape_list);
-  std::vector<MacroObs> collectMacroObsList();
-  std::map<int32_t, std::vector<PlanarRect>> collectMacroPinRectMap(idb::IdbInstance* idb_instance);
   bool isMacroPinOverlapped(const std::vector<PlanarRect>& pin_rect_list, const PlanarRect& rect);
 };
 
