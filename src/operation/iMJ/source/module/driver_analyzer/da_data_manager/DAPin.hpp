@@ -31,16 +31,19 @@ class DAPin
   std::string& get_pin_name() { return _pin_name; }
   DAPinType get_type() { return _type; }
   bool get_is_io() { return _is_io; }
+  bool get_is_pad() { return _is_pad; }
   // const getter
   const std::string& get_instance_name() const { return _instance_name; }
   const std::string& get_pin_name() const { return _pin_name; }
   DAPinType get_type() const { return _type; }
   bool get_is_io() const { return _is_io; }
+  bool get_is_pad() const { return _is_pad; }
   // setter
   void set_instance_name(const std::string& instance_name) { _instance_name = instance_name; }
   void set_pin_name(const std::string& pin_name) { _pin_name = pin_name; }
   void set_type(DAPinType type) { _type = type; }
   void set_is_io(bool is_io) { _is_io = is_io; }
+  void set_is_pad(bool is_pad) { _is_pad = is_pad; }
   // function
 
  private:
@@ -48,6 +51,7 @@ class DAPin
   std::string _pin_name;
   DAPinType _type = DAPinType::kNone;
   bool _is_io = false;
+  bool _is_pad = false;
 };
 
 }  // namespace imj

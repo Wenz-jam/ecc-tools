@@ -43,6 +43,14 @@ netlist_save -path ./cropped.v
   terminal evidence cannot be recognized from connectivity alone.
 - Multiple tristate outputs remain multiple structural drivers; this command
   does not prove enable exclusivity.
+- Pure IO-cell boundary nets are also excluded before graph construction: one
+  distinct top-level IO pin connected only to one terminal of a LEF `CLASS PAD`
+  cell represents the package boundary, not core routing. The terminal need not
+  be named PAD. Same-name ordinary/special net records are merged and duplicate
+  pins removed for this decision. `ExcludedIOBoundaryNets` counts these nets
+  separately from PG nets; `SignalNets` counts only nets actually analyzed.
+  Direct top-level IO to core nets, PAD-to-core nets, and nets with additional
+  terminals or ports remain in analysis. No IDB objects are removed or changed.
 - `cut_def -rect {llx lly urx ury}` writes
   `def_cutter/cut.def` and `def_cutter/cut_report.rpt`. It does not replace or
   mutate the loaded design. Load the output with `def_init` to work on it.

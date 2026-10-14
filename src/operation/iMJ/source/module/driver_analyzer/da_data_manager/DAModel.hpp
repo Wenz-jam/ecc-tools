@@ -35,6 +35,7 @@ class DAModel
   int32_t get_unresolved_net_num() { return _unresolved_net_num; }
   int32_t get_undriven_net_num() { return _undriven_net_num; }
   int32_t get_excluded_pg_net_num() { return _excluded_pg_net_num; }
+  int32_t get_excluded_io_boundary_net_num() { return _excluded_io_boundary_net_num; }
   // const getter
   const std::string& get_design_name() const { return _design_name; }
   const std::vector<DANet>& get_net_list() const { return _net_list; }
@@ -44,6 +45,7 @@ class DAModel
   int32_t get_unresolved_net_num() const { return _unresolved_net_num; }
   int32_t get_undriven_net_num() const { return _undriven_net_num; }
   int32_t get_excluded_pg_net_num() const { return _excluded_pg_net_num; }
+  int32_t get_excluded_io_boundary_net_num() const { return _excluded_io_boundary_net_num; }
   // setter
   void set_design_name(const std::string& design_name) { _design_name = design_name; }
   void set_net_list(const std::vector<DANet>& net_list) { _net_list = net_list; }
@@ -53,6 +55,7 @@ class DAModel
   void set_unresolved_net_num(int32_t unresolved_net_num) { _unresolved_net_num = unresolved_net_num; }
   void set_undriven_net_num(int32_t undriven_net_num) { _undriven_net_num = undriven_net_num; }
   void set_excluded_pg_net_num(int32_t excluded_pg_net_num) { _excluded_pg_net_num = excluded_pg_net_num; }
+  void set_excluded_io_boundary_net_num(int32_t excluded_io_boundary_net_num) { _excluded_io_boundary_net_num = excluded_io_boundary_net_num; }
   // function
 
  private:
@@ -64,6 +67,7 @@ class DAModel
   int32_t _unresolved_net_num = 0;
   int32_t _undriven_net_num = 0;
   int32_t _excluded_pg_net_num = 0;
+  int32_t _excluded_io_boundary_net_num = 0;
 };
 
 }  // namespace imj

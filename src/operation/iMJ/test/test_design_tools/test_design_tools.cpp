@@ -39,6 +39,7 @@ class DesignToolsTest
     testNetlist();
     testPGNetExclusion();
     testPGNetlist();
+    testIOBoundaryNetExclusion();
     testDriverInference();
     dmInst->reset();
   }
@@ -345,6 +346,66 @@ class DesignToolsTest
             "only signal connectivity participates in Verilog driver inference");
     require(report.find("PORT VSS driver (inferred from inout)") != std::string::npos && report.find("Net : rail\n") == std::string::npos,
             "signal VSS is inferred but LEF supply rail is not");
+    MJI.destroyMJ();
+  }
+
+  void testIOBoundaryNetExclusion()
+  {
+    dmInst->reset();
+    require(dmInst->readLef(std::vector<std::string>{(_data / "tech.lef").string()}, true), "read IO boundary tech");
+    require(dmInst->readLef(std::vector<std::string>{(_data / "cell.lef").string(), (_data / "pad.lef").string()}), "read IO boundary cells");
+    require(dmInst->readVerilog((_data / "io_boundary.v").string(), "io_boundary_test"), "read IO boundary netlist");
+    MJI.initMJ({{"-temp_directory_path", (_output / "io_boundary").string()}});
+    idb::IdbDesign* design = dmInst->get_idb_design();
+    idb::IdbNet* clock_net = design->get_net_list()->find_net("clock_pin");
+    std::vector<idb::IdbPin*> clock_pin_list = clock_net->get_instance_pin_list()->get_pin_list();
+    require(design->get_instance_list()->find_instance("pad0")->get_cell_master()->is_pad(), "PAD classification from LEF");
+    MJI.analyzeDriver();
+    std::string report = readText(_output / "io_boundary/driver_analyzer/driver_report.rpt");
+    require(report.find("SignalNets : 5\n") != std::string::npos && report.find("ExcludedPGNets : 1\n") != std::string::npos
+                && report.find("ExcludedIOBoundaryNets : 3\n") != std::string::npos,
+            "exclude input/output/inout package boundaries independently of PG nets");
+    require(report.find("MultiDriverNets : 2\n") != std::string::npos && report.find("InferredPins : 1\n") != std::string::npos
+                && report.find("UnresolvedNets : 0\n") != std::string::npos,
+            "only direct core IO is inferred; core-side multiple drivers remain");
+    for (std::string name : {"clock_pin", "data_pin", "gpio_pin"}) {
+      require(report.find("Net : " + name + "\n") == std::string::npos, "package boundary in graph/report: " + name);
+    }
+    require(report.find("Net : driven\nStatus : MULTI_DRIVER\n") != std::string::npos
+                && report.find("Net : from_gpio\nStatus : MULTI_DRIVER\n") != std::string::npos
+                && report.find("PORT direct_pin driver (inferred from inout)") != std::string::npos,
+            "keep core-to-pad, pad-to-core and direct core IO connections");
+    require(clock_net->get_instance_pin_list()->get_pin_list() == clock_pin_list
+                && design->get_instance_list()->find_instance("pad2")->get_pin("BOND")->get_term()->get_direction() == idb::IdbConnectDirection::kInOut,
+            "boundary exclusion must not alter IDB connectivity or pin directions");
+    MJI.analyzeDriver();
+    require(readText(_output / "io_boundary/driver_analyzer/driver_report.rpt") == report, "stable boundary exclusion");
+
+    // Classify the merged, deduplicated logical connection, not each DEF record separately.
+    idb::IdbSpecialNet* split = design->get_special_net_list()->add_net("clock_pin");
+    split->set_connect_type(idb::IdbConnectType::kSignal);
+    split->get_instance_pin_list()->get_pin_list() = {clock_pin_list[0], clock_pin_list[0]};
+    clock_net->get_instance_pin_list()->get_pin_list().clear();
+    clock_net->get_io_pins()->get_pin_list().push_back(clock_net->get_io_pins()->get_pin_list()[0]);
+    MJI.analyzeDriver();
+    require(readText(_output / "io_boundary/driver_analyzer/driver_report.rpt") == report, "split/duplicate boundary records");
+
+    idb::IdbSpecialNet* mixed = design->get_special_net_list()->add_net("gpio_pin");
+    mixed->set_connect_type(idb::IdbConnectType::kSignal);
+    mixed->get_instance_pin_list()->add_pin_ref_unique(design->get_instance_list()->find_instance("u0")->get_pin("Y"));
+    design->get_net_list()
+        ->find_net("data_pin")
+        ->get_instance_pin_list()
+        ->add_pin_ref_unique(design->get_instance_list()->find_instance("pad1")->get_pin("DRIVE"));
+    clock_net->get_io_pins()->add_pin_ref_unique(addInferencePin("second_clock_port", idb::IdbConnectDirection::kInput));
+    MJI.analyzeDriver();
+    report = readText(_output / "io_boundary/driver_analyzer/driver_report.rpt");
+    require(report.find("SignalNets : 8\n") != std::string::npos && report.find("ExcludedIOBoundaryNets : 0\n") != std::string::npos,
+            "additional core pin, second PAD terminal or second IO prevents boundary exclusion");
+    require(report.find("Net : gpio_pin\nStatus : SINGLE_DRIVER\n") != std::string::npos
+                && report.find("Net : data_pin\nStatus : SINGLE_DRIVER\n") != std::string::npos
+                && report.find("Net : clock_pin\nStatus : MULTI_DRIVER\n") != std::string::npos,
+            "analyze retained mixed connections including known multiple drivers");
     MJI.destroyMJ();
   }
 

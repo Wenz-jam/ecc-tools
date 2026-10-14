@@ -250,6 +250,8 @@ DAPin MJInterface::wrapDriverPin(idb::IdbPin* pin, bool is_io)
   da_pin.set_is_io(is_io);
   if (!is_io && pin->get_instance() != nullptr) {
     da_pin.set_instance_name(pin->get_instance()->get_name());
+    idb::IdbCellMaster* cell_master = pin->get_instance()->get_cell_master();
+    da_pin.set_is_pad(cell_master != nullptr && cell_master->is_pad());
   }
   idb::IdbConnectDirection direction = pin->get_term() == nullptr ? idb::IdbConnectDirection::kNone : pin->get_term()->get_direction();
   if (direction == idb::IdbConnectDirection::kInput) {

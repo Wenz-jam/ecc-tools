@@ -42,6 +42,8 @@ class DriverAnalyzer
   DriverAnalyzer& operator=(DriverAnalyzer&& other) = delete;
   // function
   DAModel initDAModel();
+  void excludeIOBoundaryNetList(DAModel& da_model);
+  bool isIOBoundaryNet(DANet& net);
   void buildGraph(DAModel& da_model);
   void inferPinTypeList(DAModel& da_model);
   void updateNetState(DAModel& da_model, DANet& net);
