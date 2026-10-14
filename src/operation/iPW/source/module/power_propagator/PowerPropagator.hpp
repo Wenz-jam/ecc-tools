@@ -17,6 +17,7 @@
 
 #include "Database.hpp"
 #include "PPModel.hpp"
+#include "VcdParser.hh"
 
 namespace ipw {
 
@@ -30,6 +31,8 @@ class PowerPropagator
   static void destroyInst();
   // function
   void propagate();
+  static std::size_t annotateVcdActivity(const std::map<std::string, vcd::VcdSignalActivity>& signal_activity_map);
+  static std::size_t annotateVcdActivity(const vcd::VcdWindowSignalActivity& window_activity);
 
  private:
  // self
@@ -50,6 +53,8 @@ class PowerPropagator
   void propagateActivity(PPModel& pp_model);
   void clearPowerActivity();
   void seedVcdActivity();
+  static bool annotateVcdSignal(const std::string& vcd_signal_name, PowerActivity& activity);
+  static std::string wrapVcdPinName(const std::string& vcd_signal_name);
   bool setPinActivity(std::string& pin_name, PowerActivity& activity);
   void limitTransitionDensity(std::string& pin_name, PowerActivity& activity);
   double getMinimumSlew(std::string& pin_name);

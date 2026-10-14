@@ -16,6 +16,8 @@
 // ***************************************************************************************
 #include "PWInterface.hpp"
 
+#include <cassert>
+
 #ifdef __GLIBC__
 #include <malloc.h>
 #endif
@@ -26,6 +28,7 @@
 #include "GraphBuilder.hpp"
 #include "Lib.hh"
 #include "Logger.hpp"
+#include "PeakPowerEngine.hpp"
 #include "Monitor.hpp"
 #include "PowerAnalyzer.hpp"
 #include "PowerPropagator.hpp"
@@ -87,10 +90,12 @@ void PWInterface::initPW(std::map<std::string, std::any> config_map)
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
 
-void PWInterface::runPW()
+void PWInterface::runPW(bool is_peak, const bool is_avg)
 {
   Monitor monitor;
   PWLOG.info(Loc::current(), "Starting...");
+
+  const bool run_peak_flow = resolvePeakFlow(is_peak, is_avg);
 
   PWDC.init();
 
@@ -102,6 +107,32 @@ void PWInterface::runPW()
   PWCP.propagate();
   ClockPropagator::destroyInst();
 
+  if (run_peak_flow) {
+    runPeakPower();
+  } else {
+    runAveragedPower();
+  }
+
+  PWDC.destroy();
+
+  PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
+}
+
+// -peak 与 -avg 同时给出时 -avg 优先；都不给时按平均值流程处理。
+bool PWInterface::resolvePeakFlow(const bool is_peak, const bool is_avg)
+{
+  if (is_peak && is_avg) {
+    PWLOG.warn(Loc::current(), "Both -peak and -avg are specified; -avg takes precedence.");
+    return false;
+  }
+  if (!is_peak && !is_avg) {
+    PWLOG.info(Loc::current(), "Neither -avg nor -peak is specified; running the averaged power flow.");
+  }
+  return is_peak;
+}
+
+void PWInterface::runAveragedPower()
+{
   SignalPropagator::initInst();
   PWSP.propagate();
   SignalPropagator::destroyInst();
@@ -117,10 +148,22 @@ void PWInterface::runPW()
   PowerReporter::initInst();
   PWPR.report();
   PowerReporter::destroyInst();
+}
 
-  PWDC.destroy();
+void PWInterface::runPeakPower()
+{
+  PowerPropagator::initInst();
+  PowerAnalyzer::initInst();
+  PeakPowerEngine::initInst();
+  PWPE.run(dmInst->get_config().get_vcd_path());
+  PeakPowerEngine::destroyInst();
 
-  PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
+  PowerReporter::initInst();
+  PWPR.report();
+  PowerReporter::destroyInst();
+
+  PowerAnalyzer::destroyInst();
+  PowerPropagator::destroyInst();
 }
 
 void PWInterface::destroyPW()
@@ -180,6 +223,18 @@ void PWInterface::reportNetPower(const std::string& directory_path, const int32_
   PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
 
+void PWInterface::reportPeakPowerWaveform(const std::string& file_path)
+{
+  Monitor monitor;
+  PWLOG.info(Loc::current(), "Starting...");
+
+  PowerReporter::initInst();
+  PWPR.reportPeakPowerWaveform(file_path);
+  PowerReporter::destroyInst();
+
+  PWLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
+}
+
 #endif
 
 #endif
@@ -220,44 +275,13 @@ void PWInterface::wrapDatabase()
 
 void PWInterface::wrapVcdActivity()
 {
-  Database& database = PWDM.getDatabase();
-  database.get_vcd_activity_map().clear();
   vcd::VcdReader* vcd_reader = dmInst->get_vcd_reader();
   if (vcd_reader == nullptr) {
     return;
   }
-  std::size_t matched_net_num = 0;
-  for (std::pair<const std::string, vcd::VcdSignalActivity>& activity_pair : vcd_reader->get_signal_activity_map()) {
-    std::string vcd_signal_name = activity_pair.first;
-    std::string net_name = wrapVcdPinName(vcd_signal_name);
-    if (net_name.empty() || database.get_net_map().count(net_name) == 0) {
-      continue;
-    }
-    matched_net_num++;
-    PowerActivity activity;
-    activity.set_transition_density(activity_pair.second.get_transition_density());
-    activity.set_static_probability(activity_pair.second.get_static_probability());
-    activity.set_origin(PowerActivityOrigin::kVcd);
-    activity.set_is_valid(true);
-    for (std::string& pin_name : database.get_net_map()[net_name].get_pin_name_list()) {
-      database.get_vcd_activity_map()[pin_name] = activity;
-    }
-  }
+  std::size_t matched_net_num = PowerPropagator::annotateVcdActivity(vcd_reader->get_signal_activity_map());
   PWLOG.info(Loc::current(), "Matched ", matched_net_num, " net(s) from ", vcd_reader->get_signal_activity_map().size(),
-             " VCD signal(s); annotated ", database.get_vcd_activity_map().size(), " pin(s).");
-}
-
-std::string PWInterface::wrapVcdPinName(std::string& vcd_signal_name)
-{
-  Database& database = PWDM.getDatabase();
-  std::string top_scope_path = database.get_design_name() + "/";
-  std::size_t top_scope_pos = vcd_signal_name.find(top_scope_path);
-  if (top_scope_pos == std::string::npos || (top_scope_pos != 0 && vcd_signal_name[top_scope_pos - 1] != '/')) {
-    return "";
-  }
-  std::string pin_name = vcd_signal_name.substr(top_scope_pos + top_scope_path.size());
-  std::replace(pin_name.begin(), pin_name.end(), '/', ':');
-  return pin_name;
+             " VCD signal(s); annotated ", PWDM.getDatabase().get_vcd_activity_map().size(), " pin(s).");
 }
 
 void PWInterface::wrapDBInfo()
@@ -432,6 +456,7 @@ void PWInterface::wrapTimingLibrary()
 {
   Monitor monitor;
   PWLOG.info(Loc::current(), "Starting...");
+  LogicExpression::invalidateThreadBddCache();
   auto liberty_generation = dmInst->get_liberty_generation();
   std::vector<idb::LibLibrary*> lib_list;
   if (liberty_generation != nullptr) {
