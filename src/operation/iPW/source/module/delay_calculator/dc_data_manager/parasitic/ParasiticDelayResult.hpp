@@ -28,7 +28,6 @@ class ParasiticDelayResult
   bool get_is_valid() const { return _is_valid; }
   double get_gate_delay() const { return _gate_delay; }
   double get_driver_slew() const { return _driver_slew; }
-  std::map<std::string, double>& get_wire_delay_map() { return _wire_delay_map; }
   std::map<std::string, double>& get_load_slew_map() { return _load_slew_map; }
   // setter
   void set_is_valid(bool is_valid) { _is_valid = is_valid; }
@@ -40,7 +39,8 @@ class ParasiticDelayResult
   bool _is_valid = false;
   double _gate_delay = 0.0;
   double _driver_slew = 0.0;
-  std::map<std::string, double> _wire_delay_map;
+  // 只保留 load_slew：wire_delay 在 iPW 里只写不读（消费方只用 load_slew 与
+  // gate_delay/driver_slew），去掉它可以省掉每个 term 两次字符串 map 插入。
   std::map<std::string, double> _load_slew_map;
 };
 

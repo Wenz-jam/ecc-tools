@@ -17,6 +17,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <tuple>
@@ -35,17 +36,32 @@ inline std::uint64_t getDoubleBits(double value)
   return bits;
 }
 
+// 降阶模型（Arnoldi / DMP）的 key：用 net 名在 ParasiticNet 内的稳定地址 + 节点 id 代替
+// 两个 std::string。旧写法每次探测都要拷两次字符串并在红黑树里做字符串比较，
+// 实测占掉 SignalPropagator 近一半时间（salsa20: 4.91s 里 3.44s 是探测本身）。
 struct ParasiticModelKey
 {
-  std::string net_name;
-  std::string source_node_name;
+  const std::string* net_name = nullptr;  // 指向 ParasiticNet 内的 net 名（生命期内稳定）
+  uint32_t source_node_id = 0;            // ParasiticGraph 的节点 id
   AnalysisType analysis_type = AnalysisType::kNone;
   TransType trans_type = TransType::kNone;
 
-  bool operator<(const ParasiticModelKey& other) const
+  bool operator==(const ParasiticModelKey& other) const
   {
-    return std::tie(net_name, source_node_name, analysis_type, trans_type)
-           < std::tie(other.net_name, other.source_node_name, other.analysis_type, other.trans_type);
+    return net_name == other.net_name && source_node_id == other.source_node_id
+           && analysis_type == other.analysis_type && trans_type == other.trans_type;
+  }
+};
+
+struct ParasiticModelKeyHash
+{
+  std::size_t operator()(const ParasiticModelKey& key) const
+  {
+    std::size_t seed = std::hash<const std::string*>()(key.net_name);
+    seed ^= static_cast<std::size_t>(key.source_node_id) + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+    seed ^= static_cast<std::size_t>(key.analysis_type) * 0x100000001b3ULL + (seed << 6) + (seed >> 2);
+    seed ^= static_cast<std::size_t>(key.trans_type) * 0x100000001b3ULL + (seed << 6) + (seed >> 2);
+    return seed;
   }
 };
 

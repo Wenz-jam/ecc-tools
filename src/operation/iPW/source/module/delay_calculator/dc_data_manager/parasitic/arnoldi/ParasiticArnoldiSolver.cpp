@@ -83,8 +83,10 @@ ParasiticDelayResult ParasiticArnoldiSolver::calcParasiticArnoldiTimingResult(
     return timing_result;
   }
 
+  const ParasiticGraph& source_graph = getParasiticGraph(parasitic_net);
+  const uint32_t source_node_id = source_graph.find(source_node_name);
   ParasiticArnoldiModel& arnoldi_model
-      = getParasiticArnoldiModel(parasitic_net, source_node_name, analysis_type, output_trans_type);
+      = getParasiticArnoldiModel(parasitic_net, source_node_id, analysis_type, output_trans_type);
   if (!arnoldi_model.get_is_valid() || arnoldi_model.get_order() <= 0 || arnoldi_model.get_total_capacitance() <= 0.0) {
     return timing_result;
   }
@@ -229,9 +231,7 @@ ParasiticDelayResult ParasiticArnoldiSolver::calcParasiticArnoldiTimingResult(
         adjustParasiticLoadThreshold(timing_arc, pin_name, output_trans_type, unused_wire_delay, load_slew);
       }
     }
-    timing_result.get_wire_delay_map()[term_node_name] = wire_delay;
     timing_result.get_load_slew_map()[term_node_name] = load_slew;
-    timing_result.get_wire_delay_map()[pin_name] = wire_delay;
     timing_result.get_load_slew_map()[pin_name] = load_slew;
   }
   cacheParasiticArnoldiDriverResult(
@@ -280,43 +280,45 @@ std::optional<double> ParasiticArnoldiSolver::getCachedLoadSlew(
 
 ParasiticArnoldiModel& ParasiticArnoldiSolver::getParasiticArnoldiModel(
     ParasiticNet& parasitic_net,
-    std::string& source_node_name,
+    uint32_t source_node_id,
     AnalysisType analysis_type,
     TransType trans_type
 )
 {
-  return PWDCACHE.arnoldiModel({parasitic_net.get_net_name(), source_node_name, analysis_type, trans_type}, [&] {
-    return buildParasiticArnoldiModel(parasitic_net, source_node_name, analysis_type, trans_type);
+  ParasiticModelKey key{&parasitic_net.get_net_name(), source_node_id, analysis_type, trans_type};
+  return PWDCACHE.arnoldiModel(key, [&] {
+    return buildParasiticArnoldiModel(parasitic_net, source_node_id, analysis_type, trans_type);
   });
 }
 
 ParasiticArnoldiModel ParasiticArnoldiSolver::buildParasiticArnoldiModel(
     ParasiticNet& parasitic_net,
-    std::string& source_node_name,
+    uint32_t source_node_id,
     AnalysisType analysis_type,
     TransType trans_type
 )
 {
   ParasiticArnoldiModel arnoldi_model;
   const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
-  const uint32_t source_node_id = graph.find(source_node_name);
-  if (source_node_id == kInvalidParasiticNode) {
+  if (source_node_id >= graph.size()) {
     return arnoldi_model;
   }
   std::vector<uint32_t> node_id_list;
   std::vector<int32_t> parent_idx_list;
   std::vector<double> resistance_list;
   std::vector<double> capacitance_list;
-  flattenRcTree(
-      parasitic_net,
-      source_node_id,
-      analysis_type,
-      trans_type,
-      node_id_list,
-      parent_idx_list,
-      resistance_list,
-      capacitance_list
-  );
+  {
+    flattenRcTree(
+        parasitic_net,
+        source_node_id,
+        analysis_type,
+        trans_type,
+        node_id_list,
+        parent_idx_list,
+        resistance_list,
+        capacitance_list
+    );
+  }
   if (node_id_list.empty()) {
     return arnoldi_model;
   }
@@ -369,8 +371,6 @@ void ParasiticArnoldiSolver::initParasiticArnoldiTerm(
   // getPinNameByParasiticNodeName() + pin_map 查找。
   arnoldi_model.get_term_node_list().push_back(*graph.node_name[source_node_id]);
   arnoldi_model.get_term_pin_list().push_back(graph.pin_name_of(source_node_id));
-  arnoldi_model.get_term_index_map()[arnoldi_model.get_term_node_list().front()] = 0;
-  arnoldi_model.get_term_index_map()[arnoldi_model.get_term_pin_list().front()] = 0;
   for (uint32_t node_id : node_id_list) {
     if (node_id == source_node_id) {
       continue;
@@ -378,13 +378,8 @@ void ParasiticArnoldiSolver::initParasiticArnoldiTerm(
     if (!graph.is_pin(node_id)) {
       continue;
     }
-    const std::string& node_name = *graph.node_name[node_id];
-    const std::string& pin_name = graph.pin_name_of(node_id);
-    std::size_t term_idx = arnoldi_model.get_term_node_list().size();
-    arnoldi_model.get_term_node_list().push_back(node_name);
-    arnoldi_model.get_term_pin_list().push_back(pin_name);
-    arnoldi_model.get_term_index_map()[node_name] = term_idx;
-    arnoldi_model.get_term_index_map()[pin_name] = term_idx;
+    arnoldi_model.get_term_node_list().push_back(*graph.node_name[node_id]);
+    arnoldi_model.get_term_pin_list().push_back(graph.pin_name_of(node_id));
   }
 }
 
@@ -581,7 +576,7 @@ void ParasiticArnoldiSolver::updateParasiticArnoldiProjection(
 
 ParasiticDelayResult& ParasiticArnoldiSolver::getParasiticInputPortResult(
     ParasiticNet& parasitic_net,
-    std::string& source_node_name,
+    const std::string& source_node_name,
     AnalysisType analysis_type,
     TransType trans_type,
     double input_slew
@@ -595,7 +590,7 @@ ParasiticDelayResult& ParasiticArnoldiSolver::getParasiticInputPortResult(
 
 ParasiticDelayResult ParasiticArnoldiSolver::calcParasiticInputPortResult(
     ParasiticNet& parasitic_net,
-    std::string& source_node_name,
+    const std::string& source_node_name,
     AnalysisType analysis_type,
     TransType trans_type,
     double input_slew
@@ -607,7 +602,9 @@ ParasiticDelayResult ParasiticArnoldiSolver::calcParasiticInputPortResult(
   if (!database.get_pin_map().contains(source_pin_name) || !database.get_pin_map().at(source_pin_name).get_is_port()) {
     return result;
   }
-  ParasiticArnoldiModel& model = getParasiticArnoldiModel(parasitic_net, source_node_name, analysis_type, trans_type);
+  const ParasiticGraph& source_graph = getParasiticGraph(parasitic_net);
+  ParasiticArnoldiModel& model
+      = getParasiticArnoldiModel(parasitic_net, source_graph.find(source_node_name), analysis_type, trans_type);
   if (!model.get_is_valid() || model.get_order() <= 0) {
     return result;
   }
@@ -648,7 +645,6 @@ ParasiticDelayResult ParasiticArnoldiSolver::calcParasiticInputPortResult(
       is_fall ? library.get_output_threshold_pct_fall() : library.get_output_threshold_pct_rise()
   );
   double ramp = input_slew * derate / (upper - lower);
-  double source_time = (is_fall ? 1.0 - source_threshold : source_threshold) * ramp;
   for (std::size_t term_idx = 0; term_idx < model.get_term_node_list().size(); ++term_idx) {
     std::vector<double> weights(order, 0.0);
     for (int32_t index = 0; index < order; ++index) {
@@ -691,9 +687,7 @@ ParasiticDelayResult ParasiticArnoldiSolver::calcParasiticInputPortResult(
         || late_time < early_time) {
       return ParasiticDelayResult();
     }
-    result.get_wire_delay_map()[node] = term_idx == 0 ? 0.0 : middle_time - source_time;
     result.get_load_slew_map()[node] = term_idx == 0 ? input_slew : (late_time - early_time) / load_derate;
-    result.get_wire_delay_map()[pin_name] = result.get_wire_delay_map()[node];
     result.get_load_slew_map()[pin_name] = result.get_load_slew_map()[node];
   }
   result.set_is_valid(true);
@@ -739,8 +733,8 @@ double ParasiticArnoldiSolver::calcParasiticInputPortCrossing(
 
 std::optional<double> ParasiticArnoldiSolver::getInputPortSlew(
     ParasiticNet& parasitic_net,
-    std::string& source_node_name,
-    std::string& sink_node_name,
+    const std::string& source_node_name,
+    const std::string& sink_node_name,
     AnalysisType analysis_type,
     TransType trans_type,
     double input_slew

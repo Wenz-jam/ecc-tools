@@ -17,11 +17,13 @@
 
 #include <map>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "DelayCacheKey.hpp"
 #include "ParasiticArnoldiModel.hpp"
+#include "ParasiticCornerState.hpp"
 #include "ParasiticDelayResult.hpp"
 #include "ParasiticDmpModel.hpp"
 #include "ParasiticGraph.hpp"
@@ -100,25 +102,16 @@ class DelayCache
 
   // ===== 索引化的 RC 图与逐 corner 数值（按 net / 节点 id 访问）=====
 
-  // 每节点一组数值：node_load / node_delay / node_impulse 是旧的四层嵌套 map 的等价物，
-  // 但按节点 id 存放（id 由 ParasiticGraph 分配），并附带写标记位以复刻 map::count 语义。
-  struct ParasiticCornerState
+  // 逐节点数值容器，见 ParasiticCornerState.hpp；保留嵌套名以免改动既有调用点。
+  using ParasiticCornerState = ::ipw::ParasiticCornerState;
+
+  // 一次 try_emplace 同时给出"取或建"：命中不拷贝字符串，未命中才插入空条目，
+  // 调用方按 inserted 决定是否构建。旧写法（count + operator[]）要探测两次。
+  std::pair<ParasiticGraph&, bool> parasiticGraph(const std::string& net_name)
   {
-    std::vector<double> node_load;
-    std::vector<double> node_delay;
-    std::vector<double> node_impulse;
-    std::vector<double> load_delay;   // 中间量（每轮 build 前清零）
-    std::vector<double> beta;         // 中间量（每轮 build 前清零）
-    std::vector<double> node_pin_cap; // 该 corner 下节点的 pin 电容
-    std::vector<uint8_t> node_delay_valid;
-    std::vector<uint8_t> node_impulse_valid;
-    std::vector<uint8_t> visited_scratch;  // 四个遍历共用，避免每次调用分配
-    bool pin_cap_ready = false;
-  };
-
-  ParasiticGraph& parasiticGraph(const std::string& net_name) { return _parasitic_graph_map[net_name]; }
-
-  bool hasParasiticGraph(const std::string& net_name) const { return _parasitic_graph_map.count(net_name) > 0; }
+    auto [iter, inserted] = _parasitic_graph_map.try_emplace(net_name);
+    return {iter->second, inserted};
+  }
 
   ParasiticCornerState& parasiticCornerState(
       const std::string& net_name,
@@ -130,8 +123,8 @@ class DelayCache
   }
 
  private:
-  template <typename Key, typename Value, typename Builder>
-  static Value& getOrBuild(std::map<Key, Value>& cache, const Key& key, Builder&& builder)
+  template <typename Map, typename Key, typename Builder>
+  static typename Map::mapped_type& getOrBuild(Map& cache, const Key& key, Builder&& builder)
   {
     auto [iter, inserted] = cache.try_emplace(key);
     if (inserted) {
@@ -142,10 +135,10 @@ class DelayCache
 
   std::map<std::string, ParasiticGraph> _parasitic_graph_map;
   std::map<std::string, std::map<AnalysisType, std::map<TransType, ParasiticCornerState>>> _parasitic_corner_state_map;
-  std::map<ParasiticModelKey, ParasiticDmpModel> _parasitic_dmp_model_map;
+  std::unordered_map<ParasiticModelKey, ParasiticDmpModel, ParasiticModelKeyHash> _parasitic_dmp_model_map;
   std::map<ArcTimingKey, ParasiticDelayResult> _parasitic_dmp_timing_result_map;
   std::map<ArcDriverKey, ParasiticDelayResult> _parasitic_dmp_driver_result_map;
-  std::map<ParasiticModelKey, ParasiticArnoldiModel> _parasitic_arnoldi_model_map;
+  std::unordered_map<ParasiticModelKey, ParasiticArnoldiModel, ParasiticModelKeyHash> _parasitic_arnoldi_model_map;
   std::map<ArcTimingKey, ParasiticDelayResult> _parasitic_arnoldi_timing_result_map;
   std::map<ArcDriverKey, ParasiticDelayResult> _parasitic_arnoldi_driver_result_map;
   std::map<ArcDriverKey, ParasiticDelayResult> _parasitic_input_port_result_map;

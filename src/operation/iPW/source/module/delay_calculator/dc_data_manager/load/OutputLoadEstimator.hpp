@@ -25,6 +25,7 @@ namespace ipw {
 class Arc;
 class Net;
 class ParasiticNet;
+class ParasiticGraph;
 
 // 负载估算：管脚电容、网表负载与寄生网络的输出负载
 double getPinCapacitance(std::string& pin_name, AnalysisType analysis_type, TransType trans_type);
@@ -43,5 +44,12 @@ double getParasiticNetOutputLoad(
     TransType trans_type
 );
 double getParasiticTotalLoad(ParasiticNet& parasitic_net, AnalysisType analysis_type, TransType trans_type);
+// 同上，但复用调用方已取到的 RC 图，省掉一次按 net 名的图探测。
+double getParasiticTotalLoad(
+    const ParasiticGraph& graph,
+    ParasiticNet& parasitic_net,
+    AnalysisType analysis_type,
+    TransType trans_type
+);
 
 }  // namespace ipw

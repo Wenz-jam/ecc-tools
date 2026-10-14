@@ -217,14 +217,14 @@ class ParasiticDmpSolver
 
   ParasiticDmpModel& getParasiticDmpModel(
       ParasiticNet& parasitic_net,
-      std::string& source_node_name,
+      uint32_t source_node_id,
       AnalysisType analysis_type,
       TransType trans_type
   );
 
   ParasiticDmpModel buildParasiticDmpModel(
       ParasiticNet& parasitic_net,
-      std::string& source_node_name,
+      uint32_t source_node_id,
       AnalysisType analysis_type,
       TransType trans_type
   );

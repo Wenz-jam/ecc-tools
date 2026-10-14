@@ -222,6 +222,11 @@ TimingCellArc* ArcTimingLookup::getTimingCellArc(Arc& arc)
   if (arc.get_timing_cell_arc() != nullptr) {
     return arc.get_timing_cell_arc();
   }
+  // net 弧的 owner 是 net 名（永远不是实例名），下面的 instance_map 探测必然落空：
+  // 直接短路，省掉每条 net 弧每轮一次 935k 项字符串 map 的探测。
+  if (arc.get_type() == ArcType::kNet) {
+    return nullptr;
+  }
   if (database.get_instance_map().count(arc.get_owner_name()) == 0) {
     return nullptr;
   }
@@ -441,13 +446,14 @@ double ArcTimingLookup::calcParasiticSlew(Arc& arc, AnalysisType analysis_type, 
   }
   ParasiticNet& parasitic_net = parasitic_net_iter->second;
   const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
-  const uint32_t source_node_id = getParasiticNodeId(parasitic_net, arc.get_source_pin());
-  const uint32_t sink_node_id = getParasiticNodeId(parasitic_net, arc.get_sink_pin());
+  const uint32_t source_node_id = getParasiticNodeId(graph, arc.get_source_pin());
+  const uint32_t sink_node_id = getParasiticNodeId(graph, arc.get_sink_pin());
   if (source_node_id == kInvalidParasiticNode || sink_node_id == kInvalidParasiticNode) {
     return input_slew;
   }
-  std::string source_node_name = *graph.node_name[source_node_id];
-  std::string sink_node_name = *graph.node_name[sink_node_id];
+  // 图里的节点名指向 ParasiticNet 的稳定字符串，这里按引用用，不再每调用拷两份。
+  const std::string& source_node_name = *graph.node_name[source_node_id];
+  const std::string& sink_node_name = *graph.node_name[sink_node_id];
 
   std::optional<double> cached_load_slew
       = _arnoldi_solver.getCachedLoadSlew(arc, analysis_type, trans_type, input_slew);
@@ -465,9 +471,9 @@ double ArcTimingLookup::calcParasiticSlew(Arc& arc, AnalysisType analysis_type, 
     return *input_port_slew;
   }
 
-  buildParasiticDelayMap(parasitic_net, source_node_id, analysis_type, trans_type);
   DelayCache::ParasiticCornerState& corner_state
       = DelayCache::threadCache().parasiticCornerState(parasitic_net.get_net_name(), analysis_type, trans_type);
+  buildParasiticDelayMap(graph, corner_state, source_node_id, analysis_type, trans_type);
   if (corner_state.node_impulse_valid[sink_node_id] == 0) {
     return input_slew;
   }

@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "AnalysisType.hpp"
+#include "ParasiticCornerState.hpp"
 #include "PWHeader.hpp"
 #include "TransType.hpp"
 
@@ -87,9 +88,20 @@ const ParasiticGraph& getParasiticGraph(ParasiticNet& parasitic_net);
 // 找不到返回 kInvalidParasiticNode（对应旧 getParasiticNodeName() 返回空串）。
 uint32_t getParasiticNodeId(ParasiticNet& parasitic_net, const std::string& pin_name);
 
+// 调用方已持有 graph 时用这个重载：省掉 getParasiticNodeId 内部重复的图探测。
+uint32_t getParasiticNodeId(const ParasiticGraph& graph, const std::string& pin_name);
+
 // 该 corner 下每个节点的 pin 电容表（按节点 id；非 pin 节点为 0.0）。
 // 每 (net, analysis, trans) 只计算一次，替代原来每节点重建的五级字符串查找。
 const std::vector<double>& getParasiticPinCapList(ParasiticNet& parasitic_net, AnalysisType analysis_type, TransType trans_type);
+
+// 同上，但用调用方已经取到的 graph / corner state，避免重复探测 net 名。
+const std::vector<double>& getParasiticPinCapList(
+    const ParasiticGraph& graph,
+    ParasiticCornerState& state,
+    AnalysisType analysis_type,
+    TransType trans_type
+);
 
 // 节点负载 = 节点自身电容 + 该节点的 pin 电容（等价于旧 getParasiticNodeLoad()）。
 inline double parasiticNodeLoad(

@@ -36,7 +36,7 @@ class ParasiticArnoldiModel
   double get_sqrt_total_capacitance() const { return _sqrt_total_capacitance; }
   std::vector<std::string>& get_term_node_list() { return _term_node_list; }
   std::vector<std::string>& get_term_pin_list() { return _term_pin_list; }
-  std::map<std::string, std::size_t>& get_term_index_map() { return _term_index_map; }
+  // term_index_map 在 iPW 内只写不读，已删除（每 term 省 2 次字符串 map 插入）。
   std::vector<double>& get_diagonal_list() { return _diagonal_list; }
   std::vector<double>& get_off_diagonal_list() { return _off_diagonal_list; }
   std::vector<std::vector<double>>& get_projection_list() { return _projection_list; }
@@ -65,7 +65,7 @@ class ParasiticArnoldiModel
   double _sqrt_total_capacitance = 0.0;
   std::vector<std::string> _term_node_list;
   std::vector<std::string> _term_pin_list;
-  std::map<std::string, std::size_t> _term_index_map;
+
   std::vector<double> _diagonal_list;
   std::vector<double> _off_diagonal_list;
   std::vector<std::vector<double>> _projection_list;

@@ -21,7 +21,7 @@ namespace ipw {
 
 class ParasiticNet;
 
-std::string getParasiticNodeName(ParasiticNet& parasitic_net, std::string& pin_name);
-std::string getPinNameByParasiticNodeName(std::string& node_name);
+std::string getParasiticNodeName(ParasiticNet& parasitic_net, const std::string& pin_name);
+std::string getPinNameByParasiticNodeName(const std::string& node_name);
 
 }  // namespace ipw

@@ -22,7 +22,7 @@
 
 namespace ipw {
 
-std::string getParasiticNodeName(ParasiticNet& parasitic_net, std::string& pin_name)
+std::string getParasiticNodeName(ParasiticNet& parasitic_net, const std::string& pin_name)
 {
   if (parasitic_net.get_node_capacitance_map().find(pin_name) != parasitic_net.get_node_capacitance_map().end()) {
     return pin_name;
@@ -37,7 +37,7 @@ std::string getParasiticNodeName(ParasiticNet& parasitic_net, std::string& pin_n
   return "";
 }
 
-std::string getPinNameByParasiticNodeName(std::string& node_name)
+std::string getPinNameByParasiticNodeName(const std::string& node_name)
 {
   Database& database = PWDM.getDatabase();
   if (database.get_pin_map().find(node_name) != database.get_pin_map().end()) {

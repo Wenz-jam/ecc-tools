@@ -36,7 +36,7 @@ double getNormalizedThreshold(double threshold)
 
 void adjustParasiticLoadThreshold(
     TimingArc& timing_arc,
-    std::string& load_pin,
+    const std::string& load_pin,
     TransType trans_type,
     double& wire_delay,
     double& load_slew
@@ -82,7 +82,7 @@ void adjustParasiticLoadThreshold(
   load_slew = load_slew * ((load_slew_delta / load_slew_derate) / (driver_slew_delta / driver_slew_derate));
 }
 
-bool isParasiticLoadSlewCompatible(TimingArc& timing_arc, std::string& load_pin, TransType trans_type)
+bool isParasiticLoadSlewCompatible(TimingArc& timing_arc, const std::string& load_pin, TransType trans_type)
 {
   // The optional resistance-ratio approximation is limited to matching slew
   // conventions. Preserve the receiver waveform when a library conversion is
@@ -104,21 +104,27 @@ bool isParasiticLoadSlewCompatible(TimingArc& timing_arc, std::string& load_pin,
          && std::abs(timing_arc.get_slew_derate() - load_timing_cell->get_slew_derate_from_library()) < PW_ERROR;
 }
 
-TimingCell* getThresholdTimingCell(std::string& pin_name)
+TimingCell* getThresholdTimingCell(uint32_t pin_index)
+{
+  // PinStaticContext 在建图时已经做过同样的解析（port/悬空实例/黑盒 -> nullptr，
+  // 否则指向 library 里那个 TimingCell），所以按 pin 索引取是 O(1)，
+  // 省掉原来 6 次按名字的大 map 探测。
+  const std::vector<Database::PinStaticContext>& pin_static_context_list
+      = PWDM.getDatabase().get_pin_static_context_list();
+  if (pin_index >= pin_static_context_list.size()) {
+    return nullptr;
+  }
+  return pin_static_context_list[pin_index].timing_cell;
+}
+
+TimingCell* getThresholdTimingCell(const std::string& pin_name)
 {
   Database& database = PWDM.getDatabase();
-  if (database.get_pin_map().count(pin_name) == 0) {
+  auto pin_iter = database.get_pin_map().find(pin_name);
+  if (pin_iter == database.get_pin_map().end()) {
     return nullptr;
   }
-  Pin& pin = database.get_pin_map()[pin_name];
-  if (pin.get_is_port() || database.get_instance_map().count(pin.get_instance_name()) == 0) {
-    return nullptr;
-  }
-  Instance& instance = database.get_instance_map()[pin.get_instance_name()];
-  if (database.get_timing_library().get_cell_map().count(instance.get_cell_name()) == 0) {
-    return nullptr;
-  }
-  return &database.get_timing_library().get_cell_map()[instance.get_cell_name()];
+  return getThresholdTimingCell(static_cast<uint32_t>(pin_iter->second.get_index()));
 }
 
 double getTimingCellSlewLowerThreshold(TimingCell& timing_cell, TransType trans_type)

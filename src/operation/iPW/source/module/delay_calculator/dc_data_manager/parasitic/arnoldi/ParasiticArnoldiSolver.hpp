@@ -56,8 +56,8 @@ class ParasiticArnoldiSolver
 
   std::optional<double> getInputPortSlew(
       ParasiticNet& parasitic_net,
-      std::string& source_node_name,
-      std::string& sink_node_name,
+      const std::string& source_node_name,
+      const std::string& sink_node_name,
       AnalysisType analysis_type,
       TransType trans_type,
       double input_slew
@@ -83,16 +83,17 @@ class ParasiticArnoldiSolver
       ParasiticDelayResult& timing_result
   );
 
+  // 按 (net, 源节点 id, corner) 取/建降阶模型：不再用字符串做 key。
   ParasiticArnoldiModel& getParasiticArnoldiModel(
       ParasiticNet& parasitic_net,
-      std::string& source_node_name,
+      uint32_t source_node_id,
       AnalysisType analysis_type,
       TransType trans_type
   );
 
   ParasiticArnoldiModel buildParasiticArnoldiModel(
       ParasiticNet& parasitic_net,
-      std::string& source_node_name,
+      uint32_t source_node_id,
       AnalysisType analysis_type,
       TransType trans_type
   );
@@ -124,7 +125,7 @@ class ParasiticArnoldiSolver
 
   ParasiticDelayResult& getParasiticInputPortResult(
       ParasiticNet& parasitic_net,
-      std::string& source_node_name,
+      const std::string& source_node_name,
       AnalysisType analysis_type,
       TransType trans_type,
       double input_slew
@@ -132,7 +133,7 @@ class ParasiticArnoldiSolver
 
   ParasiticDelayResult calcParasiticInputPortResult(
       ParasiticNet& parasitic_net,
-      std::string& source_node_name,
+      const std::string& source_node_name,
       AnalysisType analysis_type,
       TransType trans_type,
       double input_slew

@@ -17,6 +17,8 @@
 
 #include <string>
 
+#include <cstdint>
+
 #include "TransType.hpp"
 
 namespace ipw {
@@ -28,13 +30,15 @@ class TimingCell;
 double getNormalizedThreshold(double threshold);
 void adjustParasiticLoadThreshold(
     TimingArc& timing_arc,
-    std::string& load_pin,
+    const std::string& load_pin,
     TransType trans_type,
     double& wire_delay,
     double& load_slew
 );
-bool isParasiticLoadSlewCompatible(TimingArc& timing_arc, std::string& load_pin, TransType trans_type);
-TimingCell* getThresholdTimingCell(std::string& pin_name);
+bool isParasiticLoadSlewCompatible(TimingArc& timing_arc, const std::string& load_pin, TransType trans_type);
+// 接收端的 library cell：按 pin 索引取（PinStaticContext 已解析），或按名字取。
+TimingCell* getThresholdTimingCell(uint32_t pin_index);
+TimingCell* getThresholdTimingCell(const std::string& pin_name);
 double getTimingCellSlewLowerThreshold(TimingCell& timing_cell, TransType trans_type);
 double getTimingCellSlewUpperThreshold(TimingCell& timing_cell, TransType trans_type);
 double getTimingCellInputThreshold(TimingCell& timing_cell, TransType trans_type);

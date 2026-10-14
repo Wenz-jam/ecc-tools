@@ -199,16 +199,13 @@ void updateParasiticImpulseMap(
 }  // namespace
 
 void buildParasiticDelayMap(
-    ParasiticNet& parasitic_net,
+    const ParasiticGraph& graph,
+    ParasiticCornerState& corner_state,
     uint32_t source_node_id,
     AnalysisType analysis_type,
     TransType trans_type
 )
 {
-  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
-  const std::vector<double>& pin_cap_list = getParasiticPinCapList(parasitic_net, analysis_type, trans_type);
-  DelayCache::ParasiticCornerState& corner_state
-      = DelayCache::threadCache().parasiticCornerState(parasitic_net.get_net_name(), analysis_type, trans_type);
   if (corner_state.node_load.size() != graph.size()) {
     corner_state.node_load.assign(graph.size(), 0.0);
     corner_state.node_delay.assign(graph.size(), 0.0);
@@ -224,6 +221,10 @@ void buildParasiticDelayMap(
   if (corner_state.node_delay_valid[source_node_id] != 0 && corner_state.node_impulse_valid[source_node_id] != 0) {
     return;
   }
+
+  // pin 电容表只在真正要算的时候才建（早退路径以前已经白付了这张表的探测成本）。
+  const std::vector<double>& pin_cap_list
+      = getParasiticPinCapList(graph, corner_state, analysis_type, trans_type);
 
   // 旧实现里 load_delay / beta 是每次调用新建的空 map，这里每轮清零复刻该语义。
   std::fill(corner_state.load_delay.begin(), corner_state.load_delay.end(), 0.0);

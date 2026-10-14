@@ -163,24 +163,36 @@ double getParasiticNetOutputLoad(
     TransType trans_type
 )
 {
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
   if (net.get_driver_pin_list().empty()) {
-    return getParasiticTotalLoad(parasitic_net, analysis_type, trans_type);
+    return getParasiticTotalLoad(graph, parasitic_net, analysis_type, trans_type);
   }
-  const uint32_t source_node_id = getParasiticNodeId(parasitic_net, net.get_driver_pin_list().back());
+  const uint32_t source_node_id = getParasiticNodeId(graph, net.get_driver_pin_list().back());
   if (source_node_id == kInvalidParasiticNode) {
-    return getParasiticTotalLoad(parasitic_net, analysis_type, trans_type);
+    return getParasiticTotalLoad(graph, parasitic_net, analysis_type, trans_type);
   }
 
-  buildParasiticDelayMap(parasitic_net, source_node_id, analysis_type, trans_type);
-  return DelayCache::threadCache()
-      .parasiticCornerState(parasitic_net.get_net_name(), analysis_type, trans_type)
-      .node_load[source_node_id];
+  ParasiticCornerState& corner_state
+      = DelayCache::threadCache().parasiticCornerState(parasitic_net.get_net_name(), analysis_type, trans_type);
+  buildParasiticDelayMap(graph, corner_state, source_node_id, analysis_type, trans_type);
+  return corner_state.node_load[source_node_id];
 }
 
 double getParasiticTotalLoad(ParasiticNet& parasitic_net, AnalysisType analysis_type, TransType trans_type)
 {
-  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
-  const std::vector<double>& pin_cap_list = getParasiticPinCapList(parasitic_net, analysis_type, trans_type);
+  return getParasiticTotalLoad(getParasiticGraph(parasitic_net), parasitic_net, analysis_type, trans_type);
+}
+
+double getParasiticTotalLoad(
+    const ParasiticGraph& graph,
+    ParasiticNet& parasitic_net,
+    AnalysisType analysis_type,
+    TransType trans_type
+)
+{
+  ParasiticCornerState& corner_state
+      = DelayCache::threadCache().parasiticCornerState(parasitic_net.get_net_name(), analysis_type, trans_type);
+  const std::vector<double>& pin_cap_list = getParasiticPinCapList(graph, corner_state, analysis_type, trans_type);
   double total_load = 0.0;
   // id 序 == node_capacitance_map 的迭代序，求和顺序与改造前一致
   for (uint32_t node_id = 0; node_id < graph.capacitance_node_num; node_id++) {

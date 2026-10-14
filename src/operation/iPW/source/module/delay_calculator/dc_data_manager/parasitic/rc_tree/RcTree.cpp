@@ -232,19 +232,15 @@ void buildParasiticGraph(ParasiticNet& parasitic_net, ParasiticGraph& graph)
 
 const ParasiticGraph& getParasiticGraph(ParasiticNet& parasitic_net)
 {
-  DelayCache& cache = DelayCache::threadCache();
-  const std::string& net_name = parasitic_net.get_net_name();
-  if (cache.hasParasiticGraph(net_name)) {
-    return cache.parasiticGraph(net_name);
+  auto [graph, is_inserted] = DelayCache::threadCache().parasiticGraph(parasitic_net.get_net_name());
+  if (is_inserted) {
+    buildParasiticGraph(parasitic_net, graph);
   }
-  ParasiticGraph& graph = cache.parasiticGraph(net_name);
-  buildParasiticGraph(parasitic_net, graph);
   return graph;
 }
 
-uint32_t getParasiticNodeId(ParasiticNet& parasitic_net, const std::string& pin_name)
+uint32_t getParasiticNodeId(const ParasiticGraph& graph, const std::string& pin_name)
 {
-  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
   uint32_t node_id = graph.find(pin_name);
   if (node_id != kInvalidParasiticNode) {
     return node_id;
@@ -254,15 +250,18 @@ uint32_t getParasiticNodeId(ParasiticNet& parasitic_net, const std::string& pin_
   return graph.find(spef_pin_name);
 }
 
+uint32_t getParasiticNodeId(ParasiticNet& parasitic_net, const std::string& pin_name)
+{
+  return getParasiticNodeId(getParasiticGraph(parasitic_net), pin_name);
+}
+
 const std::vector<double>& getParasiticPinCapList(
-    ParasiticNet& parasitic_net,
+    const ParasiticGraph& graph,
+    ParasiticCornerState& state,
     AnalysisType analysis_type,
     TransType trans_type
 )
 {
-  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
-  DelayCache::ParasiticCornerState& state
-      = DelayCache::threadCache().parasiticCornerState(parasitic_net.get_net_name(), analysis_type, trans_type);
   if (!state.pin_cap_ready) {
     state.node_pin_cap.assign(graph.size(), 0.0);
     state.pin_cap_ready = true;
@@ -273,6 +272,18 @@ const std::vector<double>& getParasiticPinCapList(
     }
   }
   return state.node_pin_cap;
+}
+
+const std::vector<double>& getParasiticPinCapList(
+    ParasiticNet& parasitic_net,
+    AnalysisType analysis_type,
+    TransType trans_type
+)
+{
+  const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
+  ParasiticCornerState& state
+      = DelayCache::threadCache().parasiticCornerState(parasitic_net.get_net_name(), analysis_type, trans_type);
+  return getParasiticPinCapList(graph, state, analysis_type, trans_type);
 }
 
 }  // namespace ipw

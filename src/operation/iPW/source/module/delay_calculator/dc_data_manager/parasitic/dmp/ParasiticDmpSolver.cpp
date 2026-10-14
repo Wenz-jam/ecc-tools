@@ -81,7 +81,8 @@ ParasiticDelayResult ParasiticDmpSolver::calcParasiticDmpTimingResult(
   }
 
   ParasiticDmpModel& dmp_model
-      = getParasiticDmpModel(parasitic_net, source_node_name, analysis_type, output_trans_type);
+      = getParasiticDmpModel(parasitic_net, getParasiticGraph(parasitic_net).find(source_node_name),
+                             analysis_type, output_trans_type);
   if (!dmp_model.get_is_valid()) {
     return timing_result;
   }
@@ -106,8 +107,6 @@ ParasiticDelayResult ParasiticDmpSolver::calcParasiticDmpTimingResult(
   timing_result.set_is_valid(true);
   timing_result.set_gate_delay(gate_delay);
   timing_result.set_driver_slew(driver_slew);
-  timing_result.get_wire_delay_map()[source_node_name] = 0.0;
-  timing_result.get_wire_delay_map()[output_pin] = 0.0;
   timing_result.get_load_slew_map()[source_node_name] = driver_slew;
   timing_result.get_load_slew_map()[output_pin] = driver_slew;
 
@@ -129,8 +128,6 @@ ParasiticDelayResult ParasiticDmpSolver::calcParasiticDmpTimingResult(
       continue;
     }
     adjustParasiticLoadThreshold(timing_arc, load_pin_name, output_trans_type, wire_delay, load_slew);
-    timing_result.get_wire_delay_map()[load_node_name] = wire_delay;
-    timing_result.get_wire_delay_map()[load_pin_name] = wire_delay;
     timing_result.get_load_slew_map()[load_node_name] = load_slew;
     timing_result.get_load_slew_map()[load_pin_name] = load_slew;
   }
@@ -1105,27 +1102,27 @@ std::optional<double> ParasiticDmpSolver::getCachedLoadSlew(
 
 ParasiticDmpModel& ParasiticDmpSolver::getParasiticDmpModel(
     ParasiticNet& parasitic_net,
-    std::string& source_node_name,
+    uint32_t source_node_id,
     AnalysisType analysis_type,
     TransType trans_type
 )
 {
-  return PWDCACHE.dmpModel({parasitic_net.get_net_name(), source_node_name, analysis_type, trans_type}, [&] {
-    return buildParasiticDmpModel(parasitic_net, source_node_name, analysis_type, trans_type);
+  ParasiticModelKey key{&parasitic_net.get_net_name(), source_node_id, analysis_type, trans_type};
+  return PWDCACHE.dmpModel(key, [&] {
+    return buildParasiticDmpModel(parasitic_net, source_node_id, analysis_type, trans_type);
   });
 }
 
 ParasiticDmpModel ParasiticDmpSolver::buildParasiticDmpModel(
     ParasiticNet& parasitic_net,
-    std::string& source_node_name,
+    uint32_t source_node_id,
     AnalysisType analysis_type,
     TransType trans_type
 )
 {
   ParasiticDmpModel dmp_model;
   const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
-  const uint32_t source_node_id = graph.find(source_node_name);
-  if (source_node_id == kInvalidParasiticNode) {
+  if (source_node_id >= graph.size()) {
     return dmp_model;
   }
   std::vector<uint32_t> node_id_list;
