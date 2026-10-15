@@ -76,9 +76,41 @@ jobs:
           ../.venv-test/bin/python -c 'from ecc_tools_bin import ecc_py; print(ecc_py.__file__)'
 
       - name: Setup PDK
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git clone --depth 1 https://github.com/openecos-projects/icsprout55-pdk.git icsprout55-pdk
-          cd icsprout55-pdk && make unzip
+          cd icsprout55-pdk
+          # Fetch metadata once with authentication; make otherwise repeats an
+          # unauthenticated lookup for each archive and hides HTTP failures.
+          curl --fail --silent --show-error --location --retry 3 \
+            --header "Authorization: Bearer $GH_TOKEN" \
+            --header "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/openecos-projects/icsprout55-pdk/releases/latest \
+            --output release.json
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          release = json.loads(Path("release.json").read_text())
+          archives = [asset for asset in release["assets"] if asset["name"].endswith(".tar.bz2")]
+          if not archives:
+              raise SystemExit("PDK release contains no .tar.bz2 archives")
+          for asset in archives:
+              name = asset["name"]
+              if Path(name).name != name:
+                  raise SystemExit(f"Invalid PDK archive name: {name}")
+              archive = Path(name + ".part")
+              subprocess.run([
+                  "curl", "--fail", "--silent", "--show-error", "--location", "--retry", "3",
+                  "--output", str(archive), asset["browser_download_url"],
+              ], check=True)
+              if archive.stat().st_size != asset["size"]:
+                  raise SystemExit(f"Incomplete PDK archive: {name}")
+              archive.replace(name)
+          PY
+          make unzip
 
       - name: Run Python API integration tests
         working-directory: test
