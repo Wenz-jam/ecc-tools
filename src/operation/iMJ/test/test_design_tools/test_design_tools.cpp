@@ -37,6 +37,7 @@ class DesignToolsTest
     testDEFCut();
     testCutSpecialNets();
     testCutExternalConnections();
+    testCutIOSpatialIndex();
     testCutRoutingFanout();
     testCutIOCapacity();
     testCutOriginalLayers();
@@ -457,6 +458,95 @@ class DesignToolsTest
     require(dmInst->readDef((_output / "fanout.def").string()), "read multi-port DEF");
     require(dmInst->get_idb_design()->get_net_list()->find_net("fanout")->get_io_pins()->get_pin_num() == 1, "DEF roundtrip changed the consolidated IO");
     MJI.destroyMJ();
+  }
+
+  void testCutIOSpatialIndex()
+  {
+    for (int32_t mode = 0; mode < 3; mode++) {
+      loadDEF();
+      require(dmInst->readDef((_data / "fanout.def.in").string()), "spatial index design");
+      idb::IdbDesign* design = dmInst->get_idb_design();
+      idb::IdbLayerRouting* layer = dynamic_cast<idb::IdbLayerRouting*>(dmInst->get_idb_layout()->get_layers()->find_layer("M1"));
+      layer->get_spacing_table()->set_parallel(nullptr);
+      if (mode == 1) {
+        layer->get_spacing_list()->get_spacing_list().front()->set_min_spacing(400);
+      } else if (mode == 2) {
+        std::shared_ptr<idb::IdbParallelSpacingTable> table = std::make_shared<idb::IdbParallelSpacingTable>(3, 3);
+        std::array<int32_t, 3> threshold_list = {0, 100, 800};
+        for (int32_t idx = 0; idx < 3; idx++) {
+          table->set_width(idx, threshold_list[idx]);
+          table->set_parallel_length(idx, threshold_list[idx]);
+          for (int32_t length_idx = 0; length_idx < 3; length_idx++) {
+            table->set_spacing(idx, length_idx, 100);
+          }
+        }
+        // The largest spacing is not at the end of either table dimension.
+        table->set_spacing(1, 1, 400);
+        layer->set_parallel_spacing_table(table);
+      }
+      design->get_instance_list()->find_instance("E")->set_coodinate(6000, 4100);
+      std::vector<imj::DCRect> obstacle_list = {{2800, 4800, 3350, 5100}, {2900, 6700, 3700, 7100}, {9000, 3500, 9300, 7500}};
+      idb::IdbRoutingBlockage* blockage = design->get_blockage_list()->add_blockage_routing("M1");
+      blockage->set_layer(layer);
+      for (imj::DCRect& rect : obstacle_list) {
+        blockage->add_rect(rect.get_ll_x(), rect.get_ll_y(), rect.get_ur_x(), rect.get_ur_y());
+      }
+      MJI.initMJ({{"-temp_directory_path", (_output / ("spatial_index_" + std::to_string(mode))).string()}});
+      MJI.cutDEF({{"-rect", std::string("2.5 2.5 12 12")}});
+      require(design->validateConnectivity().ok, "spatial index connectivity");
+      for (idb::IdbInstance* instance : design->get_instance_list()->get_instance_list()) {
+        for (idb::IdbPin* pin : instance->get_pin_list()->get_pin_list()) {
+          for (imj::DCLayerRect& shape : MJI.wrapCutPinShapeList(pin)) {
+            require(shape.get_layer_name() == "M1", "unexpected fixture layer");
+            obstacle_list.push_back(shape.get_rect());
+          }
+        }
+      }
+      // Exact edge slots for this fixture's M1/M2 tracks, width and minimum area.
+      std::vector<imj::DCRect> slot_list;
+      for (int32_t side = 0; side < 2; side++) {
+        for (int32_t y = 2600; y <= 11800; y += 200) {
+          slot_list.emplace_back(side == 0 ? 2500 : 11550, y - 50, side == 0 ? 3050 : 12000, y + 50);
+        }
+      }
+      for (const std::string& net_name : {std::string("fanout"), std::string("mixed")}) {
+        idb::IdbNet* net = design->get_net_list()->find_net(net_name);
+        require(net->get_io_pins()->get_pin_num() == 1, "spatial index IO count");
+        imj::DCRect target = MJI.wrapCutPinShapeList(net->get_instance_pin_list()->get_pin_list().front()).front().get_rect();
+        int32_t best_idx = -1;
+        double best_distance = DBL_MAX;
+        for (int32_t idx = 0; idx < static_cast<int32_t>(slot_list.size()); idx++) {
+          imj::DCRect& slot = slot_list[idx];
+          bool available = true;
+          for (imj::DCRect& obstacle : obstacle_list) {
+            int32_t width = std::max(100, std::min(obstacle.get_ur_x() - obstacle.get_ll_x(), obstacle.get_ur_y() - obstacle.get_ll_y()));
+            int32_t length = std::max(0, std::min(slot.get_ur_x(), obstacle.get_ur_x()) - std::max(slot.get_ll_x(), obstacle.get_ll_x()));
+            int32_t spacing = layer->get_spacing(width, length);
+            int32_t x_gap = std::max(slot.get_ll_x() - obstacle.get_ur_x(), obstacle.get_ll_x() - slot.get_ur_x());
+            int32_t y_gap = std::max(slot.get_ll_y() - obstacle.get_ur_y(), obstacle.get_ll_y() - slot.get_ur_y());
+            if (slot.intersect(obstacle).isValid() || (x_gap < spacing && y_gap < spacing)) {
+              available = false;
+              break;
+            }
+          }
+          double distance = std::abs((slot.get_ll_x() + slot.get_ur_x()) / 2.0 - (target.get_ll_x() + target.get_ur_x()) / 2.0)
+                            + std::abs((slot.get_ll_y() + slot.get_ur_y()) / 2.0 - (target.get_ll_y() + target.get_ur_y()) / 2.0);
+          if (available && distance < best_distance) {
+            best_idx = idx;
+            best_distance = distance;
+          }
+        }
+        require(best_idx >= 0, "brute-force fixture has no legal IO slot");
+        imj::DCRect actual = MJI.wrapCutPinShapeList(net->get_io_pins()->get_pin_list().front()).front().get_rect();
+        imj::DCRect& expected = slot_list[best_idx];
+        require(actual.get_ll_x() == expected.get_ll_x() && actual.get_ll_y() == expected.get_ll_y()
+                    && actual.get_ur_x() == expected.get_ur_x() && actual.get_ur_y() == expected.get_ur_y(),
+                "spatial query changed exhaustive placement result for mode " + std::to_string(mode) + ", net " + net_name);
+        obstacle_list.push_back(expected);
+      }
+      MJI.destroyMJ();
+    }
+    loadDEF();
   }
 
   void testCutRoutingFanout()

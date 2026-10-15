@@ -17,7 +17,7 @@
 #pragma once
 
 #include "DCModel.hpp"
-#include "DCIOSlot.hpp"
+#include "DCIOModel.hpp"
 #include "IdbDesign.h"
 #include "IdbLayout.h"
 
@@ -61,7 +61,10 @@ class DEFCutter
   void buildIOEdgeSlotList(DCModel& dc_model, idb::IdbLayerRouting* layer, int32_t origin, int32_t pitch, int32_t count,
                            std::vector<DCIOSlot>& slot_list);
   int32_t getIOPinDepth(DCModel& dc_model, idb::IdbLayerRouting* layer, int32_t width, bool low_side);
+  void buildIOSlotRTree(DCIOModel& io_model);
+  int32_t getIOMaxSpacing(idb::IdbLayerRouting* layer);
   std::map<std::string, std::vector<DCRect>> buildIOObstacleMap(DCModel& dc_model);
+  void blockIOSlotList(DCIOModel& io_model, DCLayerRect& obstacle);
   bool hasIOPinSpacing(DCLayerRect& first, DCLayerRect& second);
   double getIOPinDistance(DCIOPin& pin, const DCRect& rect);
   void updateDesign(DCModel& dc_model);

@@ -123,6 +123,11 @@ override JSON values. `analyze_driver()` has no configuration arguments.
 
 Regression:
 
+The IO-placement regression compares indexed candidates against an exhaustive
+spacing check for fixed spacing and a non-monotonic width/PRL table. The index
+only filters nearby candidates; exact spacing, candidate order and distance
+tie-breaking remain unchanged.
+
 ```sh
 cmake --build build --target test_imj_design_tools ecc_bin ecc_py
 ctest --test-dir build -R '^test_imj_design_tools$' --output-on-failure

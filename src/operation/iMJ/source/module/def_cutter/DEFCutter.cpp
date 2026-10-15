@@ -441,15 +441,15 @@ void DEFCutter::placeIOPinList(DCModel& dc_model)
   if (unplaced_pin_num == 0) {
     return;
   }
-  std::vector<DCIOSlot> slot_list = buildIOSlotList(dc_model);
+  DCIOModel io_model;
+  io_model.set_slot_list(buildIOSlotList(dc_model));
+  buildIOSlotRTree(io_model);
+  std::vector<DCIOSlot>& slot_list = io_model.get_slot_list();
   std::map<std::string, std::vector<DCRect>> obstacle_map = buildIOObstacleMap(dc_model);
-  for (DCIOSlot& slot : slot_list) {
-    for (DCRect& rect : obstacle_map[slot.get_shape().get_layer_name()]) {
-      DCLayerRect obstacle(slot.get_shape().get_layer_name(), rect);
-      if (!hasIOPinSpacing(slot.get_shape(), obstacle)) {
-        slot.set_available(false);
-        break;
-      }
+  for (auto& [layer_name, rect_list] : obstacle_map) {
+    for (DCRect& rect : rect_list) {
+      DCLayerRect obstacle(layer_name, rect);
+      blockIOSlotList(io_model, obstacle);
     }
   }
   for (DCIOPin& pin : dc_model.get_cut_pin_list()) {
@@ -476,11 +476,7 @@ void DEFCutter::placeIOPinList(DCModel& dc_model)
     DCLayerRect shape = slot_list[best_idx].get_shape();
     pin.get_shape_list().push_back(shape);
     unplaced_pin_num--;
-    for (DCIOSlot& slot : slot_list) {
-      if (slot.get_available() && !hasIOPinSpacing(slot.get_shape(), shape)) {
-        slot.set_available(false);
-      }
-    }
+    blockIOSlotList(io_model, shape);
   }
 }
 
@@ -593,6 +589,40 @@ int32_t DEFCutter::getIOPinDepth(DCModel& dc_model, idb::IdbLayerRouting* layer,
   return static_cast<int32_t>(std::ceil(depth / static_cast<double>(grid))) * grid;
 }
 
+void DEFCutter::buildIOSlotRTree(DCIOModel& io_model)
+{
+  std::map<std::string, std::vector<DCIOModel::SlotRTree::value_type>> layer_value_map;
+  std::vector<DCIOSlot>& slot_list = io_model.get_slot_list();
+  for (int32_t idx = 0; idx < static_cast<int32_t>(slot_list.size()); idx++) {
+    DCLayerRect& shape = slot_list[idx].get_shape();
+    DCRect& rect = shape.get_rect();
+    layer_value_map[shape.get_layer_name()].emplace_back(
+        BGRectInt(BGPointInt(rect.get_ll_x(), rect.get_ll_y()), BGPointInt(rect.get_ur_x(), rect.get_ur_y())), idx);
+  }
+  for (auto& [layer_name, value_list] : layer_value_map) {
+    io_model.get_layer_slot_rtree_map().emplace(layer_name, DCIOModel::SlotRTree(value_list.begin(), value_list.end()));
+    idb::IdbLayerRouting* layer = dynamic_cast<idb::IdbLayerRouting*>(dmInst->get_idb_layout()->get_layers()->find_layer(layer_name));
+    io_model.get_layer_max_spacing_map()[layer_name] = getIOMaxSpacing(layer);
+  }
+}
+
+int32_t DEFCutter::getIOMaxSpacing(idb::IdbLayerRouting* layer)
+{
+  int32_t max_spacing = 0;
+  if (layer->get_spacing_table()->is_parallel()) {
+    for (const std::vector<int32_t>& spacing_list : layer->get_spacing_table()->get_parallel()->get_spacing_table()) {
+      for (int32_t spacing : spacing_list) {
+        max_spacing = std::max(max_spacing, spacing);
+      }
+    }
+  } else {
+    for (idb::IdbLayerSpacing* spacing : layer->get_spacing_list()->get_spacing_list()) {
+      max_spacing = std::max(max_spacing, spacing->get_min_spacing());
+    }
+  }
+  return max_spacing;
+}
+
 std::map<std::string, std::vector<DCRect>> DEFCutter::buildIOObstacleMap(DCModel& dc_model)
 {
   std::map<std::string, std::vector<DCRect>> obstacle_map;
@@ -672,6 +702,29 @@ std::map<std::string, std::vector<DCRect>> DEFCutter::buildIOObstacleMap(DCModel
     }
   }
   return obstacle_map;
+}
+
+void DEFCutter::blockIOSlotList(DCIOModel& io_model, DCLayerRect& obstacle)
+{
+  auto layer_iter = io_model.get_layer_slot_rtree_map().find(obstacle.get_layer_name());
+  if (layer_iter == io_model.get_layer_slot_rtree_map().end()) {
+    return;
+  }
+  DCRect& rect = obstacle.get_rect();
+  int32_t spacing = io_model.get_layer_max_spacing_map()[obstacle.get_layer_name()];
+  // Use the full table maximum only for the broad phase; keep exact width/PRL checks below.
+  BGRectInt query_rect(
+      BGPointInt(static_cast<int32_t>(std::max(static_cast<double>(INT32_MIN), static_cast<double>(rect.get_ll_x()) - spacing)),
+                 static_cast<int32_t>(std::max(static_cast<double>(INT32_MIN), static_cast<double>(rect.get_ll_y()) - spacing))),
+      BGPointInt(static_cast<int32_t>(std::min(static_cast<double>(INT32_MAX), static_cast<double>(rect.get_ur_x()) + spacing)),
+                 static_cast<int32_t>(std::min(static_cast<double>(INT32_MAX), static_cast<double>(rect.get_ur_y()) + spacing))));
+  DCIOModel::SlotRTree& slot_rtree = layer_iter->second;
+  for (auto iter = slot_rtree.qbegin(bgi::intersects(query_rect)); iter != slot_rtree.qend(); ++iter) {
+    DCIOSlot& slot = io_model.get_slot_list()[iter->second];
+    if (slot.get_available() && !hasIOPinSpacing(slot.get_shape(), obstacle)) {
+      slot.set_available(false);
+    }
+  }
 }
 
 bool DEFCutter::hasIOPinSpacing(DCLayerRect& first, DCLayerRect& second)
