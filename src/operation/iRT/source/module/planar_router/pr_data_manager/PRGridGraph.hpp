@@ -64,27 +64,25 @@ class PRGridGraph
   {
    public:
     NetRouteTrial(PRGridGraph& graph, PRNet& pr_net);
-    ~NetRouteTrial() = default;
     NetRouteTrial(const NetRouteTrial&) = delete;
     NetRouteTrial& operator=(const NetRouteTrial&) = delete;
 
     int32_t get_net_idx() const { return _net_idx; }
     PRNet* get_pr_net() const { return _pr_net; }
-    const PREdgeSet& get_old_edge_set() const { return *_old_edge_set; }
-    const PREdgeSet& get_new_edge_set() const { return _new_edge_set; }
-    const std::vector<Segment<PlanarCoord>>& get_routing_segment_list() const { return _routing_segment_list; }
+    const PREdgeSet& get_old_edge_set() const { return _old_edge_set; }
+    const PREdgeSet& get_trial_edge_set() const { return _trial_edge_set; }
     void append(std::span<const Segment<PlanarCoord>> routing_segment_list);
     void commit(std::vector<Segment<PlanarCoord>>&& routing_segment_list);
-    void rollback() { _is_finished = true; }
+    void rollback();
 
    private:
     friend class PRGridGraph;
     PRGridGraph* _graph = nullptr;
     PRNet* _pr_net = nullptr;
-    const PREdgeSet* _old_edge_set = nullptr;
+    PREdgeSet _old_edge_set;
     int32_t _net_idx = -1;
-    PREdgeSet _new_edge_set;
-    std::vector<Segment<PlanarCoord>> _routing_segment_list;
+    // Edges selected by this trial; their demand is added only on commit.
+    PREdgeSet _trial_edge_set;
     bool _is_finished = false;
   };
 
@@ -111,9 +109,8 @@ class PRGridGraph
 
   PREdgeCost get_edge_cost(int32_t supply, int32_t demand) const;
   PREdgeCost get_edge_cost(PREdgeId edge_id) const;
-  PREdgeCost get_edge_cost(const NetRouteTrial& trial, PREdgeId edge_id) const;
-  double get_edge_cost(const NetRouteTrial& trial, PREdgeId edge_id, double overflow_unit) const;
-  double get_segment_cost(const NetRouteTrial& trial, const PlanarCoord& first_coord, const PlanarCoord& second_coord,
+  double get_edge_cost(PREdgeId edge_id, double overflow_unit) const;
+  double get_segment_cost(int32_t net_idx, const PlanarCoord& first_coord, const PlanarCoord& second_coord,
                           double overflow_unit) const;
 
   NetRouteTrial begin_route(PRNet& pr_net) { return NetRouteTrial(*this, pr_net); }

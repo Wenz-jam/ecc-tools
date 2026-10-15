@@ -253,8 +253,9 @@ std::vector<Segment<PlanarCoord>> PlanarRouter::getPlanarTopoList(const PRGridGr
   }
 
   double overflow_unit = _pr_com_param.get_overflow_unit();
-  TBSegmentCostQuery segment_cost_query = [this, &trial, overflow_unit](const PlanarCoord& first, const PlanarCoord& second) {
-    return _grid_graph.get_segment_cost(trial, first, second, overflow_unit);
+  int32_t net_idx = trial.get_net_idx();
+  TBSegmentCostQuery segment_cost_query = [this, net_idx, overflow_unit](const PlanarCoord& first, const PlanarCoord& second) {
+    return _grid_graph.get_segment_cost(net_idx, first, second, overflow_unit);
   };
   PRTopologyCostCache topology_cost_cache(std::move(segment_cost_query));
   tb_task.set_segment_cost_query(
@@ -277,7 +278,9 @@ bool PlanarRouter::needCongestionAware(const PRGridGraph::NetRouteTrial& trial)
       continue;
     }
     int32_t supply = routing_edge.supply;
-    if (supply <= 0 || routing_edge.demand / static_cast<double>(supply) >= 0.8 || routing_edge.congestion_cost >= history_threshold) {
+    // The trial has released the old route from the graph. Include it here when checking its history.
+    int32_t demand = routing_edge.demand + 1;
+    if (supply <= 0 || demand / static_cast<double>(supply) >= 0.8 || routing_edge.congestion_cost >= history_threshold) {
       return true;
     }
   }
@@ -374,12 +377,12 @@ void PlanarRouter::updatePRCandidate(const PRGridGraph::NetRouteTrial& trial, PR
       PlanarCoord edge_second = is_horizontal ? PlanarCoord(idx + 1, first_y) : PlanarCoord(first_x, idx + 1);
       PREdgeId edge_id = _grid_graph.get_edge_id(edge_first, edge_second);
       const PRGridEdge& routing_edge = _grid_graph.get_edge(edge_id);
-      bool is_owned = trial.get_new_edge_set().contains(edge_id);
+      bool is_owned = trial.get_trial_edge_set().contains(edge_id);
       candidate_cost.total_wire_length += !is_owned;
       if (is_owned || routing_edge.isIgnoreNet(curr_net_idx)) {
         continue;
       }
-      const PREdgeCost edge_cost = _grid_graph.get_edge_cost(trial, edge_id);
+      const PREdgeCost edge_cost = _grid_graph.get_edge_cost(edge_id);
       candidate_cost.is_path_blocked |= routing_edge.supply == 0;
       candidate_cost.is_overflow |= edge_cost.is_overflow;
       candidate_cost.total_cost += edge_cost.getTotalCost(overflow_unit, routing_edge.congestion_cost);
@@ -659,14 +662,14 @@ std::vector<PlanarCoord> PlanarRouter::searchAStarPath(const PRGridGraph::NetRou
       int32_t neighbor_y = curr_y + step_y;
       PREdgeId edge_id = _grid_graph.get_edge_id({curr_x, curr_y}, {neighbor_x, neighbor_y});
       const PRGridEdge& routing_edge = _grid_graph.get_edge(edge_id);
-      bool is_owned = trial.get_new_edge_set().contains(edge_id);
+      bool is_owned = trial.get_trial_edge_set().contains(edge_id);
       bool is_ignored = routing_edge.isIgnoreNet(curr_net_idx);
       if (!is_owned && routing_edge.supply == 0 && !is_ignored) {
         continue;
       }
       double step_cost = is_owned ? 0 : 1.0;
       if (!is_owned && !is_ignored) {
-        step_cost += _grid_graph.get_edge_cost(trial, edge_id, overflow_unit) - 1.0;
+        step_cost += _grid_graph.get_edge_cost(edge_id, overflow_unit) - 1.0;
       }
       if (curr_is_horizontal != is_horizontal) {
         step_cost += corner_weight;

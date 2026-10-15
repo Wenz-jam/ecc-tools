@@ -11,8 +11,12 @@
 namespace irt {
 
 PRGridGraph::NetRouteTrial::NetRouteTrial(PRGridGraph& graph, PRNet& pr_net)
-    : _graph(&graph), _pr_net(&pr_net), _old_edge_set(&pr_net.get_routing_edge_set()), _net_idx(pr_net.get_net_idx())
+    : _graph(&graph), _pr_net(&pr_net), _old_edge_set(pr_net.get_routing_edge_set()), _net_idx(pr_net.get_net_idx())
 {
+  // Keep the old route as a snapshot and release its demand for this trial.
+  for (PREdgeId edge_id : _old_edge_set) {
+    _graph->update_edge(edge_id, _net_idx, -1);
+  }
 }
 
 void PRGridGraph::NetRouteTrial::append(std::span<const Segment<PlanarCoord>> routing_segment_list)
@@ -20,9 +24,8 @@ void PRGridGraph::NetRouteTrial::append(std::span<const Segment<PlanarCoord>> ro
   if (_is_finished) {
     RTLOG.error(Loc::current(), "The planar route trial is already finished!");
   }
-  _routing_segment_list.insert(_routing_segment_list.end(), routing_segment_list.begin(), routing_segment_list.end());
   PREdgeSet edge_set = _graph->get_edge_set(routing_segment_list);
-  _new_edge_set.insert(edge_set.begin(), edge_set.end());
+  _trial_edge_set.insert(edge_set.begin(), edge_set.end());
 }
 
 void PRGridGraph::NetRouteTrial::commit(std::vector<Segment<PlanarCoord>>&& routing_segment_list)
@@ -31,6 +34,17 @@ void PRGridGraph::NetRouteTrial::commit(std::vector<Segment<PlanarCoord>>&& rout
     RTLOG.error(Loc::current(), "The planar route trial is already finished!");
   }
   _graph->commit_route(*this, std::move(routing_segment_list));
+  _is_finished = true;
+}
+
+void PRGridGraph::NetRouteTrial::rollback()
+{
+  if (_is_finished) {
+    RTLOG.error(Loc::current(), "The planar route trial is already finished!");
+  }
+  for (PREdgeId edge_id : _old_edge_set) {
+    _graph->update_edge(edge_id, _net_idx, 1);
+  }
   _is_finished = true;
 }
 
@@ -207,27 +221,17 @@ PREdgeCost PRGridGraph::get_edge_cost(PREdgeId edge_id) const
   return get_edge_cost(edge.supply, edge.demand + 1);
 }
 
-PREdgeCost PRGridGraph::get_edge_cost(const NetRouteTrial& trial, PREdgeId edge_id) const
+double PRGridGraph::get_edge_cost(PREdgeId edge_id, double overflow_unit) const
 {
   const PRGridEdge& edge = get_edge(edge_id);
-  int32_t effective_demand = edge.demand - trial.get_old_edge_set().contains(edge_id) + trial.get_new_edge_set().contains(edge_id);
-  return get_edge_cost(edge.supply, std::max(0, effective_demand) + 1);
-}
-
-double PRGridGraph::get_edge_cost(const NetRouteTrial& trial, PREdgeId edge_id, double overflow_unit) const
-{
-  const PRGridEdge& edge = get_edge(edge_id);
-  if (edge.isIgnoreNet(trial.get_net_idx())) {
-    return 1.0;
-  }
   if (edge.supply <= 0) {
     return std::numeric_limits<double>::infinity();
   }
-  PREdgeCost edge_cost = get_edge_cost(trial, edge_id);
+  PREdgeCost edge_cost = get_edge_cost(edge_id);
   return 1.0 + edge_cost.getTotalCost(overflow_unit, edge.congestion_cost);
 }
 
-double PRGridGraph::get_segment_cost(const NetRouteTrial& trial, const PlanarCoord& first_coord, const PlanarCoord& second_coord,
+double PRGridGraph::get_segment_cost(int32_t net_idx, const PlanarCoord& first_coord, const PlanarCoord& second_coord,
                                      double overflow_unit) const
 {
   if (first_coord == second_coord) {
@@ -243,11 +247,13 @@ double PRGridGraph::get_segment_cost(const NetRouteTrial& trial, const PlanarCoo
   double segment_cost = 0;
   if (RTUTIL.isHorizontal(first_coord, second_coord)) {
     for (int32_t x = first_x; x < second_x; x++) {
-      segment_cost += get_edge_cost(trial, get_edge_id({x, first_y}, {x + 1, first_y}), overflow_unit);
+      PREdgeId edge_id = get_edge_id({x, first_y}, {x + 1, first_y});
+      segment_cost += get_edge(edge_id).isIgnoreNet(net_idx) ? 1.0 : get_edge_cost(edge_id, overflow_unit);
     }
   } else {
     for (int32_t y = first_y; y < second_y; y++) {
-      segment_cost += get_edge_cost(trial, get_edge_id({first_x, y}, {first_x, y + 1}), overflow_unit);
+      PREdgeId edge_id = get_edge_id({first_x, y}, {first_x, y + 1});
+      segment_cost += get_edge(edge_id).isIgnoreNet(net_idx) ? 1.0 : get_edge_cost(edge_id, overflow_unit);
     }
   }
   return segment_cost;
@@ -308,15 +314,9 @@ void PRGridGraph::update_edge(PREdgeId edge_id, int32_t net_idx, int32_t delta)
 void PRGridGraph::commit_route(NetRouteTrial& trial, std::vector<Segment<PlanarCoord>>&& routing_segment_list)
 {
   PREdgeSet final_edge_set = get_edge_set(routing_segment_list);
-  for (PREdgeId edge_id : trial.get_old_edge_set()) {
-    if (!final_edge_set.contains(edge_id)) {
-      update_edge(edge_id, trial.get_net_idx(), -1);
-    }
-  }
+  // The old route was released when the trial started. Commit only the final route.
   for (PREdgeId edge_id : final_edge_set) {
-    if (!trial.get_old_edge_set().contains(edge_id)) {
-      update_edge(edge_id, trial.get_net_idx(), 1);
-    }
+    update_edge(edge_id, trial.get_net_idx(), 1);
   }
   trial._pr_net->set_routing_segment_list(std::move(routing_segment_list));
   trial._pr_net->set_routing_edge_set(std::move(final_edge_set));
