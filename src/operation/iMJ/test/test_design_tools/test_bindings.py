@@ -39,7 +39,8 @@ with tempfile.TemporaryDirectory(prefix="imj_bindings_") as temp:
     die_def = (output / "cut.def").read_text()
     assert "DESIGN crop_test_cut_cut ;" in die_def
     assert "DIEAREA ( 2500 2500 ) ( 12000 12000 )" in die_def
-    assert "PINS 7 ;" in die_def
+    assert "PINS 6 ;" in die_def
+    assert "- VDD + NET VDD" not in die_def
     assert "- out + NET out + DIRECTION INPUT" in die_def
     assert "- multi + NET multi + DIRECTION OUTPUT" in die_def
     assert "- transit + NET transit + DIRECTION INOUT" in die_def

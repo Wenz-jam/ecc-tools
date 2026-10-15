@@ -35,6 +35,7 @@ class DesignToolsTest
     MJI.initMJ({{"-temp_directory_path", _output.string()}});
     testDriverAnalysis();
     testDEFCut();
+    testCutSpecialNets();
     testCutExternalConnections();
     testCutRoutingFanout();
     testCutIOCapacity();
@@ -263,7 +264,7 @@ class DesignToolsTest
     idb::IdbConnectivityCheckResult connectivity = design->validateConnectivity();
     require(connectivity.ok, connectivity.messages.empty() ? "cropped design connectivity is inconsistent" : connectivity.messages.front());
     require(design->get_instance_list()->get_num() == 2, "component count");
-    require(design->get_io_pin_list()->get_pin_num() == 7, "preserved and generated IO pin count");
+    require(design->get_io_pin_list()->get_pin_num() == 6, "preserved and generated IO pin count");
     require(design->get_net_list()->find_net("a")->get_instance_pin_list()->get_pin_num() == 1, "deleted instance reference");
     require(design->get_special_net_list()->find_net("VDD")->get_instance_pin_list()->get_pin_num() == 2, "PG connectivity");
     require(design->get_group_list()->get_num() == 2, "group references");
@@ -283,8 +284,8 @@ class DesignToolsTest
     require(design->get_io_pin_list()->find_pin("multi")->get_term()->get_direction() == idb::IdbConnectDirection::kOutput, "internal driver produces OUTPUT");
     require(design->get_io_pin_list()->find_pin("out")->get_term()->get_direction() == idb::IdbConnectDirection::kInput, "external driver produces INPUT");
     require(design->get_io_pin_list()->find_pin("transit")->get_term()->get_direction() == idb::IdbConnectDirection::kInOut, "unknown transit direction");
-    require(design->get_io_pin_list()->find_pin("VDD")->get_term()->get_direction() == idb::IdbConnectDirection::kInOut, "PG direction");
-    require(design->get_io_pin_list()->find_pin("VDD")->get_term()->get_type() == idb::IdbConnectType::kPower, "PG pin use");
+    require(design->get_io_pin_list()->find_pin("VDD") == nullptr, "special net must not generate an IO");
+    require(design->get_special_net_list()->find_net("VDD")->get_io_pin_list()->get_pin_num() == 0, "special net must not gain IO references");
     require(design->get_net_list()->find_net("transit")->get_io_pins()->get_pin_num() == 1, "one logical pin for two crossings");
     require(design->get_io_pin_list()->find_pin("transit")->get_term()->get_port_number() == 2, "both transit crossings have PORT shapes");
     std::set<std::tuple<std::string, int32_t, int32_t, int32_t, int32_t>> transit_shapes;
@@ -317,6 +318,70 @@ class DesignToolsTest
             "generated IO is floating inside die");
   }
 
+  void testCutSpecialNets()
+  {
+    loadDEF();
+    idb::IdbDesign* design = dmInst->get_idb_design();
+    idb::IdbPin* bus_pin = design->get_io_pin_list()->find_pin("bus");
+    imj::DCRect bus_rect = MJI.wrapCutPinShapeList(bus_pin).front().get_rect();
+    int32_t bus_port_num = bus_pin->get_term()->get_port_number();
+    idb::IdbSpecialNet* bus = design->get_special_net_list()->add_net("bus");
+    bus->set_connect_type(idb::IdbConnectType::kSignal);
+    require(design->connectPinToSpecialNet(bus_pin, bus), "existing special IO connection");
+    // This special record will not survive the crop, but still excludes its ordinary record.
+    design->get_special_net_list()->add_net("out")->set_connect_type(idb::IdbConnectType::kSignal);
+    idb::IdbSpecialNet* signal = design->get_special_net_list()->add_net("special_signal");
+    signal->set_connect_type(idb::IdbConnectType::kSignal);
+    idb::IdbSpecialWire* wire = signal->get_wire_list()->add_wire();
+    wire->set_wire_state(idb::IdbWiringStatement::kRouted);
+    idb::IdbSpecialWireSegment* segment = wire->add_segment();
+    segment->set_layer(dmInst->get_idb_layout()->get_layers()->find_layer("M1"));
+    segment->set_route_width(100);
+    segment->add_flush_point(1000, 8000, 0);
+    segment->add_flush_point(18000, 8000, 0);
+    MJI.initMJ({{"-temp_directory_path", (_output / "special_nets").string()}});
+    MJI.cutDEF({{"-rect", std::string("2.5 2.5 12 12")}});
+    require(design->validateConnectivity().ok, "special net cut connectivity");
+    require(design->get_io_pin_list()->get_pin_num() == 5, "only ordinary nets may gain IOs");
+    for (std::string name : {"VDD", "out", "special_signal"}) {
+      require(design->get_io_pin_list()->find_pin(name) == nullptr, "special net generated IO: " + name);
+    }
+    require(design->get_net_list()->find_net("out")->get_io_pins()->get_pin_num() == 0, "ordinary record bypassed special exclusion");
+    require(design->get_special_net_list()->find_net("out") == nullptr, "empty special record should not survive crop");
+    bus_pin = design->get_io_pin_list()->find_pin("bus");
+    require(bus_pin != nullptr && bus_pin->get_term()->get_port_number() == bus_port_num, "retained special IO must not be extended");
+    std::vector<imj::DCLayerRect> bus_shapes = MJI.wrapCutPinShapeList(bus_pin);
+    require(bus_shapes.size() == 1 && bus_shapes.front().get_layer_name() == "M2", "retained special IO layer changed");
+    imj::DCRect& rect = bus_shapes.front().get_rect();
+    require(rect.get_ll_x() == bus_rect.get_ll_x() && rect.get_ll_y() == bus_rect.get_ll_y()
+                && rect.get_ur_x() == bus_rect.get_ur_x() && rect.get_ur_y() == bus_rect.get_ur_y(),
+            "retained special IO geometry changed");
+    require(bus_pin->get_special_net() == design->get_special_net_list()->find_net("bus")
+                && bus_pin->get_net() == design->get_net_list()->find_net("bus"),
+            "retained IO lost ordinary/special references");
+    require(design->get_special_net_list()->find_net("VDD")->get_instance_pin_list()->get_pin_num() == 2, "special net instance pins lost");
+    require(design->get_special_net_list()->find_net("VDD")->get_wire_list()->get_num() > 0, "special net routing lost");
+    imj::DCModel model;
+    MJI.wrapCutDesign(model);
+    bool has_clipped_signal_route = false;
+    for (imj::DCNet& net : model.get_net_list()) {
+      if (net.get_name() == "special_signal") {
+        require(net.get_is_special() && !net.get_is_pg(), "signal SPECIALNETS classification changed");
+        require(net.get_route_list().size() == 1, "special signal routing lost");
+        imj::DCRect& route = net.get_route_list().front().get_rect();
+        has_clipped_signal_route = route.get_ll_x() == 2500 && route.get_ur_x() == 12000
+                                   && route.get_ll_y() == 7950 && route.get_ur_y() == 8050;
+      }
+    }
+    require(has_clipped_signal_route, "special signal route must remain clipped without creating IOs");
+    require(design->get_net_list()->find_net("multi")->get_io_pins()->get_pin_num() == 1, "ordinary net must still gain its IO");
+    std::string report = readText(_output / "special_nets/def_cutter/cut_report.rpt");
+    for (std::string name : {"VDD", "bus", "out", "special_signal"}) {
+      require(report.find("CutNet : " + name + " ") == std::string::npos, "excluded special net reported as generating IO");
+    }
+    MJI.destroyMJ();
+  }
+
   void testCutExternalConnections()
   {
     dmInst->reset();
@@ -344,7 +409,7 @@ class DesignToolsTest
     }
     require(input_num == 1 && output_num == 0, "external driver determines the consolidated IO direction");
     require(design->get_net_list()->find_net("internal")->get_io_pins()->get_pin_num() == 0, "internal connection must not become IO");
-    require(design->get_special_net_list()->find_net("VDD")->get_io_pin_list()->get_pin_num() == 1, "PG connections must remain consolidated");
+    require(design->get_special_net_list()->find_net("VDD")->get_io_pin_list()->get_pin_num() == 0, "special net must not generate IOs");
     std::string report = readText(_output / "fanout/def_cutter/cut_report.rpt");
     require(report.find("CutNet : fanout removed_pins=3 io_pins=1\n") != std::string::npos, "fanout consolidation report");
     imj::DCRect die(2500, 2500, 12000, 12000);
@@ -386,7 +451,7 @@ class DesignToolsTest
     idb::IdbNet* output_net = netlist->get_instance_list()->find_instance("A")->get_pin("Y")->get_net();
     require(output_net->get_io_pins()->get_pin_num() == 1, "netlist changed the consolidated IO");
     MJI.cutDEF({{"-rect", std::string("2.5 2.5 12 12")}});
-    require(design->get_io_pin_list()->get_pin_num() == 3, "repeated cut changed boundary IO count");
+    require(design->get_io_pin_list()->get_pin_num() == 2, "repeated cut changed boundary IO count");
     require(design->validateConnectivity().ok, "repeated fanout cut connectivity");
     require(dmInst->saveDef((_output / "fanout.def").string()), "save multi-port DEF");
     require(dmInst->readDef((_output / "fanout.def").string()), "read multi-port DEF");
@@ -587,7 +652,7 @@ class DesignToolsTest
     MJI.initMJ({{"-temp_directory_path", (_output / "no_tracks").string()}});
     MJI.cutDEF({{"-rect", std::string("2.5 2.5 12 12")}});
     idb::IdbDesign* design = dmInst->get_idb_design();
-    require(design->get_io_pin_list()->get_pin_num() == 3, "LEF grid fallback IO count");
+    require(design->get_io_pin_list()->get_pin_num() == 2, "LEF grid fallback IO count");
     require(design->validateConnectivity().ok, "LEF grid fallback connectivity");
     for (idb::IdbPin* pin : design->get_io_pin_list()->get_pin_list()) {
       for (imj::DCLayerRect& shape : MJI.wrapCutPinShapeList(pin)) {

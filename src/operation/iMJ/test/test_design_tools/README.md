@@ -64,11 +64,15 @@ netlist_save -path ./cropped.v
   and special routing, rectangular blockages, fills, regions and slots are
   clipped. Complete vias are retained. For a partially clipped via, its cut is
   removed while its in-die routing enclosures remain as metal and IO access.
-- All removed terminals on the same net share one logical IO. For example,
+- All removed terminals on the same ordinary net share one logical IO. For example,
   internal A connected to external B/C/D produces one IO, not three. Reuse a
   retained top-level IO when available. An external driver produces an INPUT;
   internal drivers driving external loads produce an OUTPUT. Internal-only
   nets do not gain IOs.
+- SPECIALNETS do not generate or extend IOs, regardless of their USE. Same-name
+  ordinary net records are excluded too, even if the special record itself is
+  outside the crop. Retained original IOs, instance connections and clipped
+  special routing are preserved.
 - Boundary routing cuts on the selected layer supply IO shapes where available.
   Multiple shapes are PORTs of one IO, not separate IOs. Unrouted IOs are
   placed inside and flush with the new die boundary, on DEF tracks (or LEF
@@ -84,9 +88,9 @@ netlist_save -path ./cropped.v
   Unplaced terminals still provide their LEF/DEF port layers. CUT layers never
   participate. Missing terminal layer data or exhausted selected-layer slots
   fails without choosing another layer.
-- Routing-only nets without terminals average their boundary metal layers.
-  Existing retained IO geometry is preserved. Same-name ordinary/special records
-  share one generated IO. PG and unknown directions use INOUT.
+- Ordinary routing-only nets without terminals average their boundary metal
+  layers. Existing retained IO geometry is preserved. Ordinary PG nets and
+  unknown directions use INOUT.
 - The result has explicit ports and connectivity for DEF and Verilog export.
   It does not synthesize the deleted logic or reroute the retained metal: the
   new ports describe the interface to the removed environment. A newly placed

@@ -234,14 +234,21 @@ void DEFCutter::buildIOPinList(DCModel& dc_model)
       pin_name_set.insert(pin.get_name());
     }
   }
+  std::set<std::string> special_net_name_set;
   std::map<std::string, std::vector<int32_t>> net_idx_map;
   for (int32_t idx = 0; idx < static_cast<int32_t>(dc_model.get_net_list().size()); idx++) {
     DCNet& net = dc_model.get_net_list()[idx];
+    if (net.get_is_special()) {
+      special_net_name_set.insert(net.get_name());
+    }
     if (net.get_retained()) {
       net_idx_map[net.get_name()].push_back(idx);
     }
   }
   for (auto& [net_name, net_idx_list] : net_idx_map) {
+    if (special_net_name_set.contains(net_name)) {
+      continue;
+    }
     DCIOPin pin;
     pin.set_net_idx(net_idx_list.front());
     bool needs_io = false;
@@ -1141,7 +1148,8 @@ void DEFCutter::writeReport(DCModel& dc_model)
   *stream << "Design : " << dc_model.get_design_name() << "\nCoordinates : absolute, DBU"
           << "\nDie : " << dc_model.get_die().get_ll_x() << " " << dc_model.get_die().get_ll_y() << " " << dc_model.get_die().get_ur_x() << " "
           << dc_model.get_die().get_ur_y() << "\nOnly complete placed instances, ports and vias are retained.\n"
-          << "Each cut net reuses or adds one logical IO for all removed terminals.\n"
+          << "Each ordinary cut net reuses or adds one logical IO for all removed terminals.\n"
+          << "Special nets do not generate or extend IOs, including same-name ordinary net records.\n"
           << "IOs use boundary routing cuts or legal edge tracks; unrouted connections require routing to the new IOs.\n"
           << "IO layers follow the mean routing-layer position of all net terminals; CUT layers are excluded.\n"
           << "IO directions follow inside/outside driver roles; PG and unresolved directions use INOUT.\n";
