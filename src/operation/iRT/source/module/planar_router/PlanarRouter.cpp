@@ -177,7 +177,7 @@ std::vector<PRNet*> PlanarRouter::getOverflowPRNetList()
   for (PRNet& pr_net : _pr_net_list) {
     for (PREdgeId edge_id : pr_net.get_routing_edge_set()) {
       const PRGridEdge& edge = _grid_graph.get_edge(edge_id);
-      if (edge.ignore_net_set.contains(pr_net.get_net_idx())) {
+      if (edge.isIgnoreNet(pr_net.get_net_idx())) {
         continue;
       }
       if (edge.get_overflow() > 0) {
@@ -273,7 +273,7 @@ bool PlanarRouter::needCongestionAware(const PRGridGraph::NetRouteTrial& trial)
   double history_threshold = 0.64 * _pr_com_param.get_overflow_unit();
   for (PREdgeId edge_id : trial.get_old_edge_set()) {
     const PRGridEdge& routing_edge = _grid_graph.get_edge(edge_id);
-    if (routing_edge.ignore_net_set.contains(trial.get_net_idx())) {
+    if (routing_edge.isIgnoreNet(trial.get_net_idx())) {
       continue;
     }
     int32_t supply = routing_edge.supply;
@@ -376,7 +376,7 @@ void PlanarRouter::updatePRCandidate(const PRGridGraph::NetRouteTrial& trial, PR
       const PRGridEdge& routing_edge = _grid_graph.get_edge(edge_id);
       bool is_owned = trial.get_new_edge_set().contains(edge_id);
       candidate_cost.total_wire_length += !is_owned;
-      if (is_owned || routing_edge.ignore_net_set.contains(curr_net_idx)) {
+      if (is_owned || routing_edge.isIgnoreNet(curr_net_idx)) {
         continue;
       }
       const PREdgeCost edge_cost = _grid_graph.get_edge_cost(trial, edge_id);
@@ -660,7 +660,7 @@ std::vector<PlanarCoord> PlanarRouter::searchAStarPath(const PRGridGraph::NetRou
       PREdgeId edge_id = _grid_graph.get_edge_id({curr_x, curr_y}, {neighbor_x, neighbor_y});
       const PRGridEdge& routing_edge = _grid_graph.get_edge(edge_id);
       bool is_owned = trial.get_new_edge_set().contains(edge_id);
-      bool is_ignored = routing_edge.ignore_net_set.contains(curr_net_idx);
+      bool is_ignored = routing_edge.isIgnoreNet(curr_net_idx);
       if (!is_owned && routing_edge.supply == 0 && !is_ignored) {
         continue;
       }
@@ -1333,7 +1333,7 @@ void PlanarRouter::debugPlotPRGraph(std::string flag)
           routing_edge_struct.push(gp_boundary);
 
           std::string ignore_net_message;
-          for (int32_t net_idx : routing_edge.ignore_net_set) {
+          for (int32_t net_idx : routing_edge.ignore_net_idx_list) {
             ignore_net_message += RTUTIL.getString(ignore_net_message.empty() ? "" : ",", net_idx);
           }
           std::string demand_net_message;

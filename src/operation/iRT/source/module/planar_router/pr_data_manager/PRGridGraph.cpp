@@ -77,7 +77,11 @@ void PRGridGraph::build(Database& database)
         RoutingEdge& layer_edge = horizontal_layer_map[x][y];
         edge.supply += layer_edge.get_supply();
         edge.congestion_cost += layer_edge.get_congestion_cost();
-        edge.ignore_net_set.insert(layer_edge.get_ignore_net_set().begin(), layer_edge.get_ignore_net_set().end());
+        for (int32_t ignore_net_idx : layer_edge.get_ignore_net_set()) {
+          if (!edge.isIgnoreNet(ignore_net_idx)) {
+            edge.ignore_net_idx_list.push_back(ignore_net_idx);
+          }
+        }
       }
     }
     for (int32_t x = 0; x < vertical_layer_map.get_x_size(); x++) {
@@ -86,7 +90,11 @@ void PRGridGraph::build(Database& database)
         RoutingEdge& layer_edge = vertical_layer_map[x][y];
         edge.supply += layer_edge.get_supply();
         edge.congestion_cost += layer_edge.get_congestion_cost();
-        edge.ignore_net_set.insert(layer_edge.get_ignore_net_set().begin(), layer_edge.get_ignore_net_set().end());
+        for (int32_t ignore_net_idx : layer_edge.get_ignore_net_set()) {
+          if (!edge.isIgnoreNet(ignore_net_idx)) {
+            edge.ignore_net_idx_list.push_back(ignore_net_idx);
+          }
+        }
       }
     }
   }
@@ -170,12 +178,14 @@ PREdgeCost PRGridGraph::get_edge_cost(int32_t supply, int32_t demand) const
   PREdgeCost edge_cost;
   if (supply <= 0 || demand > supply) {
     double overflow_ratio = demand - std::max(supply, 0) + 1;
+    double overflow_ratio_sqr = overflow_ratio * overflow_ratio;
     edge_cost.is_overflow = true;
-    edge_cost.unit_cost = std::pow(overflow_ratio, 4);
+    edge_cost.unit_cost = overflow_ratio_sqr * overflow_ratio_sqr;
     return edge_cost;
   }
   double usage_ratio = demand / 1.0 / supply;
-  edge_cost.unit_cost = std::pow(usage_ratio, 4);
+  double usage_ratio_sqr = usage_ratio * usage_ratio;
+  edge_cost.unit_cost = usage_ratio_sqr * usage_ratio_sqr;
   if (usage_ratio < saturation_start_ratio) {
     return edge_cost;
   }
@@ -207,7 +217,7 @@ PREdgeCost PRGridGraph::get_edge_cost(const NetRouteTrial& trial, PREdgeId edge_
 double PRGridGraph::get_edge_cost(const NetRouteTrial& trial, PREdgeId edge_id, double overflow_unit) const
 {
   const PRGridEdge& edge = get_edge(edge_id);
-  if (edge.ignore_net_set.contains(trial.get_net_idx())) {
+  if (edge.isIgnoreNet(trial.get_net_idx())) {
     return 1.0;
   }
   if (edge.supply <= 0) {
@@ -277,7 +287,7 @@ void PRGridGraph::update_edge(PREdgeId edge_id, int32_t net_idx, int32_t delta)
   uint32_t horizontal_edge_num = static_cast<uint32_t>(get_horizontal_x_size() * _y_size);
   PRGridEdge& edge = edge_id.value < horizontal_edge_num ? _horizontal_edge_list[edge_id.value]
                                                           : _vertical_edge_list[edge_id.value - horizontal_edge_num];
-  if (edge.ignore_net_set.contains(net_idx)) {
+  if (edge.isIgnoreNet(net_idx)) {
     return;
   }
   if (delta < 0 && edge.demand <= 0) {

@@ -50,10 +50,11 @@ struct PRGridEdge
   int32_t supply = 0;
   int32_t demand = 0;
   std::vector<int32_t> demand_net_idx_list;
-  std::set<int32_t> ignore_net_set;
+  std::vector<int32_t> ignore_net_idx_list;
   double congestion_cost = 0.0;
 
   int32_t get_overflow() const { return std::max(0, demand - supply); }
+  bool isIgnoreNet(int32_t net_idx) const { return std::find(ignore_net_idx_list.begin(), ignore_net_idx_list.end(), net_idx) != ignore_net_idx_list.end(); }
 };
 
 class PRGridGraph
