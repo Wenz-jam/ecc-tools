@@ -26,6 +26,13 @@ jobs:
       - name: Build wheel
         uses: ./.github/actions/build-wheel
 
+      - name: Run iMJ design tools regression
+        env:
+          SCCACHE_GHA_ENABLED: "true"
+        run: |
+          cmake --build build --target test_imj_design_tools --parallel 2
+          ctest --test-dir build -R '^test_imj_design_tools$' --output-on-failure --no-tests=error
+
       - name: Upload repaired wheel
         uses: actions/upload-artifact@v4
         with:

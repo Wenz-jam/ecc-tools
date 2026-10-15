@@ -123,13 +123,29 @@ override JSON values. `analyze_driver()` has no configuration arguments.
 
 Regression:
 
+The C++ regression is a standalone CTest executable using only the small LEF,
+DEF and Verilog fixtures in this directory's `data/`. It does not need an
+external PDK or a Python extension. From the repository root, with the normal
+project build dependencies installed:
+
+```sh
+cmake -S . -B build -DBUILD_TESTING=ON
+cmake --build build --target test_imj_design_tools --parallel 2
+ctest --test-dir build -R '^test_imj_design_tools$' --output-on-failure --no-tests=error
+```
+
+CI runs these same build/test commands after the wheel build, reusing the
+already compiled libraries. A missing CTest registration is an error rather
+than a successful empty test run.
+
 The IO-placement regression compares indexed candidates against an exhaustive
 spacing check for fixed spacing and a non-monotonic width/PRL table. The index
 only filters nearby candidates; exact spacing, candidate order and distance
 tie-breaking remain unchanged.
 
+The Python binding smoke test can also be run against a local extension build:
+
 ```sh
-cmake --build build --target test_imj_design_tools ecc_bin ecc_py
-ctest --test-dir build -R '^test_imj_design_tools$' --output-on-failure
+cmake --build build --target ecc_py
 PYTHONPATH=bin python3 src/operation/iMJ/test/test_design_tools/test_bindings.py
 ```
