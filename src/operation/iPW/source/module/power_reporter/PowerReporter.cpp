@@ -319,10 +319,17 @@ void PowerReporter::outputInstancePowerRow(
     PowerValue& power_value
 )
 {
-  double total_power = power_value.get_total_power();
-  double average_current = voltage > 0.0 ? total_power / voltage : 0.0;
-  (*instance_power_file) << instance_name << '\t' << voltage << '\t' << power_value.get_internal_power() << '\t';
-  (*instance_power_file) << power_value.get_switching_power() << '\t' << power_value.get_leakage_power() << '\t';
+  // Some ICS55 internal power tables hold negative entries, so an instance whose arc
+  // energies nearly cancel can accumulate a tiny negative internal component. The instance
+  // power contract requires every component to be >= 0, so the residue is reported as
+  // zero, and total_power_w / average_current_a follow from the reported components.
+  const double internal_power = std::max(0.0, power_value.get_internal_power());
+  const double switching_power = power_value.get_switching_power();
+  const double leakage_power = power_value.get_leakage_power();
+  const double total_power = internal_power + switching_power + leakage_power;
+  const double average_current = voltage > 0.0 ? total_power / voltage : 0.0;
+  (*instance_power_file) << instance_name << '\t' << voltage << '\t' << internal_power << '\t';
+  (*instance_power_file) << switching_power << '\t' << leakage_power << '\t';
   (*instance_power_file) << total_power << '\t' << average_current << '\n';
 }
 
