@@ -37,7 +37,10 @@ class TimingCellPort
   bool get_is_clock() const { return _is_clock; }
   // setter
   void set_capacitance(const double capacitance) { _capacitance = capacitance; }
-  void set_function_expression(const LogicExpression& function_expression) { _function_expression = function_expression; }
+  void set_function_expression(const LogicExpression& function_expression)
+  {
+    _function_expression = function_expression;
+  }
   void set_is_input(const bool is_input) { _is_input = is_input; }
   void set_is_output(const bool is_output) { _is_output = is_output; }
   void set_is_clock(const bool is_clock) { _is_clock = is_clock; }

@@ -139,15 +139,18 @@ void ClockPropagator::markClockPoint(CPModel& cp_model, std::string& clock_name)
     std::string pin_name = pin_queue.front();
     pin_queue.pop();
     Pin& pin = database.get_pin_map().at(pin_name);
-    if (pin.get_is_port() && pin.get_direction() == PinDirection::kOutput && database.get_outgoing_arc_list_map()[pin_name].empty()) {
+    if (pin.get_is_port() && pin.get_direction() == PinDirection::kOutput
+        && database.get_outgoing_arc_list_map()[pin_name].empty()) {
       continue;
     }
     bool another_root = false;
     for (std::pair<const std::string, TimingClock>& clock_pair : database.get_timing_constraint().get_clock_map()) {
       TimingClock& definition = clock_pair.second;
       if (clock_pair.first != clock_name
-          && std::find(definition.get_source_list().begin(), definition.get_source_list().end(), pin_name) != definition.get_source_list().end()
-          && std::find(timing_clock.get_source_list().begin(), timing_clock.get_source_list().end(), pin_name) == timing_clock.get_source_list().end()) {
+          && std::find(definition.get_source_list().begin(), definition.get_source_list().end(), pin_name)
+                 != definition.get_source_list().end()
+          && std::find(timing_clock.get_source_list().begin(), timing_clock.get_source_list().end(), pin_name)
+                 == timing_clock.get_source_list().end()) {
         another_root = true;
         break;
       }
@@ -189,12 +192,19 @@ void ClockPropagator::seedPhysicalClockSlew(CPModel& cp_model, std::string& cloc
 {
   Database& database = PWDM.getDatabase();
   TimingClock& timing_clock = database.get_timing_constraint().get_clock_map().at(clock_name);
-  if (timing_clock.get_is_generated() && timing_clock.get_is_propagated() && seedGeneratedClockSlew(cp_model, clock_name, timing_clock)) {
+  if (timing_clock.get_is_generated() && timing_clock.get_is_propagated()
+      && seedGeneratedClockSlew(cp_model, clock_name, timing_clock)) {
     return;
   }
   if (timing_clock.get_is_generated() && timing_clock.get_is_propagated()) {
-    PWLOG.warn(Loc::current(), "generated clock '", clock_name, "' has no signal path from master clock '",
-               timing_clock.get_master_clock_name(), "' to its target; using zero insertion slew");
+    PWLOG.warn(
+        Loc::current(),
+        "generated clock '",
+        clock_name,
+        "' has no signal path from master clock '",
+        timing_clock.get_master_clock_name(),
+        "' to its target; using zero insertion slew"
+    );
   }
   for (const std::string& pin_name : timing_clock.get_source_list()) {
     if (!database.get_timing_point_map().contains(pin_name)) {
@@ -208,7 +218,11 @@ void ClockPropagator::seedPhysicalClockSlew(CPModel& cp_model, std::string& cloc
   }
 }
 
-bool ClockPropagator::seedGeneratedClockSlew(CPModel& cp_model, std::string& clock_name, const TimingClock& timing_clock)
+bool ClockPropagator::seedGeneratedClockSlew(
+    CPModel& cp_model,
+    std::string& clock_name,
+    const TimingClock& timing_clock
+)
 {
   Database& database = PWDM.getDatabase();
   const std::string& master_clock_name = timing_clock.get_master_clock_name();
@@ -229,7 +243,8 @@ bool ClockPropagator::seedGeneratedClockSlew(CPModel& cp_model, std::string& clo
     if (!source_path_point_set.insert(pin_name).second) {
       continue;
     }
-    bool is_source_boundary = master_source.empty() ? hasPhysicalClockSlew(cp_model, pin_name, master_clock_name) : pin_name == master_source;
+    bool is_source_boundary = master_source.empty() ? hasPhysicalClockSlew(cp_model, pin_name, master_clock_name)
+                                                    : pin_name == master_source;
     if (is_source_boundary && hasPhysicalClockSlew(cp_model, pin_name, master_clock_name)) {
       found_master = true;
       continue;
@@ -247,7 +262,8 @@ bool ClockPropagator::seedGeneratedClockSlew(CPModel& cp_model, std::string& clo
 
   for (const std::string& pin_name : source_path_point_set) {
     ClockSlewState& generated_state = cp_model.get_clock_state(pin_name, clock_name);
-    bool is_source_boundary = master_source.empty() ? hasPhysicalClockSlew(cp_model, pin_name, master_clock_name) : pin_name == master_source;
+    bool is_source_boundary = master_source.empty() ? hasPhysicalClockSlew(cp_model, pin_name, master_clock_name)
+                                                    : pin_name == master_source;
     const ClockSlewState* master_state = cp_model.find_clock_state(pin_name, master_clock_name);
     if (is_source_boundary && master_state != nullptr && hasPhysicalClockSlew(cp_model, pin_name, master_clock_name)) {
       generated_state.set_physical_slew_map(master_state->get_physical_slew_map());
@@ -261,7 +277,8 @@ bool ClockPropagator::seedGeneratedClockSlew(CPModel& cp_model, std::string& clo
       }
       for (std::size_t arc_idx : database.get_outgoing_arc_list_map()[source_pin]) {
         Arc& arc = database.get_arc_list()[arc_idx];
-        if (source_path_point_set.contains(arc.get_sink_pin()) && !isDisableArc(arc) && !(is_combinational && arc.get_is_clock_arc())) {
+        if (source_path_point_set.contains(arc.get_sink_pin()) && !isDisableArc(arc)
+            && !(is_combinational && arc.get_is_clock_arc())) {
           propagateClockSlewArc(cp_model, clock_name, arc_idx, AnalysisType::kMax);
           propagateClockSlewArc(cp_model, clock_name, arc_idx, AnalysisType::kMin);
         }
@@ -270,12 +287,15 @@ bool ClockPropagator::seedGeneratedClockSlew(CPModel& cp_model, std::string& clo
   }
 
   return std::ranges::all_of(timing_clock.get_source_list(), [&](const std::string& target) {
-    return database.get_timing_point_map().contains(target)
-           && hasPhysicalClockSlew(cp_model, target, clock_name);
+    return database.get_timing_point_map().contains(target) && hasPhysicalClockSlew(cp_model, target, clock_name);
   });
 }
 
-bool ClockPropagator::hasPhysicalClockSlew(const CPModel& cp_model, std::string_view pin_name, std::string_view clock_name)
+bool ClockPropagator::hasPhysicalClockSlew(
+    const CPModel& cp_model,
+    std::string_view pin_name,
+    std::string_view clock_name
+)
 {
   const ClockSlewState* state = cp_model.find_clock_state(pin_name, clock_name);
   if (state == nullptr) {
@@ -308,9 +328,9 @@ void ClockPropagator::updateEffectiveClockSlew(CPModel& cp_model, std::string& c
         for (TransType trans_type : {TransType::kRise, TransType::kFall}) {
           const auto transition_iter = timing_clock.get_transition_map().find(analysis_type);
           slew_map[analysis_type][trans_type] = transition_iter != timing_clock.get_transition_map().end()
-                                                   && transition_iter->second.contains(trans_type)
-                                               ? transition_iter->second.at(trans_type)
-                                               : 0.0;
+                                                        && transition_iter->second.contains(trans_type)
+                                                    ? transition_iter->second.at(trans_type)
+                                                    : 0.0;
         }
       }
     }
@@ -336,18 +356,29 @@ void ClockPropagator::propagateClockSlew(CPModel& cp_model, std::string& clock_n
   }
 }
 
-void ClockPropagator::propagateClockSlewArc(CPModel& cp_model, std::string& clock_name, std::size_t arc_idx, AnalysisType analysis_type)
+void ClockPropagator::propagateClockSlewArc(
+    CPModel& cp_model,
+    std::string& clock_name,
+    std::size_t arc_idx,
+    AnalysisType analysis_type
+)
 {
   propagateClockSlewArc(cp_model, clock_name, arc_idx, analysis_type, TransType::kRise);
   propagateClockSlewArc(cp_model, clock_name, arc_idx, analysis_type, TransType::kFall);
 }
 
-void ClockPropagator::propagateClockSlewArc(CPModel& cp_model, std::string& clock_name, std::size_t arc_idx, AnalysisType analysis_type,
-                                             TransType input_trans_type)
+void ClockPropagator::propagateClockSlewArc(
+    CPModel& cp_model,
+    std::string& clock_name,
+    std::size_t arc_idx,
+    AnalysisType analysis_type,
+    TransType input_trans_type
+)
 {
   Database& database = PWDM.getDatabase();
   Arc& arc = database.get_arc_list()[arc_idx];
-  if (!cp_model.has_clock_state(arc.get_source_pin(), clock_name) || !cp_model.has_clock_state(arc.get_sink_pin(), clock_name)) {
+  if (!cp_model.has_clock_state(arc.get_source_pin(), clock_name)
+      || !cp_model.has_clock_state(arc.get_sink_pin(), clock_name)) {
     return;
   }
   ClockSlewState& source_state = cp_model.get_clock_state(arc.get_source_pin(), clock_name);
@@ -360,8 +391,14 @@ void ClockPropagator::propagateClockSlewArc(CPModel& cp_model, std::string& cloc
   }
 }
 
-void ClockPropagator::updateClockSlew(CPModel& cp_model, std::string_view clock_name, Arc& arc, AnalysisType analysis_type,
-                                      TransType input_trans_type, TransType output_trans_type)
+void ClockPropagator::updateClockSlew(
+    CPModel& cp_model,
+    std::string_view clock_name,
+    Arc& arc,
+    AnalysisType analysis_type,
+    TransType input_trans_type,
+    TransType output_trans_type
+)
 {
   ClockSlewState& source_state = cp_model.get_clock_state(arc.get_source_pin(), clock_name);
   ClockSlewState& sink_state = cp_model.get_clock_state(arc.get_sink_pin(), clock_name);
@@ -378,7 +415,11 @@ void ClockPropagator::updateClockSlew(CPModel& cp_model, std::string_view clock_
   double output_slew = dc_task.get_output_slew();
   if (!sink_state.get_physical_slew_map().contains(analysis_type)
       || !sink_state.get_physical_slew_map()[analysis_type].contains(output_trans_type)
-      || isBetterSlew(output_slew, sink_state.get_physical_slew_map()[analysis_type][output_trans_type], analysis_type)) {
+      || isBetterSlew(
+          output_slew,
+          sink_state.get_physical_slew_map()[analysis_type][output_trans_type],
+          analysis_type
+      )) {
     sink_state.get_physical_slew_map()[analysis_type][output_trans_type] = output_slew;
   }
 }

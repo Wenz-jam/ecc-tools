@@ -54,12 +54,24 @@ class PowerReporter
   void outputPowerAttribute(std::ofstream* power_report_file);
   void outputInstancePower();
   void outputPeakInstancePower(std::ofstream* instance_power_file);
-  void outputInstancePowerRow(std::ofstream* instance_power_file, const std::string& instance_name, const double voltage,
-                              PowerValue& power_value);
-  void outputCellPowerReport(const std::string& directory_path, std::vector<std::pair<std::string, InstancePower*>>& cell_power_list,
-                             const int32_t top_num, const bool is_all);
-  void outputNetPowerReport(const std::string& directory_path, std::vector<std::pair<std::string, NetPower*>>& net_power_list,
-                            const int32_t top_num, const bool is_all);
+  void outputInstancePowerRow(
+      std::ofstream* instance_power_file,
+      const std::string& instance_name,
+      const double voltage,
+      PowerValue& power_value
+  );
+  void outputCellPowerReport(
+      const std::string& directory_path,
+      std::vector<std::pair<std::string, InstancePower*>>& cell_power_list,
+      const int32_t top_num,
+      const bool is_all
+  );
+  void outputNetPowerReport(
+      const std::string& directory_path,
+      std::vector<std::pair<std::string, NetPower*>>& net_power_list,
+      const int32_t top_num,
+      const bool is_all
+  );
   PowerValue getPowerGroupPowerValue(PowerGroupType power_group_type);
   double getDynamicPower();
   double getPercentage(double numerator, double denominator);

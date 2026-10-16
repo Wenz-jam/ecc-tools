@@ -51,7 +51,8 @@ class PeakPowerValue
     if (other._power_value.get_total_power() < _power_value.get_total_power()) {
       return;
     }
-    if (other._power_value.get_total_power() == _power_value.get_total_power() && other._window_index >= _window_index) {
+    if (other._power_value.get_total_power() == _power_value.get_total_power()
+        && other._window_index >= _window_index) {
       return;
     }
     *this = other;

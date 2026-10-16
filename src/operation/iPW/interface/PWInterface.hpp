@@ -120,6 +120,7 @@ class PWInterface
   void wrapPortPin(idb::IdbPin* idb_pin);
   std::string wrapPinName(idb::IdbPin* idb_pin);
   void wrapNetList();
+  void wrapPowerIndex();
   void wrapNet(idb::IdbNet* idb_net);
   void wrapNetPinList(idb::IdbNet* idb_net, Net& net);
   void wrapNetPinList(idb::IdbPins* io_pin_list, idb::IdbPins* instance_pin_list, Net& net);
@@ -130,6 +131,10 @@ class PWInterface
   void wrapNetToDatabase(const std::string& net_name, Net& net);
   void wrapTimingLibrary();
   void wrapTimingCellMap(const std::vector<idb::LibLibrary*>& lib_list);
+  // 按需 wrap 一个库 cell（惰性 wrap 的兜底路径，供 SDC 命令使用）。
+  bool wrapTimingCellByName(const std::string& cell_name);
+  // 最近一次 wrapTimingLibrary 用到的库列表，供按需 wrap 反查。
+  std::vector<idb::LibLibrary*> _lib_list;
   void wrapTimingLibraryInfo(const std::vector<idb::LibLibrary*>& lib_list);
   idb::LibLibrary* wrapReferenceLib(const std::vector<idb::LibLibrary*>& lib_list);
   void wrapTimingCell(idb::LibCell* lib_cell);
@@ -139,7 +144,11 @@ class PWInterface
   void wrapTimingCellLeakagePower(TimingCell& timing_cell, idb::LibCell* lib_cell);
   void wrapTimingCellPowerConditions(TimingCell& timing_cell);
   TimingPowerArc wrapTimingPowerArc(idb::LibPowerArc* lib_power_arc);
-  TimingPowerArc wrapTimingPortPowerArc(idb::LibInternalPowerInfo* internal_power_info, std::string& port_name, idb::LibLibrary* lib_library);
+  TimingPowerArc wrapTimingPortPowerArc(
+      idb::LibInternalPowerInfo* internal_power_info,
+      std::string& port_name,
+      idb::LibLibrary* lib_library
+  );
   void wrapTimingPowerArcTable(TimingPowerArc& timing_power_arc, idb::LibTableModel* power_table_model);
   TimingLeakagePower wrapTimingLeakagePower(idb::LibLeakagePower* lib_leakage_power);
   LogicExpression wrapLogicExpression(const std::string& expression_string);

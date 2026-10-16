@@ -67,6 +67,7 @@ class DmpSolverModel
   std::array<double, 3>& get_scale_list() { return _scale_list; }
   std::array<double, 3>& get_delta_list() { return _delta_list; }
   std::array<int32_t, 3>& get_index_list() { return _index_list; }
+
  private:
   TimingArc* _timing_arc = nullptr;
   TransType _trans_type = TransType::kNone;
