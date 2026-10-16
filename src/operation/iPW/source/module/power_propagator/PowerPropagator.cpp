@@ -1151,6 +1151,15 @@ class Simulator
   int _thread_num = 1;
   std::size_t _parallel_min_gates = 4096;
   std::size_t _parallel_min_nodes = 65536;
+  // fullSettle 的分层并行：组合环只会让 _gate_order 的尾部不可拓扑序化，
+  // 所以前缀按层并行、尾部保持原序串行（环上求值顺序本身就是语义）。
+  std::size_t _ordered_gate_num = 0;
+  std::size_t _broken_gate_num = 0;
+  std::vector<uint32_t> _ordered_settle_gate_list;
+  std::vector<uint32_t> _ordered_level_begin_list;
+  // 只有 _event_driven && _levels_valid 时才需要维护脏表（eventSettle 的唯一读者）。
+  bool _track_dirty = true;
+  int _advance_conflict = 0;
   std::vector<std::int32_t> _gate_level;
   std::vector<std::vector<uint32_t>> _level_gates;
   std::vector<std::int32_t> _node_driver_gate;
@@ -1680,6 +1689,8 @@ std::size_t Simulator::orderGates()
       }
     }
   }
+  _broken_gate_num = broken;
+  _ordered_gate_num = _gate_order.size() - broken;
   buildGateLevels();
   _levels_valid = broken == 0;
   return broken;
@@ -1725,10 +1736,69 @@ void Simulator::buildGateLevels()
   _gate_bucket_stamp.assign(_gates.size(), 0);
   _node_dirty.assign(_values.size(), 0);
   _dirty_node_list.clear();
+
+  // 有序前缀按层分组。注意：不能假设 Kahn 产出对层单调（实测大设计不成立），
+  // 所以直接按层号做一次计数排序来保证"同层连续"。
+  // 层内顺序无关结果：DAG 前缀里同层门互不依赖，输入都在严格更小的层。
+  _ordered_settle_gate_list.assign(_ordered_gate_num, 0);
+  std::int32_t prefix_max_level = 0;
+  for (std::size_t pos = 0; pos < _ordered_gate_num; pos++) {
+    prefix_max_level = std::max(prefix_max_level, _gate_level[_gate_order[pos]]);
+  }
+  _ordered_level_begin_list.assign(static_cast<std::size_t>(prefix_max_level) + 2, 0);
+  for (std::size_t pos = 0; pos < _ordered_gate_num; pos++) {
+    ++_ordered_level_begin_list[static_cast<std::size_t>(_gate_level[_gate_order[pos]]) + 1];
+  }
+  for (std::size_t level = 1; level < _ordered_level_begin_list.size(); level++) {
+    _ordered_level_begin_list[level] += _ordered_level_begin_list[level - 1];
+  }
+  std::vector<uint32_t> level_cursor_list = _ordered_level_begin_list;
+  for (std::size_t pos = 0; pos < _ordered_gate_num; pos++) {
+    const uint32_t gate_idx = static_cast<uint32_t>(_gate_order[pos]);
+    _ordered_settle_gate_list[level_cursor_list[static_cast<std::size_t>(_gate_level[gate_idx])]++]
+        = gate_idx;
+  }
+  _track_dirty = _event_driven && _levels_valid;
+
+  // 观测：层规模分布（决定层内并行阈值与负载均衡）
+  std::size_t min_level_gate_num = std::numeric_limits<std::size_t>::max();
+  std::size_t max_level_gate_num = 0;
+  std::size_t small_level_num = 0;
+  for (std::size_t bucket = 0; bucket + 1 < _ordered_level_begin_list.size(); bucket++) {
+    const std::size_t count = _ordered_level_begin_list[bucket + 1] - _ordered_level_begin_list[bucket];
+    min_level_gate_num = std::min(min_level_gate_num, count);
+    max_level_gate_num = std::max(max_level_gate_num, count);
+    if (count < _parallel_min_gates) {
+      ++small_level_num;
+    }
+  }
+  if (min_level_gate_num == std::numeric_limits<std::size_t>::max()) {
+    min_level_gate_num = 0;
+  }
+  PWLOG.info(
+      Loc::current(),
+      "Simulator settle plan: ordered gates ",
+      _ordered_gate_num,
+      ", cyclic gates ",
+      _broken_gate_num,
+      ", level buckets ",
+      _ordered_level_begin_list.size() - 1,
+      ", gates per level ",
+      min_level_gate_num,
+      "-",
+      max_level_gate_num,
+      ", levels below ",
+      _parallel_min_gates,
+      " gates: ",
+      small_level_num
+  );
 }
 
 void Simulator::markDirty(std::size_t node)
 {
+  if (!_track_dirty) {
+    return;
+  }
   if (_node_dirty[node] == 0) {
     _node_dirty[node] = 1;
     _dirty_node_list.push_back(node);
@@ -1757,9 +1827,46 @@ void Simulator::pushDirtyGate(std::size_t gate_idx)
 // 全扫：与改造前逐门求值完全一致（批次初始化、首次 settle、有组合环时使用）。
 void Simulator::fullSettle()
 {
-  for (auto idx : _gate_order) {
-    Gate& gate = _gates[idx];
-    _values[gate.output] = isConstant(gate.output) ? (getConstantValue(gate.output) ? kOnes : 0) : evaluate(gate.function);
+  // 前缀（可拓扑序化部分）按层并行：层的输入严格在更小的层，所以"层内并行 + 层间
+  // barrier"与原来的逐门前向扫描逐位相同。尾部（环上门）保持 _gate_order 原序串行。
+  if (_thread_num > 1 && _ordered_level_begin_list.size() >= 2) {
+#pragma omp parallel num_threads(_thread_num)
+    {
+      for (std::size_t bucket = 0; bucket + 1 < _ordered_level_begin_list.size(); bucket++) {
+        const std::size_t begin = _ordered_level_begin_list[bucket];
+        const std::size_t end = _ordered_level_begin_list[bucket + 1];
+        const std::int64_t count = static_cast<std::int64_t>(end) - static_cast<std::int64_t>(begin);
+        if (count <= 0) {
+          continue;
+        }
+#pragma omp for schedule(dynamic, 64) nowait
+        for (std::int64_t i = 0; i < count; i++) {
+          Gate& gate = _gates[_ordered_settle_gate_list[begin + static_cast<std::size_t>(i)]];
+          _values[gate.output]
+              = isConstant(gate.output) ? (getConstantValue(gate.output) ? kOnes : 0) : evaluate(gate.function);
+        }
+#pragma omp barrier
+      }
+#pragma omp master
+      {
+        for (std::size_t pos = _ordered_gate_num; pos < _gate_order.size(); pos++) {
+          Gate& gate = _gates[_gate_order[pos]];
+          _values[gate.output]
+              = isConstant(gate.output) ? (getConstantValue(gate.output) ? kOnes : 0) : evaluate(gate.function);
+        }
+      }
+    }
+  } else {
+    for (std::size_t pos = 0; pos < _ordered_gate_num; pos++) {
+      Gate& gate = _gates[_gate_order[pos]];
+      _values[gate.output]
+          = isConstant(gate.output) ? (getConstantValue(gate.output) ? kOnes : 0) : evaluate(gate.function);
+    }
+    for (std::size_t pos = _ordered_gate_num; pos < _gate_order.size(); pos++) {
+      Gate& gate = _gates[_gate_order[pos]];
+      _values[gate.output]
+          = isConstant(gate.output) ? (getConstantValue(gate.output) ? kOnes : 0) : evaluate(gate.function);
+    }
   }
   for (std::size_t node : _dirty_node_list) {
     _node_dirty[node] = 0;
@@ -1853,7 +1960,13 @@ bool Simulator::advance()
   // Additional passes handle clocks produced by sequential logic.
   for (int pass = 0; pass < 16; ++pass) {
     bool changed = false;
-    for (std::size_t idx = 0; idx < _sequentials.size(); ++idx) {
+    _advance_conflict = 0;
+    // 每个 idx 只写自己的 _next_state[idx] / 自己的 seq 成员，所以可以并行；
+    // 冲突(clear&preset)用标志汇总，循环结束后统一 return false —— 与原"立即返回"
+    // 等价，因为返回 false 后整场仿真结果会被丢弃。
+#pragma omp parallel for schedule(static) num_threads(_thread_num) reduction(| : changed)
+    for (std::int64_t i = 0; i < static_cast<std::int64_t>(_sequentials.size()); i++) {
+      const std::size_t idx = static_cast<std::size_t>(i);
       auto& seq = _sequentials[idx];
       Word clock = evaluate(seq.clock);
       Word enabled = seq.latch ? clock : (clock & ~seq.previous_clock);
@@ -1862,19 +1975,38 @@ bool Simulator::advance()
       Word clear = evaluate(seq.clear), preset = evaluate(seq.preset);
       // Conflicting async controls require Liberty clear_preset_var semantics,
       // including X states, which this two-state simulator cannot represent.
-      if (clear & preset)
-        return false;
+      if (clear & preset) {
+#pragma omp atomic write
+        _advance_conflict = 1;
+        continue;
+      }
       value = (value & ~(clear | preset)) | preset;
       _next_state[idx] = value;
       changed |= value != _values[seq.state];
     }
+    if (_advance_conflict != 0) {
+      return false;
+    }
     if (!changed)
       return true;
-    for (std::size_t idx = 0; idx < _sequentials.size(); ++idx) {
-      auto& seq = _sequentials[idx];
-      setValue(seq.state, _next_state[idx]);
-      if (seq.inverse != seq.state)
-        setValue(seq.inverse, ~_next_state[idx]);
+    // 应用段：_track_dirty 关闭时（脏表无人读）setValue 不碰共享结构，可以并行；
+    // 否则 setValue -> markDirty 会并发写共享的 _dirty_node_list，必须串行。
+    if (_track_dirty) {
+      for (std::size_t idx = 0; idx < _sequentials.size(); ++idx) {
+        auto& seq = _sequentials[idx];
+        setValue(seq.state, _next_state[idx]);
+        if (seq.inverse != seq.state)
+          setValue(seq.inverse, ~_next_state[idx]);
+      }
+    } else {
+#pragma omp parallel for schedule(static) num_threads(_thread_num)
+      for (std::int64_t i = 0; i < static_cast<std::int64_t>(_sequentials.size()); i++) {
+        const std::size_t idx = static_cast<std::size_t>(i);
+        auto& seq = _sequentials[idx];
+        setValue(seq.state, _next_state[idx]);
+        if (seq.inverse != seq.state)
+          setValue(seq.inverse, ~_next_state[idx]);
+      }
     }
     settle();
   }
