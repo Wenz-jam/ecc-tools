@@ -148,8 +148,15 @@ void DataManager::readConstraint()
   SdcCommand::initInst();
   SdcCommand& sdc_command = SdcCommand::getInst();
   if (sdc_command.evalScriptFile(_config.sdc_file_path) != TCL_OK) {
-    PWLOG.warn(Loc::current(), "SDC command failed in '", _config.sdc_file_path, "' at line ", sdc_command.get_error_line_number(), ": ",
-               sdc_command.get_error_message());
+    PWLOG.warn(
+        Loc::current(),
+        "SDC command failed in '",
+        _config.sdc_file_path,
+        "' at line ",
+        sdc_command.get_error_line_number(),
+        ": ",
+        sdc_command.get_error_message()
+    );
     PWLOG.error(Loc::current(), "SDC contains invalid or unsupported constraints; power analysis stopped");
   }
   SdcCommand::destroyInst();

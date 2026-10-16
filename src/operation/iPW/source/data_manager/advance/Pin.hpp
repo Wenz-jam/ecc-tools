@@ -28,12 +28,15 @@ class Pin
   ~Pin() = default;
   // getter
   std::string& get_pin_name() { return _pin_name; }
+  // 稠密编号（GraphBuilder 里按 pin_map 迭代序赋值），供按 id 索引的缓存使用。
+  uint64_t get_index() const { return _index; }
   std::string& get_instance_name() { return _instance_name; }
   std::string& get_net_name() { return _net_name; }
   PinDirection get_direction() const { return _direction; }
   bool get_is_port() const { return _is_port; }
   // setter
   void set_pin_name(const std::string& pin_name) { _pin_name = pin_name; }
+  void set_index(const uint64_t index) { _index = index; }
   void set_instance_name(const std::string& instance_name) { _instance_name = instance_name; }
   void set_net_name(const std::string& net_name) { _net_name = net_name; }
   void set_direction(const PinDirection& direction) { _direction = direction; }
@@ -41,6 +44,7 @@ class Pin
   // function
 
  private:
+  uint64_t _index = 0;
   std::string _pin_name;
   std::string _instance_name;
   std::string _net_name;
