@@ -44,7 +44,7 @@ class SignalPropagator
   // 一次待提交的斜率更新：提交阶段严格按 signal_order 原序回放，保证与旧逐 pin 实现逐位一致。
   struct SlewUpdate
   {
-    uint32_t sink_pin_index = 0;
+    uint32_t sink_vertex_idx = 0;
     AnalysisType analysis_type = AnalysisType::kNone;
     TransType trans_type = TransType::kNone;
     double slew = 0.0;

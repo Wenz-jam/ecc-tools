@@ -33,6 +33,10 @@ class TimingConstraint
   std::map<std::string, TimingClock>& get_clock_map() { return _clock_map; }
   std::map<std::string, TimingPortConstraint>& get_port_constraint_map() { return _port_constraint_map; }
   // 透明比较器：find() 可以直接吃 string_view，热路径上不再为每次查询构造临时 std::string。
+  std::map<std::string, TimingCaseValue, std::less<>>& get_driver_case_analysis_map()
+  {
+    return _driver_case_analysis_map;
+  }
   std::map<std::string, TimingCaseValue, std::less<>>& get_case_analysis_map() { return _case_analysis_map; }
   std::map<std::string, TimingCaseValue, std::less<>>& get_effective_case_analysis_map()
   {
@@ -67,10 +71,11 @@ class TimingConstraint
     const auto transition_load = analysis_load->second.find(trans_type);
     return transition_load == analysis_load->second.end() ? 0.0 : transition_load->second;
   }
-  bool allowsTransition(std::string_view pin_name, TransType trans_type) const
+  bool allowsTransition(std::string_view pin_name, TransType trans_type, bool is_bidir_driver = false) const
   {
-    const auto value = _effective_case_analysis_map.find(pin_name);
-    if (value == _effective_case_analysis_map.end()) {
+    const auto& values = is_bidir_driver ? _driver_case_analysis_map : _effective_case_analysis_map;
+    const auto value = values.find(pin_name);
+    if (value == values.end()) {
       return true;
     }
     switch (value->second) {
@@ -93,6 +98,7 @@ class TimingConstraint
   std::map<std::string, TimingPortConstraint> _port_constraint_map;
   std::map<std::string, TimingCaseValue, std::less<>> _case_analysis_map;
   std::map<std::string, TimingCaseValue, std::less<>> _effective_case_analysis_map;
+  std::map<std::string, TimingCaseValue, std::less<>> _driver_case_analysis_map;
   std::map<std::string, std::map<AnalysisType, std::map<TransType, double>>, std::less<>> _net_load_map;
 };
 

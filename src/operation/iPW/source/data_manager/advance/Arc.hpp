@@ -30,6 +30,8 @@ class Arc
   Arc() = default;
   ~Arc() = default;
   // getter
+  int32_t get_source_vertex_idx() const { return _source_vertex_idx; }
+  int32_t get_sink_vertex_idx() const { return _sink_vertex_idx; }
   std::string& get_source_pin() { return _source_pin; }
   uint32_t get_source_pin_index() const { return _source_pin_index; }
   uint32_t get_sink_pin_index() const { return _sink_pin_index; }
@@ -43,6 +45,8 @@ class Arc
   bool get_is_disable_arc() const { return _is_disable_arc || _is_case_analysis_disable; }
   bool get_is_loop_disable() const { return _is_loop_disable; }
   // setter
+  void set_source_vertex_idx(int32_t idx) { _source_vertex_idx = idx; }
+  void set_sink_vertex_idx(int32_t idx) { _sink_vertex_idx = idx; }
   void set_source_pin(const std::string& source_pin) { _source_pin = source_pin; }
   void set_source_pin_index(const uint32_t source_pin_index) { _source_pin_index = source_pin_index; }
   void set_sink_pin_index(const uint32_t sink_pin_index) { _sink_pin_index = sink_pin_index; }
@@ -58,6 +62,8 @@ class Arc
   void set_is_loop_disable(const bool is_loop_disable) { _is_loop_disable = is_loop_disable; }
 
  private:
+  int32_t _source_vertex_idx = -1;
+  int32_t _sink_vertex_idx = -1;
   uint32_t _source_pin_index = std::numeric_limits<uint32_t>::max();
   uint32_t _sink_pin_index = std::numeric_limits<uint32_t>::max();
   std::string _source_pin;

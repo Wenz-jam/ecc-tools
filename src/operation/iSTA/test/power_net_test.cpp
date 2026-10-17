@@ -58,12 +58,17 @@ void testRegularNet(idb::IdbConnectType net_type, idb::IdbConnectType pin_type, 
   STAI.wrapNet(&net);
 
   Database& database = STADM.getDatabase();
-  bool keep_cell_pin = !excluded && STAI.wrapSignalConnectType(pin_type);
+  bool keep_cell_pin = STAI.wrapSignalConnectType(pin_type);
   bool keep_port = !excluded && STAI.wrapSignalConnectType(port_type);
   require(database.get_instance_map().count("cell0") == 1, "supply filtering removed the instance");
   require(database.get_pin_map().count("cell0:contact") == (keep_cell_pin ? 1U : 0U), "incorrect supply pin membership");
   require(database.get_pin_map().count("external") == (keep_port ? 1U : 0U), "supply port was not filtered with its net");
   require(database.get_pin_map().count("cell0:A") == 1, "unrelated or mixed-net signal pin was removed");
+  if (keep_cell_pin && (net_type == idb::IdbConnectType::kPower || net_type == idb::IdbConnectType::kGround)) {
+    require(database.get_pin_map().at("cell0:contact").get_constant_value()
+                == (net_type == idb::IdbConnectType::kPower ? TimingCaseValue::kOne : TimingCaseValue::kZero),
+            "supply-tied logic input lost its constant");
+  }
   require(database.get_net_map().count(net.get_net_name()) == (excluded ? 0U : 1U), "incorrect supply net membership");
   if (!excluded) {
     for (const std::string& pin_name : database.get_net_map().at(net.get_net_name()).get_pin_name_list()) {
@@ -103,7 +108,12 @@ void testSpecialNet(idb::IdbConnectType net_type)
   STAI.wrapInstancePinList(&instance);
   STAI.wrapPortPin(&port);
   bool excluded = net_type == idb::IdbConnectType::kPower || net_type == idb::IdbConnectType::kGround;
-  require(STADM.getDatabase().get_pin_map().empty() == excluded, "incorrect special net pin filtering");
+  require(STADM.getDatabase().get_pin_map().size() == (excluded ? 1U : 2U), "incorrect special net pin filtering");
+  if (excluded) {
+    require(STADM.getDatabase().get_pin_map().at("cell0:contact").get_constant_value()
+                == (net_type == idb::IdbConnectType::kPower ? TimingCaseValue::kOne : TimingCaseValue::kZero),
+            "special supply-tied logic input lost its constant");
+  }
   require(port.get_special_net() == &net && cell_pin->get_special_net() == &net, "IDB special connectivity changed");
   DataManager::destroyInst();
 }

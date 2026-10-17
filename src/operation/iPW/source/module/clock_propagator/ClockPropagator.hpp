@@ -50,7 +50,7 @@ class ClockPropagator
   void propagateClockSlew(CPModel& cp_model, std::vector<std::string>& clock_name_list);
   void seedPhysicalClockSlew(CPModel& cp_model, std::string& clock_name);
   bool seedGeneratedClockSlew(CPModel& cp_model, std::string& clock_name, const TimingClock& timing_clock);
-  bool hasPhysicalClockSlew(const CPModel& cp_model, std::string_view pin_name, std::string_view clock_name);
+  bool hasPhysicalClockSlew(const CPModel& cp_model, int32_t vertex_idx, std::string_view clock_name);
   void updateEffectiveClockSlew(CPModel& cp_model, std::string& clock_name);
   void propagateClockSlew(CPModel& cp_model, std::string& clock_name);
   void propagateClockSlewArc(

@@ -17,6 +17,7 @@
 #pragma once
 
 #include "PWHeader.hpp"
+#include "LogicExpression.hpp"
 #include "TimingArcSense.hpp"
 #include "TimingTable.hpp"
 #include "TransType.hpp"
@@ -29,6 +30,7 @@ class TimingArc
   TimingArc() = default;
   ~TimingArc() = default;
   // getter
+  LogicExpression& get_when_expression() { return _when_expression; }
   TimingArcSense get_sense() const { return _sense; }
   TransType get_trigger_trans_type() const { return _trigger_trans_type; }
   std::string& get_library_name() { return _library_name; }
@@ -46,6 +48,7 @@ class TimingArc
   std::map<TransType, TimingTable>& get_delay_table_map() { return _delay_table_map; }
   std::map<TransType, TimingTable>& get_slew_table_map() { return _slew_table_map; }
   // setter
+  void set_when_expression(const LogicExpression& expression) { _when_expression = expression; }
   void set_sense(const TimingArcSense& sense) { _sense = sense; }
   void set_trigger_trans_type(const TransType& trigger_trans_type) { _trigger_trans_type = trigger_trans_type; }
   void set_library_name(const std::string& library_name) { _library_name = library_name; }
@@ -87,6 +90,7 @@ class TimingArc
   // function
 
  private:
+  LogicExpression _when_expression;
   TimingArcSense _sense = TimingArcSense::kNone;
   TransType _trigger_trans_type = TransType::kNone;
   std::string _library_name;

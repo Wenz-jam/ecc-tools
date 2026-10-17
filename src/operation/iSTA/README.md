@@ -23,35 +23,28 @@ state in `source/data_manager/`. Add concrete algorithm stages under
 
 ## IO-cell boundary connectivity
 
-iSTA and iPW exclude a net connecting exactly one top-level IO pin to exactly
-one pin of a LEF `CLASS PAD` cell. As in iRT's `isSkipping`, this is treated as
-external/package connectivity, not a core timing or power-analysis net. The
-decision uses connectivity and the LEF master class, not a specific cell/pin
-name, pin direction, or the absence of a Liberty arc.
+iSTA and iPW preserve signal nets between top-level ports and IO-cell PADs,
+including both endpoints. A routing skip based on LEF `CLASS PAD` is not a
+timing or power boundary: these objects carry SDC constraints and activity
+annotations, and Liberty can define paths through the IO cell.
 
-Both Interface wrappers omit the net and its two pins before constructing the
-internal database/graph (and before iPW activity indexing). Keeping isolated
-pins would still trigger INOUT direction inference. IDB itself is unchanged.
-The IO-cell instance and its core-facing connections remain available for
-analysis, as do direct IO-to-core nets and mixed nets with additional pins.
-This does not relax driver checks on retained nets, and it does not bridge or
-invent timing/activity propagation across the excluded external connection.
-
-Constraints and activity annotations must target the retained analysis
-boundary. For example, a clock previously defined on an excluded external
-port must instead be defined on the intended core-side IO-cell pin. Existing
-SDC commands requiring a non-empty collection still reject missing objects;
-they must not be silently ignored or redirected through an assumed black-box
-path. Board-level loads/delays on excluded ports are not core-side constraints.
+Do not delete or rename those objects to bypass INOUT direction checks, move
+their constraints to core-facing pins, or silently ignore missing SDC targets.
+The graph separates receiving and driving vertices for genuine INOUT pins,
+while reports, constraints and activity annotations retain physical names.
+Liberty functions, three-state conditions and conditional arcs determine
+enabled paths. See the [bidirectional IO implementation](../../../docs/sta-pw-bidirectional-io.md)
+for graph roles, driver-specific loads, regression coverage and power-estimation
+limitations.
 
 ## Power/ground connectivity
 
-iSTA excludes POWER/GROUND pins and nets in its Interface wrapper. A pin on a
-POWER/GROUND regular or special net is excluded even if its own term is marked
-SIGNAL or has no USE type, so excluded supply nets do not leave isolated timing
-vertices. This changes only iSTA's analysis database, not IDB or iPW input.
-Retained nets reference only retained pins, so DataManager cannot recreate
-filtered PG pins when building their connectivity.
+iSTA excludes POWER/GROUND terms and nets in its Interface wrapper. Logic
+control pins tied to an explicitly typed supply retain that constant, so an
+IO enable connected to power or ground still selects the correct mode. Supply
+wiring itself does not become signal timing arcs. This changes only iSTA's
+analysis database, not IDB or iPW input. Retained nets reference only retained
+pins, so DataManager cannot recreate filtered PG pins when building connectivity.
 
 An ordinary Verilog wire can also represent a supply without carrying a supply
 type. iSTA recognizes it when it has instance pins and all of them have the

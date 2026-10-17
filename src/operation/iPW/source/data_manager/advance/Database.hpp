@@ -20,6 +20,7 @@
 #include <unordered_map>
 
 #include "Arc.hpp"
+#include "GraphVertex.hpp"
 #include "Instance.hpp"
 #include "InstancePower.hpp"
 #include "Net.hpp"
@@ -58,6 +59,7 @@ class Database
 
   struct PowerWorkspace
   {
+    std::map<uint32_t, PowerActivity> driver_activity_map;
     // 每窗口/每次注解用世代号代替"清空 map"：stamp[i] == generation 才算写过。
     uint32_t vcd_generation = 1;
     uint32_t activity_generation = 1;
@@ -80,6 +82,9 @@ class Database
   Database() = default;
   ~Database() = default;
   // getter
+  std::vector<GraphVertex>& get_graph_vertex_list() { return _graph_vertex_list; }
+  std::vector<int32_t>& get_graph_order_list() { return _graph_order_list; }
+  std::map<std::string, TimingPoint>& get_driver_timing_point_map() { return _driver_timing_point_map; }
   std::string& get_design_name() { return _design_name; }
   std::map<std::string, Instance>& get_instance_map() { return _instance_map; }
   std::map<std::string, Pin>& get_pin_map() { return _pin_map; }
@@ -122,7 +127,11 @@ class Database
     workspace.vcd_generation++;
     workspace.vcd_touched_pin_list.clear();
   }
-  void beginActivityWindow() { get_workspace().activity_generation++; }
+  void beginActivityWindow()
+  {
+    get_workspace().activity_generation++;
+    get_workspace().driver_activity_map.clear();
+  }
   void beginPowerWindow()
   {
     std::vector<uint8_t>& net_power_written = get_workspace().net_power_written;
@@ -217,8 +226,26 @@ class Database
   void set_design_name(const std::string& design_name) { _design_name = design_name; }
   void set_workspace(PowerWorkspace* workspace) { currentWorkspace() = workspace; }
   // function
+  TimingPoint& getDriverTimingPoint(const std::string& pin_name)
+  {
+    auto iter = _driver_timing_point_map.find(pin_name);
+    return iter == _driver_timing_point_map.end() ? _timing_point_map.at(pin_name) : iter->second;
+  }
+  TimingPoint& getSourceTimingPoint(Arc& arc)
+  {
+    return arc.get_type() == ArcType::kNet ? getDriverTimingPoint(arc.get_source_pin())
+                                           : _timing_point_map.at(arc.get_source_pin());
+  }
+  TimingPoint& getSinkTimingPoint(Arc& arc)
+  {
+    return arc.get_type() == ArcType::kCell ? getDriverTimingPoint(arc.get_sink_pin())
+                                            : _timing_point_map.at(arc.get_sink_pin());
+  }
 
  private:
+  std::vector<GraphVertex> _graph_vertex_list;
+  std::vector<int32_t> _graph_order_list;
+  std::map<std::string, TimingPoint> _driver_timing_point_map;
   static PowerWorkspace*& currentWorkspace()
   {
     static thread_local PowerWorkspace* workspace = nullptr;

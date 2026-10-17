@@ -201,6 +201,30 @@ void testCdcException()
   require(exceptions[0].get_delay() == 3.0 && exceptions[0].get_ignore_clock_latency(), "CDC delay qualifiers lost");
 }
 
+void testLoadObjectIdentity()
+{
+  Database& database = STADM.getDatabase();
+  addPin("", "package", PinDirection::kInout);
+  addNet("package", {"package"});
+  addNet("inner/package", {});
+  eval("set port [get_ports package]; set net [get_nets -filter {full_name == package}]; set_load 0.7 $port");
+  TimingConstraint& constraint = database.get_timing_constraint();
+  require(constraint.get_net_load_map().empty(), "port load also applied to same-name nets");
+  require(constraint.get_port_constraint_map().at("package").get_load(AnalysisType::kMax, TransType::kRise) == 0.7, "port load missing");
+  eval("foreach item $net {set_load 0.2 $item}");
+  require(constraint.get_net_load_map().size() == 1 && constraint.get_net_load_map().contains("package"), "explicit net collection lost its type");
+  require(constraint.get_port_constraint_map().at("package").get_load(AnalysisType::kMax, TransType::kRise) == 0.7, "net load changed a same-name port");
+  eval("set_load 0.3 [get_nets inner/package]");
+  require(constraint.get_net_load_map().at("inner/package").get(AnalysisType::kMax, TransType::kRise) == 0.3, "hierarchical net load missing");
+  eval("set_load 0.8 [lindex $port 0]");
+  require(constraint.get_port_constraint_map().at("package").get_load(AnalysisType::kMax, TransType::kRise) == 0.8, "scalar collection element lost its type");
+  require(constraint.get_net_load_map().at("package").get(AnalysisType::kMax, TransType::kRise) == 0.2, "port element overwrote net load");
+  eval("set_load 0.4 [concat $port $net]");
+  require(constraint.get_port_constraint_map().at("package").get_load(AnalysisType::kMax, TransType::kRise) == 0.4
+              && constraint.get_net_load_map().at("package").get(AnalysisType::kMax, TransType::kRise) == 0.4,
+          "mixed port/net collection was not preserved");
+}
+
 int main()
 {
   Logger::initInst();
@@ -213,6 +237,7 @@ int main()
     testUnits();
     testQueries();
     testCdcException();
+    testLoadObjectIdentity();
     STALOG.info(Loc::current(), "SDC compatibility tests passed");
   } catch (const std::exception& error) {
     STALOG.warn(Loc::current(), error.what());

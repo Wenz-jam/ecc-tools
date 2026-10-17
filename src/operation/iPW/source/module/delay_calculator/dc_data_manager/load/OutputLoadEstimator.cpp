@@ -109,7 +109,7 @@ double getArcOutputLoad(Arc& arc, AnalysisType analysis_type, TransType output_t
     return 0.0;
   }
   Net& net = net_iter->second;
-  return getNetOutputLoad(sink_pin.get_net_name(), net, analysis_type, output_trans_type);
+  return getNetOutputLoad(sink_pin.get_net_name(), sink_pin_name, net, analysis_type, output_trans_type);
 }
 
 double getOutputPinLoad(std::string& output_pin, AnalysisType analysis_type, TransType output_trans_type)
@@ -128,17 +128,25 @@ double getOutputPinLoad(std::string& output_pin, AnalysisType analysis_type, Tra
     return 0.0;
   }
   Net& net = net_iter->second;
-  return getNetOutputLoad(pin.get_net_name(), net, analysis_type, output_trans_type);
+  return getNetOutputLoad(pin.get_net_name(), output_pin, net, analysis_type, output_trans_type);
 }
 
-double getNetOutputLoad(const std::string& net_name, Net& net, AnalysisType analysis_type, TransType output_trans_type)
+double getNetOutputLoad(
+    const std::string& net_name,
+    const std::string& driver_pin,
+    Net& net,
+    AnalysisType analysis_type,
+    TransType output_trans_type
+)
 {
   Database& database = PWDM.getDatabase();
   TimingConstraint& timing_constraint = database.get_timing_constraint();
   if (timing_constraint.has_net_load(net_name, analysis_type, output_trans_type)) {
     double output_load = timing_constraint.get_net_load(net_name, analysis_type, output_trans_type);
     for (std::string& load_pin_name : net.get_load_pin_list()) {
-      output_load += getPinCapacitance(load_pin_name, analysis_type, output_trans_type);
+      if (load_pin_name != driver_pin) {
+        output_load += getPinCapacitance(load_pin_name, analysis_type, output_trans_type);
+      }
     }
     return output_load;
   }
@@ -147,27 +155,26 @@ double getNetOutputLoad(const std::string& net_name, Net& net, AnalysisType anal
   auto parasitic_net_iter = database.get_parasitic_net_map().find(net_name);
   if (parasitic_net_iter != database.get_parasitic_net_map().end()) {
     ParasiticNet& parasitic_net = parasitic_net_iter->second;
-    output_load = getParasiticNetOutputLoad(net, parasitic_net, analysis_type, output_trans_type);
+    output_load = getParasiticNetOutputLoad(driver_pin, parasitic_net, analysis_type, output_trans_type);
   } else {
     for (std::string& load_pin_name : net.get_load_pin_list()) {
-      output_load += getPinCapacitance(load_pin_name, analysis_type, output_trans_type);
+      if (load_pin_name != driver_pin) {
+        output_load += getPinCapacitance(load_pin_name, analysis_type, output_trans_type);
+      }
     }
   }
   return output_load;
 }
 
 double getParasiticNetOutputLoad(
-    Net& net,
+    const std::string& driver_pin,
     ParasiticNet& parasitic_net,
     AnalysisType analysis_type,
     TransType trans_type
 )
 {
   const ParasiticGraph& graph = getParasiticGraph(parasitic_net);
-  if (net.get_driver_pin_list().empty()) {
-    return getParasiticTotalLoad(graph, parasitic_net, analysis_type, trans_type);
-  }
-  const uint32_t source_node_id = getParasiticNodeId(graph, net.get_driver_pin_list().back());
+  const uint32_t source_node_id = getParasiticNodeId(graph, driver_pin);
   if (source_node_id == kInvalidParasiticNode) {
     return getParasiticTotalLoad(graph, parasitic_net, analysis_type, trans_type);
   }

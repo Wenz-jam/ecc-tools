@@ -52,7 +52,7 @@ void flattenRcTree(
   node_id_list.push_back(source_node_id);
   parent_idx_list.push_back(-1);
   resistance_list.push_back(0.0);
-  capacitance_list.push_back(parasiticNodeLoad(graph, pin_cap_list, source_node_id));
+  capacitance_list.push_back(graph.node_capacitance[source_node_id]);
   visited_node_list[source_node_id] = 1;
 
   std::vector<std::size_t> stack_node_idx_list;

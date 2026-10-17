@@ -32,10 +32,12 @@ class TimingCellPort
   double get_capacitance() const { return _capacitance; }
   std::map<AnalysisType, std::map<TransType, double>>& get_trans_capacitance_map() { return _trans_capacitance_map; }
   LogicExpression& get_function_expression() { return _function_expression; }
+  LogicExpression& get_three_state_expression() { return _three_state_expression; }
   bool get_is_input() const { return _is_input; }
   bool get_is_output() const { return _is_output; }
   bool get_is_clock() const { return _is_clock; }
   // setter
+  void set_three_state_expression(const LogicExpression& expression) { _three_state_expression = expression; }
   void set_capacitance(const double capacitance) { _capacitance = capacitance; }
   void set_function_expression(const LogicExpression& function_expression)
   {
@@ -50,6 +52,7 @@ class TimingCellPort
   double _capacitance = 0.0;
   std::map<AnalysisType, std::map<TransType, double>> _trans_capacitance_map;
   LogicExpression _function_expression;
+  LogicExpression _three_state_expression;
   bool _is_input = false;
   bool _is_output = false;
   bool _is_clock = false;

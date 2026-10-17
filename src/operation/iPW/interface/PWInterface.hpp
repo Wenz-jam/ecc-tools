@@ -60,6 +60,7 @@ namespace ipw {
 class LogicExpression;
 class ParasiticNet;
 enum class PinDirection;
+enum class TimingCaseValue;
 class Net;
 class Pin;
 class TimingArc;
@@ -114,9 +115,9 @@ class PWInterface
   void wrapInstancePinList(idb::IdbInstance* idb_instance);
   void wrapInstancePin(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin);
   bool wrapSignalConnectType(idb::IdbConnectType connect_type);
-  bool isIOBoundaryNet(idb::IdbNet* idb_net);
   std::string wrapInstancePinName(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin);
   PinDirection wrapPinDirection(idb::IdbConnectDirection idb_direction);
+  TimingCaseValue wrapConstantValue(idb::IdbPin* idb_pin);
   void wrapPortList();
   void wrapPortPin(idb::IdbPin* idb_pin);
   std::string wrapPinName(idb::IdbPin* idb_pin);

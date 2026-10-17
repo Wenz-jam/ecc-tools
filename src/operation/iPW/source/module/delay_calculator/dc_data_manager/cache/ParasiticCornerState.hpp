@@ -38,6 +38,7 @@ struct ParasiticCornerState
   std::vector<uint8_t> node_delay_valid;
   std::vector<uint8_t> node_impulse_valid;
   std::vector<uint8_t> visited_scratch;  // 四个遍历共用，避免每次调用分配
+  uint32_t source_node_idx = UINT32_MAX;
   bool pin_cap_ready = false;
 };
 

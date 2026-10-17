@@ -330,6 +330,7 @@ void STAInterface::wrapInstancePin(idb::IdbInstance* idb_instance, idb::IdbPin* 
   pin.set_full_name(full_name);
   pin.set_instance_name(idb_instance->get_name());
   pin.set_direction(wrapPinDirection(idb_pin->get_term()->get_direction()));
+  pin.set_constant_value(wrapConstantValue(idb_pin));
   wrapPinCoordinate(pin, idb_pin);
   STADM.getDatabase().get_pin_map()[full_name] = pin;
 }
@@ -338,6 +339,10 @@ bool STAInterface::wrapSignalPin(idb::IdbPin* idb_pin)
 {
   if (!wrapSignalConnectType(idb_pin->get_term()->get_type())) {
     return false;
+  }
+  // Keep logic inputs tied to supplies; only the supply net/PG terminals are excluded.
+  if (!idb_pin->is_io_pin()) {
+    return true;
   }
   idb::IdbNet* idb_net = idb_pin->get_net();
   if (idb_net != nullptr && !wrapSignalConnectType(idb_net->get_connect_type())) {
@@ -351,7 +356,7 @@ bool STAInterface::wrapSignalPin(idb::IdbPin* idb_pin)
   if (idb_pin->is_io_pin() && isPGNet(idb_net)) {
     return false;
   }
-  return !isIOBoundaryNet(idb_net);
+  return true;
 }
 
 bool STAInterface::wrapSignalConnectType(idb::IdbConnectType connect_type)
@@ -396,18 +401,6 @@ bool STAInterface::isPGNet(idb::IdbNet* idb_net)
   return true;
 }
 
-bool STAInterface::isIOBoundaryNet(idb::IdbNet* idb_net)
-{
-  // 与 iRT 的 isSkipping 一样，通过 LEF PAD 类型识别封装侧连接，不依赖引脚名或方向。
-  // 顶层 IO pin 与 IO cell PAD 的一对一连接只表示外部边界，不参与时序分析。
-  // net 和两端 pin 必须一起排除；直连 core 的 IO、PAD 的 core 侧连接及混合线网仍保留。
-  if (idb_net == nullptr || idb_net->get_io_pins()->get_pin_num() != 1 || idb_net->get_instance_pin_list()->get_pin_num() != 1) {
-    return false;
-  }
-  idb::IdbInstance* idb_instance = idb_net->get_instance_pin_list()->get_pin_list().front()->get_instance();
-  return idb_instance != nullptr && idb_instance->get_cell_master() != nullptr && idb_instance->get_cell_master()->is_pad();
-}
-
 std::string STAInterface::wrapInstancePinName(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin)
 {
   return idb_instance->get_name() + ":" + idb_pin->get_pin_name();
@@ -428,6 +421,23 @@ PinDirection STAInterface::wrapPinDirection(idb::IdbConnectDirection idb_directi
       break;
   }
   return PinDirection::kNone;
+}
+
+TimingCaseValue STAInterface::wrapConstantValue(idb::IdbPin* idb_pin)
+{
+  idb::IdbConnectType type = idb::IdbConnectType::kNone;
+  if (idb_pin->get_net() != nullptr) {
+    type = idb_pin->get_net()->get_connect_type();
+  } else if (idb_pin->get_special_net() != nullptr) {
+    type = idb_pin->get_special_net()->get_connect_type();
+  }
+  if (type == idb::IdbConnectType::kPower) {
+    return TimingCaseValue::kOne;
+  }
+  if (type == idb::IdbConnectType::kGround) {
+    return TimingCaseValue::kZero;
+  }
+  return TimingCaseValue::kNone;
 }
 
 void STAInterface::wrapPinCoordinate(Pin& pin, idb::IdbPin* idb_pin)
@@ -476,7 +486,7 @@ void STAInterface::wrapNetList()
 
 void STAInterface::wrapNet(idb::IdbNet* idb_net)
 {
-  if (!wrapSignalConnectType(idb_net->get_connect_type()) || isPGNet(idb_net) || isIOBoundaryNet(idb_net)) {
+  if (!wrapSignalConnectType(idb_net->get_connect_type()) || isPGNet(idb_net)) {
     return;
   }
 
@@ -765,6 +775,7 @@ void STAInterface::wrapTimingCellPort(TimingCell& timing_cell, idb::LibPort* lib
   timing_cell_port.set_is_clock(lib_port->isClock() || lib_port->get_is_clock_pin() || lib_port->get_is_clock());
   std::string function_string = lib_port->get_func_expr_str();
   timing_cell_port.set_function_expression(wrapLogicExpression(function_string));
+  timing_cell_port.set_three_state_expression(wrapLogicExpression(lib_port->get_three_state_expr_str()));
   timing_cell.get_port_map()[timing_cell_port.get_port_name()] = timing_cell_port;
 }
 
@@ -934,6 +945,7 @@ TimingArc STAInterface::wrapTimingArc(idb::LibArc* lib_arc)
   TimingArc timing_arc;
   idb::LibLibrary* lib_library = lib_arc->get_owner_cell()->get_owner_lib();
   timing_arc.set_sense(wrapTimingArcSense(lib_arc));
+  timing_arc.set_when_expression(wrapLogicExpression(lib_arc->get_when()));
   timing_arc.set_trigger_trans_type(wrapTriggerTransType(lib_arc));
   timing_arc.set_check_trans_type(wrapCheckTransType(lib_arc));
   timing_arc.set_library_name(lib_library->get_lib_name());

@@ -137,6 +137,12 @@ class PowerAnalyzer
       TimingLeakagePower& timing_leakage_power,
       PAInstanceModel& pa_instance_model
   );
+  PowerActivity getOutputPortActivity(
+      Instance& instance,
+      const std::string& port_name,
+      PAInstanceModel& pa_instance_model
+  );
+  double getDriverEnableProbability(Instance& instance, TimingCellPort& port, PAInstanceModel& pa_instance_model);
   PowerActivity getPortActivity(Instance& instance, const std::string& port_name, PAInstanceModel& pa_instance_model);
   std::map<std::string, PowerActivity>& getPortActivityMap(Instance& instance, PAInstanceModel& pa_instance_model);
   PowerActivity getPinActivity(const std::string& pin_name);

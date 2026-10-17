@@ -164,10 +164,14 @@ void SignalPropagator::seedSignalSlew(std::string& source_pin, AnalysisType anal
 void SignalPropagator::seedSignalSlew(std::string& source_pin, AnalysisType analysis_type, TransType trans_type)
 {
   Database& database = PWDM.getDatabase();
-  if (!database.get_timing_constraint().allowsTransition(source_pin, trans_type)) {
+  if (!database.get_timing_constraint().allowsTransition(
+          source_pin,
+          trans_type,
+          database.get_pin_map().at(source_pin).get_direction() == PinDirection::kInout
+      )) {
     return;
   }
-  TimingPoint& timing_point = database.get_timing_point_map()[source_pin];
+  TimingPoint& timing_point = database.getDriverTimingPoint(source_pin);
   if (isSequentialClockPin(source_pin) && hasIncomingPhysicalSlewArc(source_pin)
       && (timing_point.get_clock_slew_map().count(analysis_type) == 0
           || timing_point.get_clock_slew_map()[analysis_type].count(trans_type) == 0)) {
@@ -313,7 +317,7 @@ double SignalPropagator::getClockSlew(TimingPoint& timing_point, AnalysisType an
 void SignalPropagator::propagateSignalSlew()
 {
   Database& database = PWDM.getDatabase();
-  const std::vector<uint32_t>& pin_order_list = database.get_signal_order_pin_index_list();
+  const std::vector<int32_t>& pin_order_list = database.get_graph_order_list();
   if (pin_order_list.empty()) {
     return;
   }
@@ -357,11 +361,7 @@ void SignalPropagator::propagateSignalSlew()
 void SignalPropagator::computeSignalSlewPin(uint32_t pin_index, std::vector<SlewUpdate>& updates)
 {
   Database& database = PWDM.getDatabase();
-  const std::vector<std::vector<uint32_t>>& outgoing_arc_index_list = database.get_outgoing_arc_index_list();
-  if (pin_index >= outgoing_arc_index_list.size()) {
-    return;
-  }
-  for (uint32_t arc_idx : outgoing_arc_index_list[pin_index]) {
+  for (std::size_t arc_idx : database.get_graph_vertex_list()[pin_index].get_outgoing_arc_list()) {
     if (isDisableArc(database.get_arc_list()[arc_idx])) {
       continue;
     }
@@ -388,10 +388,15 @@ void SignalPropagator::computeSignalSlewArc(
   Database& database = PWDM.getDatabase();
   Arc& arc = database.get_arc_list()[arc_idx];
   if (isDisableArc(arc) || shouldStopSignalSlewPropagation(arc)
-      || !database.get_timing_constraint().allowsTransition(arc.get_source_pin(), input_trans_type)) {
+      || !database.get_timing_constraint().allowsTransition(
+          arc.get_source_pin(),
+          input_trans_type,
+          arc.get_type() == ArcType::kNet
+              && database.get_pin_map().at(arc.get_source_pin()).get_direction() == PinDirection::kInout
+      )) {
     return;
   }
-  TimingPoint* source_point = findTimingPoint(arc.get_source_pin_index());
+  TimingPoint* source_point = &database.getSourceTimingPoint(arc);
   if (source_point == nullptr || !hasSignalSlew(*source_point, analysis_type, input_trans_type)) {
     return;
   }
@@ -400,7 +405,12 @@ void SignalPropagator::computeSignalSlewArc(
     return;
   }
   for (TransType output_trans_type : getOutputTransTypeList(arc, input_trans_type)) {
-    if (!database.get_timing_constraint().allowsTransition(arc.get_sink_pin(), output_trans_type)) {
+    if (!database.get_timing_constraint().allowsTransition(
+            arc.get_sink_pin(),
+            output_trans_type,
+            arc.get_type() == ArcType::kCell
+                && database.get_pin_map().at(arc.get_sink_pin()).get_direction() == PinDirection::kInout
+        )) {
       continue;
     }
     DCTask dc_task;
@@ -416,7 +426,12 @@ void SignalPropagator::computeSignalSlewArc(
     if (!dc_task.get_is_valid()) {
       continue;
     }
-    updates.push_back(SlewUpdate{sink_pin_index, analysis_type, output_trans_type, dc_task.get_output_slew()});
+    updates.push_back(SlewUpdate{
+        static_cast<uint32_t>(arc.get_sink_vertex_idx()),
+        analysis_type,
+        output_trans_type,
+        dc_task.get_output_slew()
+    });
   }
 }
 
@@ -424,7 +439,7 @@ void SignalPropagator::computeSignalSlewArc(
 void SignalPropagator::applySignalSlewList(const std::vector<SlewUpdate>& updates)
 {
   for (const SlewUpdate& update : updates) {
-    TimingPoint* timing_point = findTimingPoint(update.sink_pin_index);
+    TimingPoint* timing_point = &PWDM.getDatabase().get_graph_vertex_list()[update.sink_vertex_idx].get_timing_point();
     if (timing_point == nullptr) {
       continue;
     }
