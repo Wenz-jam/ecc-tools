@@ -57,6 +57,7 @@ class LogicExpression;
 class ParasiticNet;
 class ParasiticNode;
 enum class PinDirection;
+enum class TimingCaseValue;
 class Net;
 class Pin;
 class TimingArc;
@@ -123,6 +124,7 @@ class STAInterface
   bool isPGNet(idb::IdbNet* idb_net);
   std::string wrapInstancePinName(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin);
   PinDirection wrapPinDirection(idb::IdbConnectDirection idb_direction);
+  TimingCaseValue wrapConstantValue(idb::IdbPin* idb_pin);
   void wrapPinCoordinate(Pin& pin, idb::IdbPin* idb_pin);
   void wrapPortList();
   void wrapPortPin(idb::IdbPin* idb_pin);

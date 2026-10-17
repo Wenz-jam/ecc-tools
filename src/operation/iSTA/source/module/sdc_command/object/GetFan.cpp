@@ -78,8 +78,13 @@ PinDirection TclGetFan::getDirection(Pin& pin)
     auto cell = database.get_timing_library().get_cell_map().find(instance->second.get_cell_name());
     if (cell != database.get_timing_library().get_cell_map().end()) {
       auto port = cell->second.get_port_map().find(pin.get_pin_name());
-      if (port != cell->second.get_port_map().end() && port->second.get_is_input() != port->second.get_is_output()) {
-        return port->second.get_is_input() ? PinDirection::kInput : PinDirection::kOutput;
+      if (port != cell->second.get_port_map().end()) {
+        if (port->second.get_is_input() && port->second.get_is_output()) {
+          return PinDirection::kInout;
+        }
+        if (port->second.get_is_input() != port->second.get_is_output()) {
+          return port->second.get_is_input() ? PinDirection::kInput : PinDirection::kOutput;
+        }
       }
     }
   }
