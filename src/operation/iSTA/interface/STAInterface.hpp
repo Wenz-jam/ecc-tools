@@ -121,7 +121,6 @@ class STAInterface
   bool wrapSignalPin(idb::IdbPin* idb_pin);
   bool wrapSignalConnectType(idb::IdbConnectType connect_type);
   bool isPGNet(idb::IdbNet* idb_net);
-  bool isIOBoundaryNet(idb::IdbNet* idb_net);
   std::string wrapInstancePinName(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin);
   PinDirection wrapPinDirection(idb::IdbConnectDirection idb_direction);
   void wrapPinCoordinate(Pin& pin, idb::IdbPin* idb_pin);

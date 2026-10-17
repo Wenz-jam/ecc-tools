@@ -351,7 +351,7 @@ void PWInterface::wrapInstancePinList(idb::IdbInstance* idb_instance)
 
 void PWInterface::wrapInstancePin(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin)
 {
-  if (!wrapSignalConnectType(idb_pin->get_term()->get_type()) || isIOBoundaryNet(idb_pin->get_net())) {
+  if (!wrapSignalConnectType(idb_pin->get_term()->get_type())) {
     return;
   }
 
@@ -368,18 +368,6 @@ bool PWInterface::wrapSignalConnectType(idb::IdbConnectType connect_type)
   return connect_type == idb::IdbConnectType::kNone || connect_type == idb::IdbConnectType::kSignal
          || connect_type == idb::IdbConnectType::kClock || connect_type == idb::IdbConnectType::kReset
          || connect_type == idb::IdbConnectType::kScan || connect_type == idb::IdbConnectType::kTieOff;
-}
-
-bool PWInterface::isIOBoundaryNet(idb::IdbNet* idb_net)
-{
-  // 与 iRT 的 isSkipping 一样，通过 LEF PAD 类型识别封装侧连接，不依赖引脚名或方向。
-  // 顶层 IO pin 与 IO cell PAD 的一对一连接只表示外部边界，不参与功耗分析。
-  // net 和两端 pin 必须在索引及 VCD 注解之前排除；core 侧连接及混合线网仍保留。
-  if (idb_net == nullptr || idb_net->get_io_pins()->get_pin_num() != 1 || idb_net->get_instance_pin_list()->get_pin_num() != 1) {
-    return false;
-  }
-  idb::IdbInstance* idb_instance = idb_net->get_instance_pin_list()->get_pin_list().front()->get_instance();
-  return idb_instance != nullptr && idb_instance->get_cell_master() != nullptr && idb_instance->get_cell_master()->is_pad();
 }
 
 std::string PWInterface::wrapInstancePinName(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin)
@@ -414,7 +402,7 @@ void PWInterface::wrapPortList()
 
 void PWInterface::wrapPortPin(idb::IdbPin* idb_pin)
 {
-  if (!wrapSignalConnectType(idb_pin->get_term()->get_type()) || isIOBoundaryNet(idb_pin->get_net())) {
+  if (!wrapSignalConnectType(idb_pin->get_term()->get_type())) {
     return;
   }
 
@@ -441,7 +429,7 @@ void PWInterface::wrapNetList()
 
 void PWInterface::wrapNet(idb::IdbNet* idb_net)
 {
-  if (!wrapSignalConnectType(idb_net->get_connect_type()) || isIOBoundaryNet(idb_net)) {
+  if (!wrapSignalConnectType(idb_net->get_connect_type())) {
     return;
   }
 

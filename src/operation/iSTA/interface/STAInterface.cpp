@@ -351,7 +351,7 @@ bool STAInterface::wrapSignalPin(idb::IdbPin* idb_pin)
   if (idb_pin->is_io_pin() && isPGNet(idb_net)) {
     return false;
   }
-  return !isIOBoundaryNet(idb_net);
+  return true;
 }
 
 bool STAInterface::wrapSignalConnectType(idb::IdbConnectType connect_type)
@@ -394,18 +394,6 @@ bool STAInterface::isPGNet(idb::IdbNet* idb_net)
     }
   }
   return true;
-}
-
-bool STAInterface::isIOBoundaryNet(idb::IdbNet* idb_net)
-{
-  // 与 iRT 的 isSkipping 一样，通过 LEF PAD 类型识别封装侧连接，不依赖引脚名或方向。
-  // 顶层 IO pin 与 IO cell PAD 的一对一连接只表示外部边界，不参与时序分析。
-  // net 和两端 pin 必须一起排除；直连 core 的 IO、PAD 的 core 侧连接及混合线网仍保留。
-  if (idb_net == nullptr || idb_net->get_io_pins()->get_pin_num() != 1 || idb_net->get_instance_pin_list()->get_pin_num() != 1) {
-    return false;
-  }
-  idb::IdbInstance* idb_instance = idb_net->get_instance_pin_list()->get_pin_list().front()->get_instance();
-  return idb_instance != nullptr && idb_instance->get_cell_master() != nullptr && idb_instance->get_cell_master()->is_pad();
 }
 
 std::string STAInterface::wrapInstancePinName(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin)
@@ -476,7 +464,7 @@ void STAInterface::wrapNetList()
 
 void STAInterface::wrapNet(idb::IdbNet* idb_net)
 {
-  if (!wrapSignalConnectType(idb_net->get_connect_type()) || isPGNet(idb_net) || isIOBoundaryNet(idb_net)) {
+  if (!wrapSignalConnectType(idb_net->get_connect_type()) || isPGNet(idb_net)) {
     return;
   }
 
