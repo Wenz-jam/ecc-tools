@@ -30,19 +30,21 @@ annotations, and Liberty can define paths through the IO cell.
 
 Do not delete or rename those objects to bypass INOUT direction checks, move
 their constraints to core-facing pins, or silently ignore missing SDC targets.
-Preserving the objects does not by itself implement bidirectional propagation;
-the current graph's single-direction limitation still needs a separate fix.
-See the [bidirectional IO design](../../../docs/sta-pw-bidirectional-io.md) for
-the proposed graph, mode, and power-accounting changes.
+The graph separates receiving and driving vertices for genuine INOUT pins,
+while reports, constraints and activity annotations retain physical names.
+Liberty functions, three-state conditions and conditional arcs determine
+enabled paths. See the [bidirectional IO implementation](../../../docs/sta-pw-bidirectional-io.md)
+for graph roles, driver-specific loads, regression coverage and power-estimation
+limitations.
 
 ## Power/ground connectivity
 
-iSTA excludes POWER/GROUND pins and nets in its Interface wrapper. A pin on a
-POWER/GROUND regular or special net is excluded even if its own term is marked
-SIGNAL or has no USE type, so excluded supply nets do not leave isolated timing
-vertices. This changes only iSTA's analysis database, not IDB or iPW input.
-Retained nets reference only retained pins, so DataManager cannot recreate
-filtered PG pins when building their connectivity.
+iSTA excludes POWER/GROUND terms and nets in its Interface wrapper. Logic
+control pins tied to an explicitly typed supply retain that constant, so an
+IO enable connected to power or ground still selects the correct mode. Supply
+wiring itself does not become signal timing arcs. This changes only iSTA's
+analysis database, not IDB or iPW input. Retained nets reference only retained
+pins, so DataManager cannot recreate filtered PG pins when building connectivity.
 
 An ordinary Verilog wire can also represent a supply without carrying a supply
 type. iSTA recognizes it when it has instance pins and all of them have the

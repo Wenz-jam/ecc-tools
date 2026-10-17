@@ -1,89 +1,85 @@
-# iSTA / iPW 双向 IO 建图方案
+# iSTA / iPW 双向 IO 分析
 
-## 状态与目标
+## 输入边界
 
-本文是待实施方案，不表示双向 graph 已经完成。当前改动只撤销两个工具在 Interface 中删除 PAD 外侧 signal net、顶层 port 和 PAD pin 的处理，并保留独立的 iSTA 电源地过滤。
+顶层 port 与 IO cell 的 PAD 连接必须保留。iRT 可以跳过这段连接的物理布线，但不能把同一规则直接用于时序或功耗输入：删除它会破坏 `get_ports`、外部时钟、输入输出 delay、输出 load 和 VCD 注解。
 
-目标是让带 IO cell 的设计保留原来的整芯片 SDC 和 VCD，正确分析输入、输出及模式相关的双向路径。iSTA 与 iPW 继续独立，不新增跨工具调用，不改变 Tcl/Python API。
+IO cell 可以在 LEF 中是物理黑盒，在 Liberty 中仍有完整的接收、输出和三态模型。不能按 `CLASS PAD`、pin 名称或一对一连接删除它，也不能要求用户把整芯片 SDC 改到 core pin 上。Liberty 明确的双向方向优先于旧 LEF 的单向描述。
 
-## 为什么不能沿用布线跳过规则
+iSTA 和 iPW 独立持有内部数据，不互相调用。公开 Tcl/Python API 不变；IDB 设计不被改写。
 
-iRT 跳过无需布线的顶层 port 与 PAD 连接，不代表该连接没有时序或活动传播意义。删除它会使 `get_ports` 失效，切断外部时钟，并丢失输入到达时间、输出负载和 VCD 注解。报告筛选也不能通过删除这些对象实现。
+## 图节点与物理对象
 
-IO cell 的 LEF 可以是物理黑盒，但其 Liberty 仍可包含输入和输出时序弧。不能仅依据 LEF `CLASS PAD`、pin 名称或一对一连接就跳过分析。
+`Pin`、`Net`、`Instance` 的名称和数量保持物理含义。SDC、VCD、SPEF、RPT、SDF 仍引用真实名称，不为双向节点拼接虚构 pin 后缀。
 
-## 已确认的代码限制
+跨阶段使用的 `GraphVertex` 放在各工具的 `source/data_manager/advance`：
 
-| 位置 | 当前限制 | 需要调整 |
-| --- | --- | --- |
-| 两个工具的 `GraphBuilder::buildInoutPinDirectionByGraph()` | 将每个 INOUT 强制推导为单一方向，不能推导就终止 | 保留真实双向角色，不通过删除 pin 或任意选择方向处理 |
-| `Pin`、`Arc`、`Database` | 邻接关系和传播状态主要以 pin 名为 key | 分开物理 pin 身份和图节点身份，同一个双向 pin 的两种角色不能共用传播状态 |
-| iSTA `Net`、`DelayCalculator` | 部分调用依赖唯一 `driver_pin`，寄生负载也从它选根 | 显式选择当前 driver，按该 driver 求负载和 RC 响应 |
-| Liberty parser 的 `LibPort`、两个工具的 `TimingCellPort` | 有方向和 `function`，没有保存 pin 的 `three_state` 表达式 | 补齐解析及 wrap，不按 OE、IE 等名字猜功能 |
-| 两个工具的 case analysis | iSTA 在传播阶段应用；iPW 在建图后段应用 | 在最终活动弧选择和拓扑排序之前处理模式，不能先单向化再补模式 |
-| iPW `PowerWorkspace`、功耗汇总 | 活动和缓存按物理 pin 索引，功耗按 instance/net 汇总 | 新增图节点不能复制物理实例、重复计算电容或重复累加功耗 |
-| iPW `SdcCommand` | 尚不支持复现 SDC 所使用的 `get_fanin` 查询 | 单独补齐执行原始脚本所必需的对象查询，不能忽略错误后宣称约束完整 |
-
-## 数据模型
-
-1. 保留原始 `Pin`、`Net`、`Instance`，名称不变。SDC、VCD、SPEF、RPT 和 SDF 继续对应真实对象，禁止在 pin 名后拼虚构后缀来模拟第二个引脚。
-2. 增加独立的图节点身份及其到物理 pin 的映射。普通单向 pin 只需一个对应角色的节点；双向 pin 同时有 load 节点和 driver 节点。顶层 input port 是设计的 driver，顶层 output port 是设计的 load。
-3. 图节点保存独立的传播状态和邻接关系；边记录源、目标图节点，同时能够反查物理 pin 和原来的 Liberty arc。
-4. 跨模块使用的图数据放各工具自身的 `source/data_manager/advance`；建图临时数据放 `graph_builder/gb_data_manager`。不复制实例和 RC 电容，不让 module 持有外部 Liberty 对象。
-
-这里的两节点表示参考 OpenSTA 的 `makePinVertices()` 和 `makeWireEdge()`。OpenSTA 将双向引脚的驱动节点单独保存，net edge 从驱动节点连到负载节点。[Graph.cc](https://github.com/parallaxsw/OpenSTA/blob/master/graph/Graph.cc)
-
-## 建图与模式
+- 普通单向 pin 使用一个图节点。
+- INOUT pin 分别有 load 和 driver 节点，邻接关系、slew、arrival、required、clock state 和前驱不混用。
+- cell arc 从接收侧连接输出驱动侧；net arc 从 driver 连接其他 pin 的 load，排除同一物理 pin 自连。
+- 图节点引用 Database 持有的 TimingPoint；图存活期间不能单独清空或替换这些状态容器。
 
 ```text
-输入：top port(driver) -> PAD(load) -> IO cell 接收输出 -> core
-输出：core -> IO cell 数据输入 -> PAD(driver) -> top port(load)
+输入：top port(driver) -> PAD(load) -> IO 接收输出 -> core
+输出：core -> IO 数据输入 -> PAD(driver) -> top port(load)
 ```
 
-- cell arc 按 Liberty 连接相应节点，不能把输入方向的 PAD 到 core 路径和输出方向的 core 到 PAD 路径混成一个状态。
-- net 保存候选驱动及负载角色，并排除同一物理 pin 自己到自己的 net edge。普通多输出短接仍须诊断；双向或三态端口具有多个候选驱动不等于它们同时有效。
-- 先建立角色关系，再传播网表常量和 SDC case analysis，计算活动弧，最后进行环检查和拓扑排序。不能通过先强制单驱动才能解析模式的循环依赖来建图。
-- `three_state` 是高阻条件，表达式为真表示输出关闭。可在内部保存该条件，或统一转换成驱动使能表达式，但不能把极性弄反。OpenSTA 在读取时对该表达式取反，保存为 enable。[LibertyReader.cc](https://github.com/parallaxsw/OpenSTA/blob/master/liberty/LibertyReader.cc)
-- 结合 `function`、`when`、三态条件判断有效路径。已知关闭的输出不能作为有效驱动；模式未知时保留可能路径及不确定性，不将未知默认成关闭，不随机选择一个 driver。
-- 区分数据弧、三态使能弧以及双向回读路径。不能用通用断环随意删除输入或输出方向。OpenSTA 对双向实例回读和时钟遍历有专门限制，不能只复制“两节点”而忽略搜索规则。[SearchPred.cc](https://github.com/parallaxsw/OpenSTA/blob/master/search/SearchPred.cc)
-- 电源地不作为信号时序节点，但供电连接给逻辑控制 pin 带来的常量值仍需保留；不要因为过滤供电网而丢失三态控制的常量信息。
+这种物理 pin / 图角色分离方式参考 OpenSTA 的 `graph/Graph.cc` 中 `makePinVertices()`、`makeWireEdge()`。计算图的遍历、环检查和拓扑排序使用节点索引；报告和接口仍映射回物理 pin。
 
-## 输入边界与解析
+## 模式与常量
 
-Liberty parser 负责把 `three_state` 保存到库对象，包含 bus 属性继承；Interface 再将它 wrap 为各工具自己的 `LogicExpression`。这是预计需要修改 parser 的最小范围，算法模块不直接调用 parser，也不重新扫描 Liberty 文本。
+Liberty parser 保存 `three_state` 字符串，包括 bus 属性继承和对象移动。Interface 将 `function`、`three_state`、timing arc 的 `when` 转为工具自己的 `LogicExpression`，后续算法不读取外部 Liberty 对象。
 
-SDC 继续绑定顶层 port，输入 delay、输入 transition/drive 对应输入传播角色，输出 delay/load 对应输出传播角色。时钟沿真实的接收路径进入 core。不能把外部负载直接平移到 core pin，也不能忽略空对象错误。
+`three_state` 为高阻条件：真表示关闭输出。不能按 OE、IE 等名称猜极性。GraphBuilder 在角色和连线构建后、环检查和拓扑排序前传播常量并选择有效弧：
 
-iPW 的完整 SDC 兼容性是独立的前置问题，不能用本次 PAD 输入恢复来代替。需要保留功耗用到的时钟、模式及电气约束，并支持其对象查询；不因此把 iSTA 的 setup/hold 分析模块重新复制进 iPW。
+- 接收值与内部驱动值分别保存，不能把内部常量输出覆盖到外部输入角色。
+- 已知高阻的 driver 不传播；未知使能保留可能的路径，不随机选一个 driver，也不将未知当成关闭。
+- 所有候选驱动均提供一致常量时才向负载传播该常量；不能只取第一个候选的值。
+- 过滤已知为假的 `when`，延迟查表也使用同一条件，避免被关闭的表格参与最大/最小值选择。
+- CK->Q 的输出 `function` 通常引用寄存器内部状态，不能用组合逻辑对 CK 的敏感性判断来关闭它。其显式 `when` 和 case 条件仍生效。
+- 普通多个无条件输出短接仍沿用各工具原来的多驱动诊断，不把真实错误伪装成双向端口。
 
-## 后续模块适配
+POWER/GROUND 网络不参与信号时序。连接到显式电源地网络的逻辑控制 pin 仍保留为常量输入；PG term 不进入信号图。不按 VDD/VSS 等名称推断常量。
 
-| 工具/模块 | 职责 |
-| --- | --- |
-| iSTA `ClockPropagator` | 从端口 driver 传播时钟，通过 PAD load 和 IO 接收弧到 core；避免双向回读伪时钟路径 |
-| iSTA `TimingPropagator` / `TimingAnalyzer` | 以图节点区分 arrival、slew、required、前驱及起终点；不把双向 pin 的两方向状态互相覆盖 |
-| 两个工具的 `DelayCalculator` | 以实际 driver 为 RC 根，缓存区分 net、driver、分析条件；同一物理电容只算一次 |
-| iPW `SignalPropagator` / `PowerPropagator` | 保留顶层 VCD 注解，分别传播接收和驱动状态；保持物理 pin 索引与图节点索引分离 |
-| iPW `PowerAnalyzer` | 内部功耗按有效弧和活动计算；输出切换功耗不能把外部驱动的活动无条件算到高阻 IO 输出上，也不能因两个节点重复累加；泄漏仍按物理实例和模式计算 |
-| RPT / SDF / Liberty 导出 | 通过映射输出原始 pin 名，不能泄漏内部节点名；保留真实 IO 路径，报告筛选与计算连通分离 |
+## 传播与负载
 
-iPW 的未知三态模式需要单独定义功耗归属策略：仅有 PAD 的翻转率不能推断是谁驱动。优先使用使能信号活动或明确的分析模式；缺少信息时必须说明估计或未覆盖的部分，不把它当成精确功耗。
+iSTA 的 ClockPropagator、TimingPropagator、TimingAnalyzer 使用相应图角色；时钟前驱和数据前驱可区分同名物理 pin 的两个状态。外部时钟经 IO 接收路径到达寄存器，输出约束仍在原顶层端口检查。
 
-## 实施顺序
+两个 DelayCalculator 都显式接收当前 driver。负载不包含 driver 自身的接收 pin 电容，物理寄生电容仍保留。RC 缓存检查当前根节点；切换 driver 后重新构建相关负载、延迟与响应，不能因为缓存包含该节点就认为根未变化。
 
-1. 撤销 PAD 输入过滤，修正说明与回归测试。此阶段只恢复输入，不宣称完整设计已跑通。
-2. 补齐三态表达式的数据链和图节点角色，在小型输入、输出、双向电路上验证结构及模式。
-3. 完整适配 iSTA 的时钟、数据、required 传播和延迟计算，再验证原始设计、原始 SDC。
-4. 在 iPW 独立实现同样的角色语义，适配 VCD、缓存、活动传播和功耗归属，不调用 iSTA 内部模块。
-5. 回归普通单向设计、no-SPEF/with-SPEF、报告及导出格式，确认没有双计数和新增假路径。
+iPW 的物理 pin 索引和 VCD 匹配保持不变，另存双向 driver 的活动。外部输入活动与 IO 内部输出活动不互相覆盖。输出关闭时不把外部 PAD 活动归入该实例的输出切换功耗；未知模式按使能活动估计，缺少使能活动时告警并不归属该项切换功耗。实例功耗和电容不因两节点表示而重复累计。
 
-## 验收用例
+当前无 VCD 的布尔向量模拟器把整个 net 合为一个状态，不适用于双向节点。遇到 INOUT 使用现有解析活动传播，并记录该选择。它是活动估计，不是对任意总线争用和模式相关性的精确模拟；本修复不宣称功耗数值与商业工具对齐。
 
-- 保留 `get_ports` 的匹配、原端口 clock source、输入输出 delay、load，以及双向端口 VCD 活动值。
-- 输入模式能从顶层 port 到达 core 寄存器；输出模式能从 core 寄存器到达顶层 port。
-- 关闭某方向后，该方向不传播；未知模式不被错误折叠或删除。
-- 两个不同 IO 实例可具有不同模式；cell/pin 改名不改变结果。
-- 常量控制、`set_case_analysis`、条件弧、双向回读和真正多驱动分别覆盖，不能只检查“不崩溃”。
-- 同一双向 net 从不同 driver 求得各自的 RC 响应，物理负载不重复累计。
-- iPW 外部驱动、内部驱动、高阻模式分别检查活动来源、slew 及功耗归属；实例数、pin 数、net 数不因图拆分翻倍。
-- 普通单向设计的已有结果不因结构变化而改变；RPT/SDF 仍使用原设计名称。
+解析活动的顺序逻辑迭代有次数上限，未收敛时保留告警，生成的功耗不能视为已收敛的精确结果。
+
+## SDC 查询
+
+iPW 内部补齐 `get_fanin` / `get_fanout` 的 `-flat`、边界和 `-only_cells` 查询，并支持 `get_name`。查询发生在建图前，使用内部 net/pin/Liberty arc；不提前执行主流程，不忽略未知命令。对已解析对象取名字直接查索引，避免每次重扫全设计。
+
+两工具的查询均识别 Liberty 的 INOUT 方向。新增查询没有把 setup/hold 分析模块复制到 iPW。
+
+`get_ports` / `get_nets` 返回的 Tcl 元素保留对象类型，显示名称不变。`set_load` 对已解析对象按类型和完整名称赋值，不再把同一端口名重新匹配成其他层次的同名 net，也不同时施加 port load 和 net load。变量、`foreach`、`lindex`、`concat` 保留该身份；普通字符串参数按端口优先解析。集合类型只属于 SDC 模块，不持有 Database 对象指针。
+
+## 回归与验证边界
+
+可独立构建并运行：
+
+```sh
+cmake --build build --target ecc_bin test_ista_io_boundary test_ipw_io_boundary test_ista_power_net test_ista_sdc_compatibility test_ista_bidirectional_graph test_ipw_bidirectional_graph
+ctest --test-dir build -R '^(ista|ipw)_(io_boundary|power_net|sdc_compatibility|bidirectional_graph)$' --output-on-failure
+```
+
+回归覆盖原端口约束、VCD、物理索引、PG 常量控制、三态输入/输出/未知模式、条件弧、外部及 generated clock、CK->Q 保留、真实名称、无伪自环，以及更换驱动根后的寄生负载和延迟。测试使用独立的 cell/pin 名称，不依赖某个 PDK 的命名。
+
+完整复现使用 `STA_inout_pin_direction_report_debug` 提供的原始网表/DEF、SDC、IO Liberty 和新版 INOUT IO LEF。README 中“PAD 不在 Liberty timing port 中”的判断与实际库不符，PAD 在库中确实有双向模型。复现结果需同时检查流程退出状态与实际输入/输出路径，不能只验证 init 或没有报错。
+
+已验证的结果：
+
+- `ecc_bin`、`ecc_py` 和六项 CTest 回归构建通过，六项回归全部通过。
+- 原始网表与原始 DEF 分别使用未修改的 SDC 完成 STA、RPT、SDF 输出及销毁，退出码均为 0。
+- 当前报告配置输出的八份 `timing_*.rpt` 在网表与 DEF 两种输入间逐字节一致。max/min 的 in2reg、reg2out、reg2reg 均有路径，in2out 均为空；这是本复现的检查结果，不代表全量时序精度对齐。
+- 原始网表完成 iPW，退出码为 0。`instance_power.tsv` 有 253547 个不同实例，所有数值有限，各实例功耗分项与总和一致；顺序活动估计未收敛的告警仍保留。
+- Python 小型真实 IO 库用例在同一进程依次执行两个工具的 init/run/destroy，检查实际输入、输出路径及功耗文件。
+
+本次范围不包括重新运行 ECC/DreamPlace 的完整 placement flow，也不等同于全量时序精度收敛；相关调用方仍通过原接口使用物理对象名称。
