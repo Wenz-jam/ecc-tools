@@ -320,7 +320,7 @@ void STAInterface::wrapInstancePinList(idb::IdbInstance* idb_instance)
 
 void STAInterface::wrapInstancePin(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin)
 {
-  if (!wrapSignalConnectType(idb_pin->get_term()->get_type())) {
+  if (!wrapSignalPin(idb_pin)) {
     return;
   }
 
@@ -334,10 +334,78 @@ void STAInterface::wrapInstancePin(idb::IdbInstance* idb_instance, idb::IdbPin* 
   STADM.getDatabase().get_pin_map()[full_name] = pin;
 }
 
+bool STAInterface::wrapSignalPin(idb::IdbPin* idb_pin)
+{
+  if (!wrapSignalConnectType(idb_pin->get_term()->get_type())) {
+    return false;
+  }
+  idb::IdbNet* idb_net = idb_pin->get_net();
+  if (idb_net != nullptr && !wrapSignalConnectType(idb_net->get_connect_type())) {
+    return false;
+  }
+  idb::IdbSpecialNet* idb_special_net = idb_pin->get_special_net();
+  if (idb_special_net != nullptr && !wrapSignalConnectType(idb_special_net->get_connect_type())) {
+    return false;
+  }
+  // 电源网及其端口一起排除；只在 IO 端扫描 LEF PG 类型，避免逐个电源 pin 重复遍历大网。
+  if (idb_pin->is_io_pin() && isPGNet(idb_net)) {
+    return false;
+  }
+  return !isIOBoundaryNet(idb_net);
+}
+
 bool STAInterface::wrapSignalConnectType(idb::IdbConnectType connect_type)
 {
   return connect_type == idb::IdbConnectType::kNone || connect_type == idb::IdbConnectType::kSignal || connect_type == idb::IdbConnectType::kClock
          || connect_type == idb::IdbConnectType::kReset || connect_type == idb::IdbConnectType::kScan || connect_type == idb::IdbConnectType::kTieOff;
+}
+
+bool STAInterface::isPGNet(idb::IdbNet* idb_net)
+{
+  if (idb_net == nullptr) {
+    return false;
+  }
+  if (idb_net->is_pdn()) {
+    return true;
+  }
+  if (idb_net->get_connect_type() != idb::IdbConnectType::kNone && idb_net->get_connect_type() != idb::IdbConnectType::kSignal) {
+    return false;
+  }
+  // Verilog wire 没有 POWER/GROUND 类型时，仅从一致的 LEF PG 引脚识别供电网，不按网名判断。
+  // 混有逻辑 pin 的连接保留，不把接常量的逻辑输入误判为电源引脚。
+  idb::IdbConnectType pg_type = idb::IdbConnectType::kNone;
+  for (idb::IdbPin* idb_pin : idb_net->get_instance_pin_list()->get_pin_list()) {
+    idb::IdbConnectType pin_type = idb_pin->get_term()->get_type();
+    if (pin_type != idb::IdbConnectType::kPower && pin_type != idb::IdbConnectType::kGround) {
+      return false;
+    }
+    if (pg_type != idb::IdbConnectType::kNone && pg_type != pin_type) {
+      return false;
+    }
+    pg_type = pin_type;
+  }
+  if (pg_type == idb::IdbConnectType::kNone) {
+    return false;
+  }
+  for (idb::IdbPin* idb_pin : idb_net->get_io_pins()->get_pin_list()) {
+    idb::IdbConnectType pin_type = idb_pin->get_term()->get_type();
+    if ((pin_type == idb::IdbConnectType::kPower || pin_type == idb::IdbConnectType::kGround) && pin_type != pg_type) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool STAInterface::isIOBoundaryNet(idb::IdbNet* idb_net)
+{
+  // 与 iRT 的 isSkipping 一样，通过 LEF PAD 类型识别封装侧连接，不依赖引脚名或方向。
+  // 顶层 IO pin 与 IO cell PAD 的一对一连接只表示外部边界，不参与时序分析。
+  // net 和两端 pin 必须一起排除；直连 core 的 IO、PAD 的 core 侧连接及混合线网仍保留。
+  if (idb_net == nullptr || idb_net->get_io_pins()->get_pin_num() != 1 || idb_net->get_instance_pin_list()->get_pin_num() != 1) {
+    return false;
+  }
+  idb::IdbInstance* idb_instance = idb_net->get_instance_pin_list()->get_pin_list().front()->get_instance();
+  return idb_instance != nullptr && idb_instance->get_cell_master() != nullptr && idb_instance->get_cell_master()->is_pad();
 }
 
 std::string STAInterface::wrapInstancePinName(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin)
@@ -379,7 +447,7 @@ void STAInterface::wrapPortList()
 
 void STAInterface::wrapPortPin(idb::IdbPin* idb_pin)
 {
-  if (!wrapSignalConnectType(idb_pin->get_term()->get_type())) {
+  if (!wrapSignalPin(idb_pin)) {
     return;
   }
 
@@ -408,7 +476,7 @@ void STAInterface::wrapNetList()
 
 void STAInterface::wrapNet(idb::IdbNet* idb_net)
 {
-  if (!wrapSignalConnectType(idb_net->get_connect_type())) {
+  if (!wrapSignalConnectType(idb_net->get_connect_type()) || isPGNet(idb_net) || isIOBoundaryNet(idb_net)) {
     return;
   }
 
@@ -457,7 +525,7 @@ std::string STAInterface::wrapNetInstancePinName(idb::IdbPin* idb_pin)
 void STAInterface::wrapNetPinNameList(Net& net, std::string& pin_name)
 {
   std::vector<std::string>& pin_name_list = net.get_pin_name_list();
-  if (!STAUTIL.exist(pin_name_list, pin_name)) {
+  if (STAUTIL.exist(STADM.getDatabase().get_pin_map(), pin_name) && !STAUTIL.exist(pin_name_list, pin_name)) {
     pin_name_list.push_back(pin_name);
   }
 }

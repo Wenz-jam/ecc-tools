@@ -6,3 +6,13 @@ target_link_libraries(test_ista_sdc_compatibility PRIVATE ista_sdc_command ista_
 
 add_test(NAME ista_sdc_compatibility COMMAND test_ista_sdc_compatibility)
 set_tests_properties(ista_sdc_compatibility PROPERTIES TIMEOUT 30)
+
+add_executable(test_ista_io_boundary EXCLUDE_FROM_ALL io_boundary_test.cpp)
+target_link_libraries(test_ista_io_boundary PRIVATE ista_interface ista_data_manager idb)
+add_test(NAME ista_io_boundary COMMAND test_ista_io_boundary)
+set_tests_properties(ista_io_boundary PROPERTIES TIMEOUT 30)
+
+add_executable(test_ista_power_net EXCLUDE_FROM_ALL power_net_test.cpp)
+target_link_libraries(test_ista_power_net PRIVATE ista_interface ista_data_manager idb)
+add_test(NAME ista_power_net COMMAND test_ista_power_net)
+set_tests_properties(ista_power_net PROPERTIES TIMEOUT 30)

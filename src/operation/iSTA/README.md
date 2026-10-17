@@ -21,6 +21,44 @@ Keep command and external API boundaries in `interface/`. Keep shared iSTA
 state in `source/data_manager/`. Add concrete algorithm stages under
 `source/module/<stage>/` only when the stage design is known.
 
+## IO-cell boundary connectivity
+
+iSTA and iPW exclude a net connecting exactly one top-level IO pin to exactly
+one pin of a LEF `CLASS PAD` cell. As in iRT's `isSkipping`, this is treated as
+external/package connectivity, not a core timing or power-analysis net. The
+decision uses connectivity and the LEF master class, not a specific cell/pin
+name, pin direction, or the absence of a Liberty arc.
+
+Both Interface wrappers omit the net and its two pins before constructing the
+internal database/graph (and before iPW activity indexing). Keeping isolated
+pins would still trigger INOUT direction inference. IDB itself is unchanged.
+The IO-cell instance and its core-facing connections remain available for
+analysis, as do direct IO-to-core nets and mixed nets with additional pins.
+This does not relax driver checks on retained nets, and it does not bridge or
+invent timing/activity propagation across the excluded external connection.
+
+Constraints and activity annotations must target the retained analysis
+boundary. For example, a clock previously defined on an excluded external
+port must instead be defined on the intended core-side IO-cell pin. Existing
+SDC commands requiring a non-empty collection still reject missing objects;
+they must not be silently ignored or redirected through an assumed black-box
+path. Board-level loads/delays on excluded ports are not core-side constraints.
+
+## Power/ground connectivity
+
+iSTA excludes POWER/GROUND pins and nets in its Interface wrapper. A pin on a
+POWER/GROUND regular or special net is excluded even if its own term is marked
+SIGNAL or has no USE type, so excluded supply nets do not leave isolated timing
+vertices. This changes only iSTA's analysis database, not IDB or iPW input.
+Retained nets reference only retained pins, so DataManager cannot recreate
+filtered PG pins when building their connectivity.
+
+An ordinary Verilog wire can also represent a supply without carrying a supply
+type. iSTA recognizes it when it has instance pins and all of them have the
+same LEF POWER or GROUND type, without conflicting PG port types. Mixed nets
+with logic pins, and explicitly typed clock/reset/scan/tie-off nets, are not
+reclassified. Net names such as VDD/VSS alone are not evidence of supply use.
+
 ## Minimum slew during RC propagation
 
 `init_sta -min_slew_degradation 1` (the default) propagates the calculated
