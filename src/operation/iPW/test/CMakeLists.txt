@@ -1,0 +1,4 @@
+add_executable(test_ipw_io_boundary EXCLUDE_FROM_ALL io_boundary_test.cpp)
+target_link_libraries(test_ipw_io_boundary PRIVATE ipw_interface ipw_data_manager ipw_power_propagator idb)
+add_test(NAME ipw_io_boundary COMMAND test_ipw_io_boundary)
+set_tests_properties(ipw_io_boundary PROPERTIES TIMEOUT 30)
