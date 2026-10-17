@@ -45,7 +45,8 @@ class GraphBuilder
   // function
   void applyCaseAnalysis();
   void propagateCaseValue();
-  std::optional<TimingCaseValue> getNetDriverCaseValue(TimingConstraint& constraint, Net& net);
+  bool updateDriverCaseValue(const std::string& pin_name, TimingCaseValue value);
+  std::optional<TimingCaseValue> getNetDriverCaseValue(TimingConstraint& constraint, Net& net, const std::string& load);
   std::map<std::string, bool> getInstanceConstantInputMap(Instance& instance);
   bool hasStaticExpressionInput(Instance& instance, LogicExpression& expression);
   bool isStaticCaseValue(TimingCaseValue value);
@@ -103,6 +104,8 @@ class GraphBuilder
   bool isDriverPin(Pin& pin);
   std::string getPinNameListString(std::vector<std::string>& pin_name_list);
   void buildNetArcs();
+  void buildGraphVertexList();
+  int32_t addGraphVertex(const std::string& pin_name, bool is_driver, TimingPoint& point);
   void addArc(const std::string& source_pin, const std::string& sink_pin, ArcType type, const std::string& owner_name);
   bool shouldDisableNetArc(const std::string& source_pin, const std::string& sink_pin);
   bool isDisableArc(Arc& arc);
@@ -113,25 +116,9 @@ class GraphBuilder
   bool isClockSource(const std::string& pin_name);
   bool hasIncomingArc(const std::string& pin_name);
   bool isInputPort(Pin& pin);
-  void appendUnique(std::vector<std::string>& list, const std::string& value);
   void breakLoopArcList();
-  bool traverseDataPath(
-      std::string& pin_name,
-      std::map<std::string, GBColorType>& color_map,
-      std::size_t& disabled_loop_num
-  );
-  bool isBlack(std::map<std::string, GBColorType>& color_map, std::string& pin_name);
-  bool isGray(std::map<std::string, GBColorType>& color_map, std::string& pin_name);
-  bool disableLoopArc(Arc& arc);
   void buildSignalOrder();
   void buildSignalLevel();
-  std::map<std::string, std::size_t> makeIndegreeMap();
-  void pushRootPinList(std::map<std::string, std::size_t>& indegree_map, std::queue<std::string>& pin_queue);
-  void updateSinkIndegree(
-      Arc& arc,
-      std::map<std::string, std::size_t>& indegree_map,
-      std::queue<std::string>& pin_queue
-  );
   void printLoopInfo();
 };
 

@@ -78,6 +78,7 @@ class PowerPropagator
   PowerActivity getInputActivity(PPModel& pp_model);
   PowerActivity getDefaultInputActivity(double minimum_clock_period);
   double getDefaultTransitionDensity(double minimum_clock_period);
+  void seedDriverActivity(PPModel& pp_model);
   void seedSequentialStateActivity(PPModel& pp_model);
   PowerActivity getInitialSequentialOutputActivity();
   void propagateCombinationalActivity(PPModel& pp_model);

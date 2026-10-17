@@ -28,6 +28,7 @@
 #include "DataManager.hpp"
 #include "DelayCalculator.hpp"
 #include "GraphBuilder.hpp"
+#include "IdbSpecialNet.h"
 #include "Lib.hh"
 #include "Logger.hpp"
 #include "PeakPowerEngine.hpp"
@@ -360,6 +361,7 @@ void PWInterface::wrapInstancePin(idb::IdbInstance* idb_instance, idb::IdbPin* i
   pin.set_pin_name(idb_pin->get_pin_name());
   pin.set_instance_name(idb_instance->get_name());
   pin.set_direction(wrapPinDirection(idb_pin->get_term()->get_direction()));
+  pin.set_constant_value(wrapConstantValue(idb_pin));
   PWDM.getDatabase().get_pin_map()[full_name] = pin;
 }
 
@@ -390,6 +392,23 @@ PinDirection PWInterface::wrapPinDirection(idb::IdbConnectDirection idb_directio
       break;
   }
   return PinDirection::kNone;
+}
+
+TimingCaseValue PWInterface::wrapConstantValue(idb::IdbPin* idb_pin)
+{
+  idb::IdbConnectType type = idb::IdbConnectType::kNone;
+  if (idb_pin->get_net() != nullptr) {
+    type = idb_pin->get_net()->get_connect_type();
+  } else if (idb_pin->get_special_net() != nullptr) {
+    type = idb_pin->get_special_net()->get_connect_type();
+  }
+  if (type == idb::IdbConnectType::kPower) {
+    return TimingCaseValue::kOne;
+  }
+  if (type == idb::IdbConnectType::kGround) {
+    return TimingCaseValue::kZero;
+  }
+  return TimingCaseValue::kNone;
 }
 
 void PWInterface::wrapPortList()
@@ -685,6 +704,7 @@ void PWInterface::wrapTimingCellPort(TimingCell& timing_cell, idb::LibPort* lib_
   timing_cell_port.set_is_clock(lib_port->isClock() || lib_port->get_is_clock_pin() || lib_port->get_is_clock());
   std::string function_string = lib_port->get_func_expr_str();
   timing_cell_port.set_function_expression(wrapLogicExpression(function_string));
+  timing_cell_port.set_three_state_expression(wrapLogicExpression(lib_port->get_three_state_expr_str()));
   timing_cell.get_port_map()[port_name] = timing_cell_port;
 }
 
@@ -987,6 +1007,7 @@ TimingArc PWInterface::wrapTimingArc(idb::LibArc* lib_arc)
   TimingArc timing_arc;
   idb::LibLibrary* lib_library = lib_arc->get_owner_cell()->get_owner_lib();
   timing_arc.set_sense(wrapTimingArcSense(lib_arc));
+  timing_arc.set_when_expression(wrapLogicExpression(lib_arc->get_when()));
   timing_arc.set_trigger_trans_type(wrapTriggerTransType(lib_arc));
   timing_arc.set_library_name(lib_library->get_lib_name());
   timing_arc.set_time_unit_scale(wrapLibTimeUnitScale(lib_library));

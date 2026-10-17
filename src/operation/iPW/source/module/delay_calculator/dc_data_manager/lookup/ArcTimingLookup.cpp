@@ -75,7 +75,7 @@ double ArcTimingLookup::calcTimingCellArcSlew(
   }
   double output_load = getArcOutputLoad(arc, analysis_type, output_trans_type);
   std::vector<TimingArc*> candidate_arc_list
-      = getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type);
+      = getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type, arc.get_sink_pin());
   std::vector<double> slew_list;
   for (TimingArc* timing_arc : candidate_arc_list) {
     if (timing_arc->get_slew_table_map().count(output_trans_type) == 0) {
@@ -147,7 +147,8 @@ double ArcTimingLookup::calcTimingCellArcSlew(
   }
   double output_load = getOutputPinLoad(output_pin, analysis_type, output_trans_type);
   std::vector<double> slew_list;
-  for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type)) {
+  for (TimingArc* timing_arc :
+       getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type, output_pin)) {
     if (timing_arc->get_slew_table_map().count(output_trans_type) == 0) {
       continue;
     }
@@ -256,7 +257,8 @@ TransType ArcTimingLookup::getOutputTransType(TimingCellArc& timing_cell_arc, Tr
 std::vector<TimingArc*> ArcTimingLookup::getCandidateTimingArcList(
     TimingCellArc& timing_cell_arc,
     TransType input_trans_type,
-    TransType output_trans_type
+    TransType output_trans_type,
+    const std::string& output_pin
 )
 {
   bool is_flip = input_trans_type != output_trans_type;
@@ -270,6 +272,27 @@ std::vector<TimingArc*> ArcTimingLookup::getCandidateTimingArcList(
     }
     if (!isMatchTimingType(timing_arc, output_trans_type)) {
       continue;
+    }
+    if (!timing_arc.get_when_expression().get_is_empty() && !output_pin.empty()) {
+      Database& database = PWDM.getDatabase();
+      auto pin = database.get_pin_map().find(output_pin);
+      if (pin != database.get_pin_map().end() && !pin->second.get_is_port()) {
+        std::map<std::string, bool> values;
+        for (LogicExpressionTerm& term : timing_arc.get_when_expression().get_term_list()) {
+          if (term.get_operation_type() != LogicOperationType::kPort) {
+            continue;
+          }
+          auto& effective = database.get_timing_constraint().get_effective_case_analysis_map();
+          auto value = effective.find(pin->second.get_instance_name() + ":" + term.get_port_name());
+          if (value != effective.end()
+              && (value->second == TimingCaseValue::kZero || value->second == TimingCaseValue::kOne)) {
+            values[term.get_port_name()] = value->second == TimingCaseValue::kOne;
+          }
+        }
+        if (timing_arc.get_when_expression().evaluate_constant(values) == std::optional<bool>(false)) {
+          continue;
+        }
+      }
     }
     candidate_arc_list.push_back(&timing_arc);
   }
@@ -506,7 +529,8 @@ bool ArcTimingLookup::calcDrivingCellSlew(
   double selected_slew = 0.0;
   for (TransType input_trans_type : {TransType::kRise, TransType::kFall}) {
     const double input_slew = input_trans_type == TransType::kRise ? input_transition_rise : input_transition_fall;
-    for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type)) {
+    for (TimingArc* timing_arc :
+         getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type, output_pin)) {
       const bool has_delay_table = timing_arc->get_delay_table_map().contains(output_trans_type);
       const bool has_slew_table = timing_arc->get_slew_table_map().contains(output_trans_type);
       if (!has_delay_table && !has_slew_table) {

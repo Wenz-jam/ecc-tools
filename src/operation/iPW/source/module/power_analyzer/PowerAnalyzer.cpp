@@ -240,7 +240,7 @@ void PowerAnalyzer::buildOutputTimingPowerArcWeightMap(
     if (timing_power_arc.get_source_port().empty() || timing_power_arc.get_sink_port().empty()) {
       continue;
     }
-    PowerActivity sink_activity = getPortActivity(instance, timing_power_arc.get_sink_port(), pa_instance_model);
+    PowerActivity sink_activity = getOutputPortActivity(instance, timing_power_arc.get_sink_port(), pa_instance_model);
     if (!sink_activity.get_is_valid()) {
       continue;
     }
@@ -322,7 +322,7 @@ double PowerAnalyzer::getOutputTimingPowerArcPower(
   if (timing_power_arc.get_sink_port().empty()) {
     return 0.0;
   }
-  PowerActivity sink_activity = getPortActivity(instance, timing_power_arc.get_sink_port(), pa_instance_model);
+  PowerActivity sink_activity = getOutputPortActivity(instance, timing_power_arc.get_sink_port(), pa_instance_model);
   if (!sink_activity.get_is_valid()) {
     return 0.0;
   }
@@ -592,7 +592,10 @@ void PowerAnalyzer::analyzeSwitchingPower(
       continue;
     }
     const std::string& port_name = *port_pin_index.port_name;
-    PowerActivity activity = getPortActivity(instance, port_name, pa_instance_model);
+    if (pin_static_context.pin->get_is_driver_disabled()) {
+      continue;
+    }
+    PowerActivity activity = getOutputPortActivity(instance, port_name, pa_instance_model);
     auto output_load_iter = static_context->port_output_load_map.find(port_name);
     double output_load = 0.0;
     if (output_load_iter != static_context->port_output_load_map.end()) {
@@ -608,7 +611,9 @@ void PowerAnalyzer::analyzeSwitchingPower(
       recordNetPower(pin_index, voltage, output_load, activity, 0.0);
       continue;
     }
-    double switching_power = 0.5 * output_load * voltage * voltage * activity.get_transition_density() * 1E-3;
+    double enable_probability = getDriverEnableProbability(instance, *pin_static_context.cell_port, pa_instance_model);
+    double switching_power
+        = 0.5 * output_load * voltage * voltage * activity.get_transition_density() * enable_probability * 1E-3;
     power_value.add_switching_power(switching_power);
     recordNetPower(pin_index, voltage, output_load, activity, switching_power);
   }
@@ -683,6 +688,49 @@ double PowerAnalyzer::getLeakageConditionProbability(
 )
 {
   return getLogicExpressionStaticProbability(timing_leakage_power.get_when_expression(), instance, pa_instance_model);
+}
+
+PowerActivity PowerAnalyzer::getOutputPortActivity(
+    Instance& instance,
+    const std::string& port_name,
+    PAInstanceModel& pa_instance_model
+)
+{
+  Database& database = PWDM.getDatabase();
+  auto pin = database.get_pin_map().find(instance.get_instance_name() + ":" + port_name);
+  if (pin != database.get_pin_map().end()) {
+    if (pin->second.get_is_driver_disabled()) {
+      return PowerActivity();
+    }
+    if (pin->second.get_direction() == PinDirection::kInout) {
+      auto activity = database.get_workspace().driver_activity_map.find(static_cast<uint32_t>(pin->second.get_index()));
+      return activity == database.get_workspace().driver_activity_map.end() ? PowerActivity() : activity->second;
+    }
+  }
+  return getPortActivity(instance, port_name, pa_instance_model);
+}
+
+double PowerAnalyzer::getDriverEnableProbability(
+    Instance& instance,
+    TimingCellPort& port,
+    PAInstanceModel& pa_instance_model
+)
+{
+  LogicExpression& three_state = port.get_three_state_expression();
+  if (three_state.get_is_empty()) {
+    return 1.0;
+  }
+  PowerActivity disabled = three_state.evaluate_activity(getPortActivityMap(instance, pa_instance_model));
+  if (!disabled.get_is_valid()) {
+    PWLOG.warn(
+        Loc::current(),
+        "Unknown output-enable activity: ",
+        instance.get_instance_name(),
+        "; switching power is not attributed to this driver."
+    );
+    return 0.0;
+  }
+  return 1.0 - disabled.get_static_probability();
 }
 
 PowerActivity PowerAnalyzer::getPortActivity(

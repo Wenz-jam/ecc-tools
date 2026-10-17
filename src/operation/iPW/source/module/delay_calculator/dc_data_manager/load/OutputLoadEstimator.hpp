@@ -36,9 +36,15 @@ double getParasiticNodeLoad(ParasiticNet& parasitic_net, uint32_t node_id, Analy
 
 double getArcOutputLoad(Arc& arc, AnalysisType analysis_type, TransType output_trans_type);
 double getOutputPinLoad(std::string& output_pin, AnalysisType analysis_type, TransType output_trans_type);
-double getNetOutputLoad(const std::string& net_name, Net& net, AnalysisType analysis_type, TransType output_trans_type);
-double getParasiticNetOutputLoad(
+double getNetOutputLoad(
+    const std::string& net_name,
+    const std::string& driver_pin,
     Net& net,
+    AnalysisType analysis_type,
+    TransType output_trans_type
+);
+double getParasiticNetOutputLoad(
+    const std::string& driver_pin,
     ParasiticNet& parasitic_net,
     AnalysisType analysis_type,
     TransType trans_type

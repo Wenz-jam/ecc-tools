@@ -83,7 +83,8 @@ class ArcTimingLookup
   std::vector<TimingArc*> getCandidateTimingArcList(
       TimingCellArc& timing_cell_arc,
       TransType input_trans_type,
-      TransType output_trans_type
+      TransType output_trans_type,
+      const std::string& output_pin = ""
   );
 
   bool isMatchTimingType(TimingArc& timing_arc, TransType trans_type);

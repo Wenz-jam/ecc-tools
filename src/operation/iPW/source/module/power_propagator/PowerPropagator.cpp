@@ -204,6 +204,7 @@ void PowerPropagator::propagateActivity(PPModel& pp_model)
   seedVcdActivity();
   seedCaseAnalysisActivity();
   seedActivity(pp_model);
+  seedDriverActivity(pp_model);
   if (!PWDM.getDatabase().hasVcdActivity()) {
     if (simulateVectorlessActivity(pp_model.get_minimum_clock_period()))
       return;
@@ -499,7 +500,7 @@ double PowerPropagator::getRelativeChange(double value, double previous_value)
 void PowerPropagator::seedCaseAnalysisActivity()
 {
   Database& database = PWDM.getDatabase();
-  for (auto& case_pair : database.get_timing_constraint().get_case_analysis_map()) {
+  for (auto& case_pair : database.get_timing_constraint().get_effective_case_analysis_map()) {
     if (case_pair.second != TimingCaseValue::kZero && case_pair.second != TimingCaseValue::kOne) {
       continue;
     }
@@ -598,6 +599,32 @@ double PowerPropagator::getDefaultTransitionDensity(double minimum_clock_period)
   return minimum_clock_period > PW_ERROR ? 0.1 / minimum_clock_period : 0.0;
 }
 
+void PowerPropagator::seedDriverActivity(PPModel& pp_model)
+{
+  Database& database = PWDM.getDatabase();
+  for (std::string& pin_name : pp_model.get_seed_pin_list()) {
+    Pin& pin = database.get_pin_map().at(pin_name);
+    if (!pin.get_is_port() || pin.get_direction() != PinDirection::kInout) {
+      continue;
+    }
+    uint32_t pin_idx = static_cast<uint32_t>(pin.get_index());
+    PowerActivity activity = getSeedActivity(pin_name, pp_model);
+    if (const PowerActivity* vcd_activity = database.findVcdActivity(pin_idx)) {
+      activity = *vcd_activity;
+    }
+    auto& values = database.get_timing_constraint().get_driver_case_analysis_map();
+    auto value = values.find(pin_name);
+    if (value != values.end() && (value->second == TimingCaseValue::kZero || value->second == TimingCaseValue::kOne)) {
+      activity = PowerActivity();
+      activity.set_static_probability(value->second == TimingCaseValue::kOne ? 1.0 : 0.0);
+      activity.set_origin(PowerActivityOrigin::kConstant);
+      activity.set_is_valid(true);
+    }
+    // Internal activity arriving at the load vertex must not overwrite this source.
+    database.get_workspace().driver_activity_map[pin_idx] = activity;
+  }
+}
+
 void PowerPropagator::seedSequentialStateActivity(PPModel& pp_model)
 {
   Database& database = PWDM.getDatabase();
@@ -627,13 +654,14 @@ PowerActivity PowerPropagator::getInitialSequentialOutputActivity()
 void PowerPropagator::propagateCombinationalActivity(PPModel& pp_model)
 {
   Database& database = PWDM.getDatabase();
-  std::vector<uint32_t>& signal_order_pin_index_list = database.get_signal_order_pin_index_list();
-  std::vector<std::vector<uint32_t>>& outgoing_arc_index_list = database.get_outgoing_arc_index_list();
-  for (uint32_t pin_index : signal_order_pin_index_list) {
-    if (isOutputPin(pin_index)) {
+  for (int32_t vertex_idx : database.get_graph_order_list()) {
+    GraphVertex& vertex = database.get_graph_vertex_list()[vertex_idx];
+    Pin& pin = database.get_pin_map().at(vertex.get_pin_name());
+    uint32_t pin_index = static_cast<uint32_t>(pin.get_index());
+    if (vertex.get_is_driver() && isOutputPin(pin_index) && !pin.get_is_driver_disabled()) {
       propagateOutputActivity(pin_index, pp_model);
     }
-    for (uint32_t arc_idx : outgoing_arc_index_list[pin_index]) {
+    for (std::size_t arc_idx : vertex.get_outgoing_arc_list()) {
       Arc& arc = database.get_arc_list()[arc_idx];
       if (arc.get_is_disable_arc() || arc.get_is_loop_disable()) {
         continue;
@@ -668,7 +696,11 @@ void PowerPropagator::propagateOutputActivity(const uint32_t pin_index, PPModel&
   }
   PowerActivity activity = getOutputActivity(pin_index, pp_model);
   if (activity.get_is_valid()) {
-    setPinActivity(pin_index, activity);
+    if (pin_static_context.pin->get_direction() == PinDirection::kInout) {
+      database.get_workspace().driver_activity_map[pin_index] = activity;
+    } else {
+      setPinActivity(pin_index, activity);
+    }
   }
 }
 
@@ -907,7 +939,17 @@ PowerActivity PowerPropagator::getFallbackInputActivity(const uint32_t pin_index
 
 void PowerPropagator::propagateNetActivity(Arc& arc)
 {
-  PowerActivity activity = getPinActivity(arc.get_source_pin_index());
+  Database& database = PWDM.getDatabase();
+  Pin& driver = database.get_pin_map().at(arc.get_source_pin());
+  PowerActivity activity;
+  if (driver.get_direction() == PinDirection::kInout) {
+    auto iter = database.get_workspace().driver_activity_map.find(arc.get_source_pin_index());
+    if (iter != database.get_workspace().driver_activity_map.end()) {
+      activity = iter->second;
+    }
+  } else {
+    activity = getPinActivity(arc.get_source_pin_index());
+  }
   if (!activity.get_is_valid()) {
     return;
   }
@@ -2218,6 +2260,11 @@ bool Simulator::run()
 
 bool PowerPropagator::simulateVectorlessActivity(double reference_period)
 {
+  // The Boolean simulator aliases an entire net to one variable. It cannot
+  // represent independent receive/drive roles; use graph activity propagation.
+  if (!PWDM.getDatabase().get_driver_timing_point_map().empty()) {
+    return false;
+  }
   return Simulator(PWDM.getDatabase(), reference_period).run();
 }
 

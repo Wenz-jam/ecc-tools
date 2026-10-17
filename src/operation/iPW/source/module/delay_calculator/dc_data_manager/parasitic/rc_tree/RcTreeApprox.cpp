@@ -49,7 +49,8 @@ double updateParasiticLoadMap(
   }
   visited_node_list[node_id] = 1;
 
-  double subtree_load = parasiticNodeLoad(graph, pin_cap_list, node_id);
+  double subtree_load = parent_node_id == kInvalidParasiticNode ? graph.node_capacitance[node_id]
+                                                                : parasiticNodeLoad(graph, pin_cap_list, node_id);
   const std::vector<ParasiticGraphEdge>& edge_list = graph.adjacency[node_id];
   if (edge_list.empty()) {
     node_load_map[node_id] = subtree_load;
@@ -216,11 +217,14 @@ void buildParasiticDelayMap(
     corner_state.node_impulse_valid.assign(graph.size(), 0);
     corner_state.visited_scratch.assign(graph.size(), 0);
   }
-  // 旧实现的早退判据：nodeDelayMap 与 nodeImpulseMap 里都已经有 source 的条目。
-  // 注意这里按"节点是否写过"判断（不是按"是否用同一个 source 建过"），与旧 map 语义一致。
-  if (corner_state.node_delay_valid[source_node_id] != 0 && corner_state.node_impulse_valid[source_node_id] != 0) {
+  if (corner_state.source_node_idx == source_node_id && corner_state.node_delay_valid[source_node_id] != 0
+      && corner_state.node_impulse_valid[source_node_id] != 0) {
     return;
   }
+  corner_state.source_node_idx = source_node_id;
+  std::fill(corner_state.node_load.begin(), corner_state.node_load.end(), 0.0);
+  std::fill(corner_state.node_delay_valid.begin(), corner_state.node_delay_valid.end(), 0);
+  std::fill(corner_state.node_impulse_valid.begin(), corner_state.node_impulse_valid.end(), 0);
 
   // pin 电容表只在真正要算的时候才建（早退路径以前已经白付了这张表的探测成本）。
   const std::vector<double>& pin_cap_list
