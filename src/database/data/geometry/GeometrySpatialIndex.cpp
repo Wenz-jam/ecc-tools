@@ -56,9 +56,15 @@ void GeometrySpatialIndex::insert(const ShapeRecord& record)
     return;
   }
 
-  for (int64_t x = range.min_x; x <= range.max_x; ++x) {
-    for (int64_t y = range.min_y; y <= range.max_y; ++y) {
-      _tiles[SpatialTileKey{record.layer_id, static_cast<int32_t>(x), static_cast<int32_t>(y)}].push_back(record.id);
+  for (int32_t x = range.min_x; x <= range.max_x; ++x) {
+    for (int32_t y = range.min_y; y <= range.max_y; ++y) {
+      _tiles[SpatialTileKey{record.layer_id, x, y}].push_back(record.id);
+      if (y == range.max_y) {
+        break;
+      }
+    }
+    if (x == range.max_x) {
+      break;
     }
   }
 }
@@ -78,12 +84,18 @@ void GeometrySpatialIndex::remove(const ShapeRecord& record)
     return;
   }
 
-  for (int64_t x = range.min_x; x <= range.max_x; ++x) {
-    for (int64_t y = range.min_y; y <= range.max_y; ++y) {
-      auto iter = _tiles.find(SpatialTileKey{record.layer_id, static_cast<int32_t>(x), static_cast<int32_t>(y)});
+  for (int32_t x = range.min_x; x <= range.max_x; ++x) {
+    for (int32_t y = range.min_y; y <= range.max_y; ++y) {
+      auto iter = _tiles.find(SpatialTileKey{record.layer_id, x, y});
       if (iter != _tiles.end()) {
         remove_id(iter->second, record.id);
       }
+      if (y == range.max_y) {
+        break;
+      }
+    }
+    if (x == range.max_x) {
+      break;
     }
   }
 }
@@ -103,12 +115,18 @@ std::vector<ShapeId> GeometrySpatialIndex::query(LayerId layer_id, Rect32 bbox) 
     result.insert(result.end(), large_iter->second.begin(), large_iter->second.end());
   }
 
-  for (int64_t x = range.min_x; x <= range.max_x; ++x) {
-    for (int64_t y = range.min_y; y <= range.max_y; ++y) {
-      const auto iter = _tiles.find(SpatialTileKey{layer_id, static_cast<int32_t>(x), static_cast<int32_t>(y)});
+  for (int32_t x = range.min_x; x <= range.max_x; ++x) {
+    for (int32_t y = range.min_y; y <= range.max_y; ++y) {
+      const auto iter = _tiles.find(SpatialTileKey{layer_id, x, y});
       if (iter != _tiles.end()) {
         result.insert(result.end(), iter->second.begin(), iter->second.end());
       }
+      if (y == range.max_y) {
+        break;
+      }
+    }
+    if (x == range.max_x) {
+      break;
     }
   }
 
@@ -126,8 +144,8 @@ GeometrySpatialIndex::TileRange GeometrySpatialIndex::tile_range(Rect32 bbox) co
 
 bool GeometrySpatialIndex::should_use_large_bucket(TileRange range) const
 {
-  const uint64_t x_count = static_cast<uint64_t>(static_cast<int64_t>(range.max_x) - range.min_x) + 1;
-  const uint64_t y_count = static_cast<uint64_t>(static_cast<int64_t>(range.max_y) - range.min_y) + 1;
+  const uint64_t x_count = static_cast<uint64_t>(range.max_x) - static_cast<uint64_t>(range.min_x) + 1;
+  const uint64_t y_count = static_cast<uint64_t>(range.max_y) - static_cast<uint64_t>(range.min_y) + 1;
   // Division also avoids overflow for a 2^32 by 2^32 tile range.
   return x_count > _options.max_tiles_per_shape / y_count;
 }

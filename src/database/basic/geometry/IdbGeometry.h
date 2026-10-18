@@ -120,8 +120,20 @@ class IdbRect
   int32_t get_high_y() const { return _hy; }
   IdbCoordinate<int32_t> get_high_point() const { return IdbCoordinate<int32_t>(_hx, _hy); }
   IdbCoordinate<int32_t> get_middle_point() const { return IdbCoordinate<int32_t>(get_middle_point_x(), get_middle_point_y()); }
-  int32_t get_middle_point_x() const { return static_cast<int32_t>((static_cast<int64_t>(_lx) + _hx) / 2); }
-  int32_t get_middle_point_y() const { return static_cast<int32_t>((static_cast<int64_t>(_ly) + _hy) / 2); }
+  int32_t get_middle_point_x() const
+  {
+    if ((_lx < 0) != (_hx < 0)) {
+      return (_lx + _hx) / 2;
+    }
+    return _lx / 2 + _hx / 2 + (_lx % 2 + _hx % 2) / 2;
+  }
+  int32_t get_middle_point_y() const
+  {
+    if ((_ly < 0) != (_hy < 0)) {
+      return (_ly + _hy) / 2;
+    }
+    return _ly / 2 + _hy / 2 + (_ly % 2 + _hy % 2) / 2;
+  }
 
   int32_t get_width() const { return std::abs(_hx - _lx); }
   int32_t get_height() const { return std::abs(_hy - _ly); }

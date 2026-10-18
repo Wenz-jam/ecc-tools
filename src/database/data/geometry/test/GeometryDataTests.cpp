@@ -825,6 +825,22 @@ void test_geometry_indices_handle_extreme_tile_coordinates()
   assert(store.query_lod_tiles(0, 1, point).size() == 1);
   assert(store.delete_shape(large));
   assert(store.query_intersect(1, point).empty());
+
+  // Exercise multiple loop iterations before the maximum coordinate is reached.
+  const Rect32 high_area{max - 1, max - 1, max, max};
+  const ShapeId area = store.add_rect(1, high_area, OwnerRef{OwnerType::kCore});
+  store.rebuild_lod_tiles();
+  assert((store.query_intersect(1, high_area) == std::vector<ShapeId>{area}));
+  assert(store.query_lod_tiles(0, 1, high_area).size() == 4);
+
+  const Rect32 low_area{min, min, min + 1, min + 1};
+  assert(store.update_rect(area, low_area));
+  store.rebuild_dirty_lod_tiles();
+  assert(store.query_intersect(1, high_area).empty());
+  assert(store.query_lod_tiles(0, 1, high_area).empty());
+  assert((store.query_intersect(1, low_area) == std::vector<ShapeId>{area}));
+  assert(store.query_lod_tiles(0, 1, low_area).size() == 4);
+  assert(store.delete_shape(area));
 }
 
 uint32_t read_be32(const std::vector<uint8_t>& bytes, size_t offset)

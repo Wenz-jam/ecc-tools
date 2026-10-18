@@ -124,6 +124,11 @@ void test_rect_midpoint_avoids_overflow()
   assert(positive.get_middle_point_x() == std::numeric_limits<int32_t>::max() - 1);
   IdbRect negative(0, std::numeric_limits<int32_t>::min(), 0, std::numeric_limits<int32_t>::min() + 2);
   assert(negative.get_middle_point_y() == std::numeric_limits<int32_t>::min() + 1);
+
+  IdbRect odd(std::numeric_limits<int32_t>::max() - 1, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max(),
+              std::numeric_limits<int32_t>::min() + 1);
+  assert(odd.get_middle_point_x() == std::numeric_limits<int32_t>::max() - 1);
+  assert(odd.get_middle_point_y() == std::numeric_limits<int32_t>::min() + 1);
 }
 
 void test_rect_null_pointer_handling()

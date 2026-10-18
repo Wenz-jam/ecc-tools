@@ -248,12 +248,18 @@ std::vector<GeometryTileSummary> GeometryTilePyramid::query(uint8_t lod_level, L
   const int32_t max_x = floor_div(viewport.hx, size);
   const int32_t max_y = floor_div(viewport.hy, size);
 
-  for (int64_t x = min_x; x <= max_x; ++x) {
-    for (int64_t y = min_y; y <= max_y; ++y) {
-      const auto iter = _summaries.find(GeometryTileKey{lod_level, layer_id, static_cast<int32_t>(x), static_cast<int32_t>(y)});
+  for (int32_t x = min_x; x <= max_x; ++x) {
+    for (int32_t y = min_y; y <= max_y; ++y) {
+      const auto iter = _summaries.find(GeometryTileKey{lod_level, layer_id, x, y});
       if (iter != _summaries.end()) {
         result.push_back(iter->second);
       }
+      if (y == max_y) {
+        break;
+      }
+    }
+    if (x == max_x) {
+      break;
     }
   }
   for (const LargeShapeSummary& large_summary : _large_shape_summaries) {
@@ -289,9 +295,15 @@ std::vector<GeometryTileKey> GeometryTilePyramid::keys_for(uint8_t lod_level, La
   const int32_t max_x = floor_div(bbox.hx, size);
   const int32_t max_y = floor_div(bbox.hy, size);
 
-  for (int64_t x = min_x; x <= max_x; ++x) {
-    for (int64_t y = min_y; y <= max_y; ++y) {
-      keys.push_back(GeometryTileKey{lod_level, layer_id, static_cast<int32_t>(x), static_cast<int32_t>(y)});
+  for (int32_t x = min_x; x <= max_x; ++x) {
+    for (int32_t y = min_y; y <= max_y; ++y) {
+      keys.push_back(GeometryTileKey{lod_level, layer_id, x, y});
+      if (y == max_y) {
+        break;
+      }
+    }
+    if (x == max_x) {
+      break;
     }
   }
 
@@ -311,8 +323,8 @@ uint64_t GeometryTilePyramid::tile_span_count(uint8_t lod_level, Rect32 bbox) co
   const int32_t min_y = floor_div(bbox.ly, size);
   const int32_t max_x = floor_div(bbox.hx, size);
   const int32_t max_y = floor_div(bbox.hy, size);
-  const uint64_t x_count = static_cast<uint64_t>(static_cast<int64_t>(max_x) - min_x) + 1;
-  const uint64_t y_count = static_cast<uint64_t>(static_cast<int64_t>(max_y) - min_y) + 1;
+  const uint64_t x_count = static_cast<uint64_t>(max_x) - static_cast<uint64_t>(min_x) + 1;
+  const uint64_t y_count = static_cast<uint64_t>(max_y) - static_cast<uint64_t>(min_y) + 1;
   if (x_count > std::numeric_limits<uint64_t>::max() / y_count) {
     return std::numeric_limits<uint64_t>::max();
   }
