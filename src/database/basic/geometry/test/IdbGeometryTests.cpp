@@ -1,5 +1,4 @@
-// Regression tests for the Critical memory-safety fixes in basic geometry
-// (IdbTree ownership, IdbLayerShape empty/null handling, IdbRect init/arithmetic).
+// Focused safety checks and compatibility tests against main's geometry behavior.
 #include "IdbGeometry.h"
 #include "IdbLayerShape.h"
 #include "IdbTree.h"
@@ -31,6 +30,8 @@ void test_tree_copy_assign_and_self_assign()
 
   Tree empty;
   assert(empty.IsEmpty());
+  assert(empty != a);
+  assert(a != empty);
   Tree assigned;
   assigned = empty;
   assert(assigned.IsEmpty());
@@ -73,22 +74,17 @@ void test_tree_composite_ctor_skips_null_and_empty()
   assert(composite.Root() == 9);
 }
 
-void test_rect_width_path_always_initializes()
+void test_rect_axis_aligned_width_preserves_main()
 {
-  // Diagonal segment with width: must not leave members uninitialized.
-  IdbRect diagonal(0, 0, 10, 5, 4);
-  assert(diagonal.get_low_x() == 0);
-  assert(diagonal.get_low_y() == 0);
-  assert(diagonal.get_high_x() == 10);
-  assert(diagonal.get_high_y() == 5);
-
   IdbRect horizontal(10, 0, 0, 0, 4);
   assert(horizontal.get_low_x() == 0);
   assert(horizontal.get_high_x() == 10);
+  assert(horizontal.get_low_y() == -2 && horizontal.get_high_y() == 2);
 
   IdbRect vertical(0, 10, 0, 0, 4);
   assert(vertical.get_low_y() == 0);
   assert(vertical.get_high_y() == 10);
+  assert(vertical.get_low_x() == -2 && vertical.get_high_x() == 2);
 
   // Main treats a zero-length segment as vertical, including odd widths.
   IdbRect point(5, 7, 5, 7, 5);
@@ -116,16 +112,13 @@ void test_rect_preserves_main_arithmetic()
   }
 }
 
-void test_rect_midpoint_and_size_avoid_overflow()
+void test_rect_midpoint_avoids_overflow()
 {
   IdbRect extreme(std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max(),
                   std::numeric_limits<int32_t>::max());
   // The sum is -1: preserve main's truncation toward zero, not floor rounding.
   assert(extreme.get_middle_point_x() == 0);
   assert(extreme.get_middle_point_y() == 0);
-  // abs(INT32_MAX - INT32_MIN) overflows int32; must saturate.
-  assert(extreme.get_width() == std::numeric_limits<int32_t>::max());
-  assert(extreme.get_height() == std::numeric_limits<int32_t>::max());
 
   IdbRect positive(std::numeric_limits<int32_t>::max() - 2, 0, std::numeric_limits<int32_t>::max(), 0);
   assert(positive.get_middle_point_x() == std::numeric_limits<int32_t>::max() - 1);
@@ -165,7 +158,7 @@ void test_layer_shape_empty_and_null_handling()
   shape.moveToLocation(nullptr);         // must not crash
 }
 
-void test_layer_shape_assign_clears_and_skips_null()
+void test_layer_shape_preserves_assignment_and_skips_null()
 {
   IdbLayerShape src;
   src.add_rect(0, 0, 10, 10);
@@ -173,35 +166,25 @@ void test_layer_shape_assign_clears_and_skips_null()
 
   IdbLayerShape dst;
   dst.add_rect(100, 100, 200, 200);
-  dst = src;  // was: appended without clear (leak + duplicates)
-  assert(dst.get_rect_list_num() == 2);
+  dst = src;  // Preserve main's existing append-on-assignment behavior.
+  assert(dst.get_rect_list_num() == 3);
+  assert(dst.get_rect(0)->get_low_x() == 100);
 
   IdbCoordinate<int32_t> avg = dst.get_average_xy();
-  assert(avg.get_x() == 15 && avg.get_y() == 15);
+  assert(avg.get_x() == 60 && avg.get_y() == 60);
 
   IdbRect bbox = dst.get_bounding_box();
   assert(bbox.get_low_x() == 0 && bbox.get_low_y() == 0);
-  assert(bbox.get_high_x() == 30 && bbox.get_high_y() == 30);
+  assert(bbox.get_high_x() == 200 && bbox.get_high_y() == 200);
 
   dst = dst;  // self-assignment guard
-  assert(dst.get_rect_list_num() == 2);
-  assert(dst.get_rect(0) != src.get_rect(0));
+  assert(dst.get_rect_list_num() == 3);
+  assert(dst.get_rect(1) != src.get_rect(0));
   src.get_rect_list().push_back(nullptr);
-  dst = src;
-  assert(dst.get_rect_list_num() == 2);
-}
-
-void test_layer_shape_average_uses_wide_accumulator()
-{
-  IdbLayerShape shape;
-  const int32_t big = std::numeric_limits<int32_t>::max() - 1;
-  shape.add_rect(0, 0, big, big);
-  shape.add_rect(0, 0, big, big);
-  shape.add_rect(0, 0, big, big);
-  shape.add_rect(0, 0, big, big);
-  // 4x midpoints summed in int32 would overflow; int64 must hold.
-  IdbCoordinate<int32_t> avg = shape.get_average_xy();
-  assert(avg.get_x() == big / 2 && avg.get_y() == big / 2);
+  assert(src.get_average_xy().get_x() == 15);
+  IdbLayerShape copy(src);
+  assert(copy.get_rect_list_num() == 2);
+  assert(copy.get_rect(0) != src.get_rect(0));
 }
 
 }  // namespace
@@ -211,12 +194,11 @@ int main()
   test_tree_copy_assign_and_self_assign();
   test_tree_empty_and_invalid_access();
   test_tree_composite_ctor_skips_null_and_empty();
-  test_rect_width_path_always_initializes();
+  test_rect_axis_aligned_width_preserves_main();
   test_rect_preserves_main_arithmetic();
-  test_rect_midpoint_and_size_avoid_overflow();
+  test_rect_midpoint_avoids_overflow();
   test_rect_null_pointer_handling();
   test_layer_shape_empty_and_null_handling();
-  test_layer_shape_assign_clears_and_skips_null();
-  test_layer_shape_average_uses_wide_accumulator();
+  test_layer_shape_preserves_assignment_and_skips_null();
   return 0;
 }

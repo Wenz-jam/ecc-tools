@@ -123,18 +123,8 @@ class IdbRect
   int32_t get_middle_point_x() const { return static_cast<int32_t>((static_cast<int64_t>(_lx) + _hx) / 2); }
   int32_t get_middle_point_y() const { return static_cast<int32_t>((static_cast<int64_t>(_ly) + _hy) / 2); }
 
-  int32_t get_width() const
-  {
-    int64_t diff = static_cast<int64_t>(_hx) - static_cast<int64_t>(_lx);
-    diff = diff >= 0 ? diff : -diff;
-    return diff > INT32_MAX ? INT32_MAX : static_cast<int32_t>(diff);
-  }
-  int32_t get_height() const
-  {
-    int64_t diff = static_cast<int64_t>(_hy) - static_cast<int64_t>(_ly);
-    diff = diff >= 0 ? diff : -diff;
-    return diff > INT32_MAX ? INT32_MAX : static_cast<int32_t>(diff);
-  }
+  int32_t get_width() const { return std::abs(_hx - _lx); }
+  int32_t get_height() const { return std::abs(_hy - _ly); }
   int32_t get_min_length() const { return std::min(get_width(), get_height()); }
   uint64_t get_area() const { return ((uint64_t) get_width()) * ((uint64_t) get_height()); }
 

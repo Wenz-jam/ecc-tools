@@ -79,11 +79,8 @@ IdbRect* IdbLayerShape::get_rect(uint index)
 
 IdbCoordinate<int32_t> IdbLayerShape::get_average_xy()
 {
-  if (_rect_list.empty()) {
-    return IdbCoordinate<int32_t>(0, 0);
-  }
-  int64_t x = 0;
-  int64_t y = 0;
+  int x = 0;
+  int y = 0;
   size_t count = 0;
   for (IdbRect* rect : _rect_list) {
     if (rect == nullptr) {
@@ -98,8 +95,9 @@ IdbCoordinate<int32_t> IdbLayerShape::get_average_xy()
     return IdbCoordinate<int32_t>(0, 0);
   }
 
-  return IdbCoordinate<int32_t>(static_cast<int32_t>(x / static_cast<int64_t>(count)),
-                                static_cast<int32_t>(y / static_cast<int64_t>(count)));
+  x = x / count;
+  y = y / count;
+  return IdbCoordinate<int32_t>(x, y);
 }
 
 void IdbLayerShape::add_rect(IdbRect* rect)
@@ -167,7 +165,6 @@ IdbLayerShape& IdbLayerShape::operator=(const IdbLayerShape& other)
   if (this == &other) {
     return *this;
   }
-  clear();
   _type = other._type;
   _layer = other._layer;
   for (IdbRect* rect : other._rect_list) {

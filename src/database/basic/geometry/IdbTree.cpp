@@ -76,21 +76,19 @@ Tree ::Tree(const int type, const list<Tree*>& lit)
   _nodes.push_back(root);               // push into tree
   list<Tree*>::const_iterator it;
   for (it = lit.begin(); it != lit.end(); it++) {
-    if (*it == nullptr || (*it)->_nodes.empty()) {
-      continue;  // Skip null or empty input trees.
+    if (*it != nullptr && !(*it)->_nodes.empty()) {
+      Tree* tp = new Tree(**it);
+      TreeNode* p = tp->_nodes.front();
+      root->_children.push_back(p);  // set the children node of root
+      p->_parent = root;             // set the father of node as root
+      list<TreeNode*>::iterator lit1 = tp->_nodes.begin();
+      list<TreeNode*>::iterator lit2 = tp->_nodes.end();
+      list<TreeNode*>::iterator lit3 = _nodes.end();
+      _nodes.insert(lit3, lit1, lit2);
+      // Ownership of the nodes has moved to this tree.
+      tp->_nodes.clear();
+      delete tp;
     }
-    Tree* tp = new Tree(**it);
-    TreeNode* p = tp->_nodes.front();
-    root->_children.push_back(p);  // set the children node of root
-    p->_parent = root;             // set the father of node as root
-    list<TreeNode*>::iterator lit1 = tp->_nodes.begin();
-    list<TreeNode*>::iterator lit2 = tp->_nodes.end();
-    list<TreeNode*>::iterator lit3 = _nodes.end();
-    _nodes.insert(lit3, lit1, lit2);
-    // Nodes are now owned by this tree; release the temporary wrapper
-    // without destroying the transferred nodes.
-    tp->_nodes.clear();
-    delete tp;
   }
 }
 
@@ -106,13 +104,8 @@ Tree& Tree ::operator=(const Tree& t)
   if (this == &t) {
     return *this;
   }
-  // Clone before releasing the current nodes.
-  List new_nodes;
-  if (!t._nodes.empty()) {
-    clone(t._nodes.front(), new_nodes, 0);
-  }
-  Clear();
-  _nodes.swap(new_nodes);
+  Tree replacement(t);
+  _nodes.swap(replacement._nodes);
   return *this;
 }
 

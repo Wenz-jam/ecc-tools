@@ -53,18 +53,11 @@ IdbRect::IdbRect(const int32_t lx, const int32_t ly, const int32_t hx, const int
       _hy = hy + (width / 2);
     }
 
-    /// vertical (also takes precedence for a zero-length segment)
+    /// vertical
     if (lx == hx) {
       _lx = lx - (width / 2);
       _ly = std::min(ly, hy);
       _hx = hx + (width / 2);
-      _hy = std::max(ly, hy);
-    } else if (ly != hy) {
-      // Non-axis-aligned segment with width: fall back to the
-      // normalized bounding box so members are always initialized.
-      _lx = std::min(lx, hx);
-      _ly = std::min(ly, hy);
-      _hx = std::max(lx, hx);
       _hy = std::max(ly, hy);
     }
   }

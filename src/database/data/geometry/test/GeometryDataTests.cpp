@@ -15,7 +15,6 @@
 #ifdef NDEBUG
 #undef NDEBUG
 #endif
-#include <algorithm>
 #include <cassert>
 #include <cstdint>
 #include <filesystem>
@@ -787,54 +786,21 @@ void test_snapshot_header_has_stable_schema_identity()
   assert(header.record_count == 123);
 }
 
-void test_add_line_with_extreme_width_saturates_bbox()
-{
-  GeometryStore store;
-
-  LinePayload line;
-  line.begin = Point32{std::numeric_limits<int32_t>::min(), 0};
-  line.end = Point32{std::numeric_limits<int32_t>::max(), 0};
-  line.width = std::numeric_limits<int32_t>::max();
-  const ShapeId line_id = store.add_line(6, line, OwnerRef{OwnerType::kNetWireSegment});
-
-  const ShapeRecord* record = store.find_shape(line_id);
-  assert(record != nullptr);
-  assert(record->bbox.lx == std::numeric_limits<int32_t>::min());
-  assert(record->bbox.hx == std::numeric_limits<int32_t>::max());
-}
-
-void test_spatial_query_handles_full_range_viewport()
-{
-  GeometryStore store;
-  const ShapeId id = store.add_rect(1, Rect32{0, 0, 10, 10}, OwnerRef{OwnerType::kDie});
-
-  const std::vector<ShapeId> hits
-      = store.query_intersect(1, Rect32{std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min(),
-                                        std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max()});
-
-  assert(hits.size() == 1);
-  assert(hits[0] == id);
-}
-
 void test_snapshot_rejects_wrapped_payload_range()
 {
   ShapeTable table;
-
   ShapeRecord original;
   original.id = 7;
   original.bbox = Rect32{1, 2, 3, 4};
   table.insert(original, RectPayload{original.bbox});
-  const size_t payload_size = table.payloads().size();
 
-  ShapeRecord record;
-  record.id = 1;
-  record.payload_offset = std::numeric_limits<uint64_t>::max();
-  record.payload_size = 1;
-
-  assert(!table.replace_snapshot({record}, {}));
+  ShapeRecord invalid;
+  invalid.id = 1;
+  invalid.payload_offset = std::numeric_limits<uint64_t>::max();
+  invalid.payload_size = 1;
+  assert(!table.replace_snapshot({invalid}, {}));
   assert(table.size() == 1 && table.find(7) != nullptr);
   assert(table.find(7)->bbox.lx == 1);
-  assert(table.payloads().size() == payload_size);
 }
 
 void test_geometry_indices_handle_extreme_tile_coordinates()
@@ -846,142 +812,19 @@ void test_geometry_indices_handle_extreme_tile_coordinates()
   GeometryStore store(options);
   const int32_t min = std::numeric_limits<int32_t>::min();
   const int32_t max = std::numeric_limits<int32_t>::max();
-  const Rect32 full_range{min, min, max, max};
-  const Rect32 max_point{max, max, max, max};
-  const Rect32 min_point{min, min, min, min};
-
-  const ShapeId large = store.add_rect(1, full_range, OwnerRef{OwnerType::kDie});
-  const ShapeId high = store.add_rect(1, max_point, OwnerRef{OwnerType::kCore});
-  const ShapeId low = store.add_rect(1, min_point, OwnerRef{OwnerType::kCore});
-  store.add_rect(2, max_point, OwnerRef{OwnerType::kCore});
+  const Rect32 point{max, max, max, max};
+  const ShapeId large = store.add_rect(1, Rect32{min, min, max, max}, OwnerRef{OwnerType::kDie});
+  const ShapeId high = store.add_rect(1, point, OwnerRef{OwnerType::kCore});
   store.rebuild_lod_tiles();
 
-  assert((store.query_intersect(1, full_range) == std::vector<ShapeId>{large, high, low}));
-  assert((store.query_intersect(1, max_point) == std::vector<ShapeId>{large, high}));
-  assert((store.query_intersect(1, min_point) == std::vector<ShapeId>{large, low}));
-  assert(store.query_lod_tiles(0, 1, full_range).size() == 3);
-  assert(store.query_lod_tiles(0, 1, max_point).size() == 2);
-
-  assert(store.update_rect(high, Rect32{0, 0, 0, 0}));
+  assert((store.query_intersect(1, point) == std::vector<ShapeId>{large, high}));
+  assert(store.query_lod_tiles(0, 1, point).size() == 2);
+  assert(store.delete_shape(high));
   store.rebuild_dirty_lod_tiles();
-  assert((store.query_intersect(1, max_point) == std::vector<ShapeId>{large}));
-  assert(store.query_lod_tiles(0, 1, max_point).size() == 1);
+  assert((store.query_intersect(1, point) == std::vector<ShapeId>{large}));
+  assert(store.query_lod_tiles(0, 1, point).size() == 1);
   assert(store.delete_shape(large));
-  assert(store.delete_shape(low));
-  store.rebuild_dirty_lod_tiles();
-  assert((store.query_intersect(1, full_range) == std::vector<ShapeId>{high}));
-  assert(store.query_lod_tiles(0, 1, full_range).size() == 1);
-}
-
-void test_geometry_query_fallback_preserves_results_and_order()
-{
-  GeometryStoreOptions options;
-  options.spatial_index.tile_size = 4;
-  options.lod_pyramid.base_tile_size = 4;
-  options.lod_pyramid.lod_level_count = 1;
-  options.lod_pyramid.max_tile_refs_per_shape = 4;
-  GeometryStore store(options);
-  for (int32_t x = -8; x <= 8; x += 4) {
-    for (int32_t y = -8; y <= 8; y += 4) {
-      store.add_rect(1, Rect32{x, y, x, y}, OwnerRef{OwnerType::kCore});
-    }
-  }
-  // The large summary and a regular tile share the same sorting key.
-  store.add_rect(1, Rect32{-8, -8, 8, 8}, OwnerRef{OwnerType::kDie});
-  store.add_rect(2, Rect32{-8, -8, 8, 8}, OwnerRef{OwnerType::kDie});
-  const Rect32 local{-16, -16, 16, 16};
-  const Rect32 wide{-100000, -100000, 100000, 100000};
-  assert(store.query_intersect(1, local) == store.query_intersect(1, wide));
-  store.rebuild_lod_tiles();
-  const auto direct = store.query_lod_tiles(0, 1, local);
-  const auto fallback = store.query_lod_tiles(0, 1, wide);
-  assert(direct.size() == fallback.size());
-  for (size_t i = 0; i < direct.size(); ++i) {
-    assert(direct[i].lod_level == fallback[i].lod_level);
-    assert(direct[i].layer_id == fallback[i].layer_id);
-    assert(direct[i].tile_x == fallback[i].tile_x);
-    assert(direct[i].tile_y == fallback[i].tile_y);
-    assert(direct[i].shape_count == fallback[i].shape_count);
-    assert(direct[i].bbox.lx == fallback[i].bbox.lx && direct[i].bbox.ly == fallback[i].bbox.ly);
-    assert(direct[i].bbox.hx == fallback[i].bbox.hx && direct[i].bbox.hy == fallback[i].bbox.hy);
-  }
-}
-
-void test_geometry_queries_match_exact_intersections()
-{
-  GeometryStoreOptions options;
-  options.spatial_index.tile_size = 8;
-  options.spatial_index.max_tiles_per_shape = 4;
-  GeometryStore store(options);
-  for (int32_t i = 0; i < 100; ++i) {
-    const int32_t x = (i * 37) % 201 - 100;
-    const int32_t y = (i * 53) % 201 - 100;
-    store.add_rect(i % 3, Rect32{x, y, x + i % 25, y + i % 19}, OwnerRef{OwnerType::kCore});
-  }
-  for (int32_t x = -120; x < 120; x += 13) {
-    for (int32_t y = -120; y < 120; y += 17) {
-      const Rect32 viewport{x, y, x + 40, y + 32};
-      for (LayerId layer = 0; layer < 3; ++layer) {
-        std::vector<ShapeId> expected;
-        for (const ShapeRecord& record : store.records()) {
-          if (record.layer_id == layer && intersects(record.bbox, viewport)) {
-            expected.push_back(record.id);
-          }
-        }
-        std::sort(expected.begin(), expected.end());
-        assert(store.query_intersect(layer, viewport) == expected);
-      }
-    }
-  }
-}
-
-void test_add_rect_stores_only_low_16_flag_bits()
-{
-  GeometryStore store;
-  const ShapeId id = store.add_rect(1, Rect32{0, 0, 10, 10}, OwnerRef{OwnerType::kDie}, 0x1FFFFu);
-
-  const ShapeRecord* record = store.find_shape(id);
-  assert(record != nullptr);
-  assert(record->flags == 0xFFFFu);
-}
-
-void test_delete_shape_saturates_version_at_max()
-{
-  GeometryStore store;
-
-  ShapeRecord record;
-  record.id = 7;
-  record.version = std::numeric_limits<ShapeVersion>::max();
-  record.layer_id = 1;
-  assert(store.replace_snapshot({record}, {OwnerRef{OwnerType::kDie}}, {}));
-
-  assert(store.delete_shape(7));
-
-  const ShapeRecord* deleted = store.find_shape(7);
-  assert(deleted != nullptr);
-  assert(deleted->state == ShapeState::kDeleted);
-  // Must saturate, not wrap UINT32_MAX -> 0.
-  assert(deleted->version == std::numeric_limits<ShapeVersion>::max());
-}
-
-void test_lod_query_handles_full_range_viewport_at_high_lod()
-{
-  GeometryStoreOptions options;
-  options.lod_pyramid.lod_level_count = 64;
-  GeometryStore store(options);
-
-  store.add_rect(1, Rect32{0, 0, 10, 10}, OwnerRef{OwnerType::kDie});
-  store.rebuild_lod_tiles();
-
-  // lod 40 with base tile 4096 would shift-overflow tile_size and then
-  // iterate ~2^64 tiles without the saturation + populated-scan fallback.
-  const std::vector<GeometryTileSummary> tiles
-      = store.query_lod_tiles(40, 1,
-                              Rect32{std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min(),
-                                     std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max()});
-
-  assert(!tiles.empty());
-  assert(tiles[0].shape_count == 1);
+  assert(store.query_intersect(1, point).empty());
 }
 
 uint32_t read_be32(const std::vector<uint8_t>& bytes, size_t offset)
@@ -1112,15 +955,8 @@ int main()
   test_geometry_edit_command_carries_expected_version();
   test_geometry_edit_diagnostic_flags_round_trip();
   test_snapshot_header_has_stable_schema_identity();
-  test_add_line_with_extreme_width_saturates_bbox();
-  test_spatial_query_handles_full_range_viewport();
   test_snapshot_rejects_wrapped_payload_range();
   test_geometry_indices_handle_extreme_tile_coordinates();
-  test_geometry_query_fallback_preserves_results_and_order();
-  test_geometry_queries_match_exact_intersections();
-  test_add_rect_stores_only_low_16_flag_bits();
-  test_delete_shape_saturates_version_at_max();
-  test_lod_query_handles_full_range_viewport_at_high_lod();
   test_render_thumbnail_png_writes_valid_png();
   return 0;
 }

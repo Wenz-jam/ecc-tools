@@ -248,32 +248,11 @@ std::vector<GeometryTileSummary> GeometryTilePyramid::query(uint8_t lod_level, L
   const int32_t max_x = floor_div(viewport.hx, size);
   const int32_t max_y = floor_div(viewport.hy, size);
 
-  // A pathological viewport would visit ~2^64 tiles. Fall back to scanning
-  // populated summaries only: exact, and bounded by actual index contents.
-  const uint64_t x_count = static_cast<uint64_t>(static_cast<int64_t>(max_x) - min_x) + 1;
-  const uint64_t y_count = static_cast<uint64_t>(static_cast<int64_t>(max_y) - min_y) + 1;
-  constexpr uint64_t kMaxDirectTileVisits = 1024ULL * 1024ULL;
-  if (x_count > kMaxDirectTileVisits || y_count > kMaxDirectTileVisits / x_count) {
-    for (const auto& [key, summary] : _summaries) {
-      if (summary.lod_level == lod_level && summary.layer_id == layer_id && key.tile_x >= min_x && key.tile_x <= max_x
-          && key.tile_y >= min_y && key.tile_y <= max_y) {
-        result.push_back(summary);
-      }
-    }
-    // Match the direct traversal order before appending large shapes with possibly equal keys.
-    std::sort(result.begin(), result.end(), [](const GeometryTileSummary& lhs, const GeometryTileSummary& rhs) {
-      if (lhs.tile_x != rhs.tile_x) {
-        return lhs.tile_x < rhs.tile_x;
-      }
-      return lhs.tile_y < rhs.tile_y;
-    });
-  } else {
-    for (int64_t x = min_x; x <= max_x; ++x) {
-      for (int64_t y = min_y; y <= max_y; ++y) {
-        const auto iter = _summaries.find(GeometryTileKey{lod_level, layer_id, static_cast<int32_t>(x), static_cast<int32_t>(y)});
-        if (iter != _summaries.end()) {
-          result.push_back(iter->second);
-        }
+  for (int64_t x = min_x; x <= max_x; ++x) {
+    for (int64_t y = min_y; y <= max_y; ++y) {
+      const auto iter = _summaries.find(GeometryTileKey{lod_level, layer_id, static_cast<int32_t>(x), static_cast<int32_t>(y)});
+      if (iter != _summaries.end()) {
+        result.push_back(iter->second);
       }
     }
   }
@@ -321,13 +300,7 @@ std::vector<GeometryTileKey> GeometryTilePyramid::keys_for(uint8_t lod_level, La
 
 int32_t GeometryTilePyramid::tile_size(uint8_t lod_level) const
 {
-  // base_tile_size >= 1 (clamped in ctor); any shift >= 31 overflows int32.
-  constexpr int64_t kMaxTileSize = std::numeric_limits<int32_t>::max();
-  if (lod_level >= 31) {
-    return std::numeric_limits<int32_t>::max();
-  }
-  const int64_t size = static_cast<int64_t>(_options.base_tile_size) << lod_level;
-  return size > kMaxTileSize ? std::numeric_limits<int32_t>::max() : static_cast<int32_t>(size);
+  return _options.base_tile_size << lod_level;
 }
 
 uint64_t GeometryTilePyramid::tile_span_count(uint8_t lod_level, Rect32 bbox) const
@@ -398,9 +371,7 @@ void GeometryTilePyramid::add_record_to_key(GeometryTileKey key, const ShapeReco
   if (!inserted) {
     summary.bbox = union_rect(summary.bbox, record.bbox);
   }
-  if (summary.shape_count != std::numeric_limits<uint32_t>::max()) {
-    ++summary.shape_count;
-  }
+  ++summary.shape_count;
   _tile_shape_ids[key].insert(record.id);
   _shape_tile_keys[record.id].push_back(key);
 }

@@ -1,6 +1,5 @@
 #include "ShapeTable.h"
 
-#include <limits>
 #include <utility>
 
 namespace ecc::geometry {
@@ -8,21 +7,12 @@ namespace ecc::geometry {
 RecordIndex ShapeTable::insert_bytes(ShapeRecord record, const void* payload, uint32_t payload_size)
 {
   record.bbox = normalize(record.bbox);
-  // Keep _payloads/_records/_id_to_index consistent if an allocation throws.
-  const size_t payloads_size = _payloads.size();
-  const size_t records_size = _records.size();
-  try {
-    append_payload(record, payload, payload_size);
+  append_payload(record, payload, payload_size);
 
-    const RecordIndex index = static_cast<RecordIndex>(_records.size());
-    _records.push_back(record);
-    _id_to_index[record.id] = index;
-    return index;
-  } catch (...) {
-    _payloads.resize(payloads_size);
-    _records.resize(records_size);
-    throw;
-  }
+  const RecordIndex index = static_cast<RecordIndex>(_records.size());
+  _records.push_back(record);
+  _id_to_index[record.id] = index;
+  return index;
 }
 
 bool ShapeTable::update_bytes(ShapeId id, ShapeRecord record, const void* payload, uint32_t payload_size)
@@ -47,10 +37,7 @@ bool ShapeTable::mark_deleted(ShapeId id)
   }
 
   record->state = ShapeState::kDeleted;
-  // Saturate instead of wrapping UINT32_MAX -> 0 (consistent with next_version()).
-  if (record->version != std::numeric_limits<ShapeVersion>::max()) {
-    ++record->version;
-  }
+  ++record->version;
   return true;
 }
 

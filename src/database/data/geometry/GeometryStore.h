@@ -75,7 +75,6 @@ class GeometryStore
   bool replace_snapshot(std::vector<ShapeRecord> records, std::vector<OwnerRef> owners, std::vector<std::byte> payloads,
                         std::vector<GeometryNameRecord> name_records, std::vector<std::byte> name_payloads);
 
-  // NOTE: only the low 16 bits of flags are stored.
   ShapeId add_rect(LayerId layer_id, Rect32 rect, OwnerRef owner, uint32_t flags = 0);
   ShapeId add_point(LayerId layer_id, PointPayload point, OwnerRef owner, uint32_t flags = 0);
   ShapeId add_line(LayerId layer_id, LinePayload line, OwnerRef owner, uint32_t flags = 0);
@@ -84,7 +83,6 @@ class GeometryStore
   bool update_rect(ShapeId id, Rect32 rect, uint64_t command_id = 0);
   bool delete_shape(ShapeId id);
 
-  // Returned pointers/spans borrow storage and may be invalidated by mutations.
   const ShapeRecord* find_shape(ShapeId id) const;
   OwnerRef owner_of(ShapeId id) const;
 
