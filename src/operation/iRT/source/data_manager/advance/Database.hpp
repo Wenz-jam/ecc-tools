@@ -23,6 +23,7 @@
 #include "Net.hpp"
 #include "Obstacle.hpp"
 #include "RTHeader.hpp"
+#include "RegionRoute.hpp"
 #include "RoutingEdge.hpp"
 #include "RoutingLayer.hpp"
 #include "Row.hpp"
@@ -70,10 +71,9 @@ class Database
   std::map<int32_t, std::vector<Segment<LayerCoord>>>& get_net_global_result_map() { return _net_global_result_map; }
   std::map<int32_t, std::vector<Segment<LayerCoord>>>& get_net_detailed_result_map() { return _net_detailed_result_map; }
   std::map<int32_t, std::vector<EXTLayerRect>>& get_net_detailed_patch_map() { return _net_detailed_patch_map; }
+  RegionRoute& get_region_route() { return _region_route; }
   int32_t get_detection_distance() const { return _detection_distance; }
   GridMap<PlanarRect>& get_gcell_map() { return _gcell_map; }
-  GridMap<RoutingEdge>& get_planar_routing_h_edge_map() { return _planar_routing_h_edge_map; }
-  GridMap<RoutingEdge>& get_planar_routing_v_edge_map() { return _planar_routing_v_edge_map; }
   std::vector<GridMap<RoutingEdge>>& get_routing_h_edge_map() { return _routing_h_edge_map; }
   std::vector<GridMap<RoutingEdge>>& get_routing_v_edge_map() { return _routing_v_edge_map; }
   std::array<std::map<int32_t, FixedRectRTree>, 2>& get_type_layer_fixed_rect_rtree_map() { return _type_layer_fixed_rect_rtree_map; }
@@ -117,10 +117,9 @@ class Database
   std::map<int32_t, std::vector<Segment<LayerCoord>>> _net_global_result_map;
   std::map<int32_t, std::vector<Segment<LayerCoord>>> _net_detailed_result_map;
   std::map<int32_t, std::vector<EXTLayerRect>> _net_detailed_patch_map;
+  RegionRoute _region_route;
   int32_t _detection_distance = -1;
   GridMap<PlanarRect> _gcell_map;
-  GridMap<RoutingEdge> _planar_routing_h_edge_map;
-  GridMap<RoutingEdge> _planar_routing_v_edge_map;
   std::vector<GridMap<RoutingEdge>> _routing_h_edge_map;
   std::vector<GridMap<RoutingEdge>> _routing_v_edge_map;
   std::array<std::map<int32_t, FixedRectRTree>, 2> _type_layer_fixed_rect_rtree_map;

@@ -149,11 +149,6 @@ bool IdbCellMaster::is_spacer()
     return false;
 }
 
-bool IdbCellMaster::is_antenna_cell()
-{
-  return _type == CellMasterType::kCoreAntenaCell;
-}
-
 bool IdbCellMaster::is_endcap()
 {
   if (_type >= CellMasterType::kEndcap && _type <= CellMasterType::kEndcapBottomRight)

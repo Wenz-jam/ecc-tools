@@ -194,11 +194,11 @@ int LefRead::propDefCB(lefrCallbackType_e c, lefiProp* prop, lefiUserData data)
 
 int LefRead::parse_property_definition(lefiProp* prop)
 {
-  IdbLayout* layout = _lef_service->get_layout();
+  // IdbLayout* layout = _lef_service->get_layout();
 
-  auto property_type = prop->lefiProp::propType();
+  // auto property_type = prop->lefiProp::propType();
   std::string name = prop->lefiProp::propName();
-  auto data_type = prop->lefiProp::dataType();
+  // auto data_type = prop->lefiProp::dataType();
 
   // set max via stack
   if (name == "LEF58_MAXVIASTACK" && prop->lefiProp::hasString()) {
@@ -354,7 +354,7 @@ int LefRead::parse_units(lefiUnits* lef_units)
   // IdbLayout eagerly allocates its units, so only a positive micron DBU
   // proves units were actually parsed from an earlier LEF/DEF.
   if (units != nullptr && units->get_micron_dbu() > 0) {
-    ECCLOG.info(ecc::Loc::current(), "Tech Units has been init, ignore this lef units...");
+    // ECCLOG.info(ecc::Loc::current(), "Tech Units has been init, ignore this lef units...");
     return kDbSuccess;
   }
 
@@ -958,7 +958,7 @@ int LefRead::parse_macro_new(const char* macro_name)
 
   if (nullptr != master_list->find_cell_master(macro_name)) {
     _this_cell_master = nullptr;
-    ECCLOG.warn(ecc::Loc::current(), "[idb warning] Macro is exist, name = ", macro_name);
+    // ECCLOG.warn(ecc::Loc::current(), "[idb warning] Macro is exist, name = ", macro_name);
     return kDbFail;
   }
 
@@ -1358,6 +1358,8 @@ int LefRead::parse_obs(lefiObstruction* lef_obs)
 
   lefiGeometries* lef_geometry = lef_obs->geometries();
   IdbObsLayer* obs_layer = nullptr;
+  IdbLayer* curr_layer = nullptr;
+  std::shared_ptr<macro::MacroProperty> macro_property = nullptr;
 
   int item_num = lef_geometry->numItems();
   for (int j = 0; j < item_num; j++) {
@@ -1366,11 +1368,23 @@ int LefRead::parse_obs(lefiObstruction* lef_obs)
       case lefiGeomLayerE: {
         obs_layer = obs->add_obs_layer(nullptr);
         IdbLayer* layer = layer_list->find_layer(lef_geometry->getLayer(j));
+        curr_layer = layer;
         if (layer == nullptr) {
           break;
         }
         IdbLayerShape* layer_shape = obs_layer->get_shape();
         layer_shape->set_layer(layer);
+        break;
+      }
+      case lefiGeomLayerMinSpacingE: {
+        if (curr_layer == nullptr) {
+          break;
+        }
+        if (macro_property == nullptr) {
+          macro_property = std::make_shared<macro::MacroProperty>();
+          _this_cell_master->set_macro_property(macro_property);
+        }
+        macro_property->add_obs_spacing(macro::ObsSpacing(curr_layer, transUnitDB(lef_geometry->getLayerMinSpacing(j))));
         break;
       }
       case lefiGeomRectE: {

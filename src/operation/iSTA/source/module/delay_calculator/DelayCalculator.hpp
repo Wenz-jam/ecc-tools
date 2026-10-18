@@ -34,13 +34,15 @@ class DelayCalculator
   void init();
   void calculate(DCTask& dc_task);
   void destroy();
-  double getPowerOutputLoad(std::string& output_pin, AnalysisType analysis_type, TransType output_trans_type);
+  bool calculateDrivingCell(std::string& output_pin, TimingCellArc& timing_cell_arc, AnalysisType analysis_type, TransType output_trans_type,
+                            double input_transition_rise, double input_transition_fall, DCTimingResult& timing_result);
 
  private:
   // self
   static DelayCalculator* _dc_instance;
   std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, double>>>> _parasitic_resistor_map_cache;
   std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>> _parasitic_load_map_cache;
+  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::string>>> _parasitic_root_map_cache;
   std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>> _parasitic_delay_map_cache;
   std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>> _parasitic_impulse_map_cache;
   std::map<std::string, ParasiticDmpModel> _parasitic_dmp_model_cache;
@@ -49,6 +51,7 @@ class DelayCalculator
   std::map<ParasiticArnoldiModelKey, ParasiticArnoldiModel> _parasitic_arnoldi_model_cache;
   std::map<ParasiticArnoldiTimingResultKey, ParasiticArnoldiTimingResult> _parasitic_arnoldi_timing_result_cache;
   std::map<ParasiticArnoldiDriverResultKey, ParasiticArnoldiTimingResult> _parasitic_arnoldi_driver_result_cache;
+  std::map<ParasiticArnoldiDriverResultKey, ParasiticArnoldiTimingResult> _parasitic_input_port_result_cache;
   static constexpr int32_t kStartTimeIndex = 0;
   static constexpr int32_t kTransitionTimeIndex = 1;
   static constexpr int32_t kEffectiveCapacitanceIndex = 2;
@@ -61,6 +64,7 @@ class DelayCalculator
   static constexpr double kDriverParameterTolerance = 0.01;
   static constexpr double kThresholdTimeTolerance = 0.01;
   static constexpr double kTinyNumber = 1E-20;
+  static constexpr double kMinSlewResistanceThreshold = 0.45;
   static constexpr double kGateResistanceCapacitanceStep = 1E-3;
   static constexpr double kCapacitiveDriverResistance = 1E-5;
   TimingArc* _timing_arc = nullptr;
@@ -138,7 +142,8 @@ class DelayCalculator
                                double input_slew, double output_load);
   TransType getOutputTransType(TimingCellArc& timing_cell_arc, TransType input_trans_type);
   std::vector<TransType> getOutputTransTypeList(TimingCellArc& timing_cell_arc, TransType input_trans_type);
-  std::vector<TimingArc*> getCandidateTimingArcList(TimingCellArc& timing_cell_arc, TransType input_trans_type, TransType output_trans_type);
+  std::vector<TimingArc*> getCandidateTimingArcList(TimingCellArc& timing_cell_arc, TransType input_trans_type, TransType output_trans_type,
+                                                    const std::string& output_pin = "");
   std::vector<TimingArc*> getCandidateTimingCheckArcList(TimingCheckArc& timing_check_arc, TransType clock_trans_type, TransType data_trans_type);
   bool isMatchTimingType(TimingArc& timing_arc, TransType trans_type);
   bool isPositiveArc(TimingArc& timing_arc);
@@ -158,8 +163,8 @@ class DelayCalculator
   double calcTimingArcSlewByRawLoad(TimingArc& timing_arc, TransType output_trans_type, double input_slew, double output_load);
   double getArcOutputLoad(Arc& arc, AnalysisType analysis_type, TransType output_trans_type);
   double getOutputPinLoad(std::string& output_pin, AnalysisType analysis_type, TransType output_trans_type);
-  double getNetOutputLoad(Net& net, AnalysisType analysis_type, TransType output_trans_type);
-  double getParasiticNetOutputLoad(Net& net, ParasiticNet& parasitic_net, AnalysisType analysis_type, TransType trans_type);
+  double getNetOutputLoad(Net& net, const std::string& driver_pin, AnalysisType analysis_type, TransType output_trans_type);
+  double getParasiticNetOutputLoad(const std::string& driver_pin, ParasiticNet& parasitic_net, AnalysisType analysis_type, TransType trans_type);
   double getPinCapacitance(std::string& pin_name, AnalysisType analysis_type, TransType trans_type);
   double calcNetArcDelay(Arc& arc);
   double calcNetArcDelay(Arc& arc, AnalysisType analysis_type, TransType trans_type);
@@ -185,7 +190,7 @@ class DelayCalculator
                                  std::map<std::string, double>& beta_map);
   double getParasiticTotalLoad(ParasiticNet& parasitic_net, AnalysisType analysis_type, TransType trans_type);
   void buildParasiticResistorMap(ParasiticNet& parasitic_net, std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map);
-  std::string getParasiticNodeName(ParasiticNet& parasitic_net, std::string& pin_name);
+  std::string getParasiticNodeName(ParasiticNet& parasitic_net, const std::string& pin_name);
   std::string getPinNameByParasiticNodeName(std::string& node_name);
   ParasiticDmpTimingResult& getParasiticDmpTimingResult(std::string& output_pin, TimingArc& timing_arc, AnalysisType analysis_type, TransType output_trans_type,
                                                         double input_slew, double output_load);
@@ -250,6 +255,7 @@ class DelayCalculator
                                                                      TransType output_trans_type, double input_slew);
   ParasiticArnoldiTimingResult calcParasiticArnoldiTimingResult(std::string& output_pin, TimingArc& timing_arc, AnalysisType analysis_type,
                                                                 TransType output_trans_type, double input_slew, double output_load);
+  bool isParasiticLoadSlewCompatible(TimingArc& timing_arc, std::string& load_pin, TransType trans_type);
   void adjustParasiticLoadThreshold(TimingArc& timing_arc, std::string& load_pin, TransType trans_type, double& wire_delay, double& load_slew);
   TimingCell* getThresholdTimingCell(std::string& pin_name);
   double getTimingCellSlewLowerThreshold(TimingCell& timing_cell, TransType trans_type);
@@ -275,13 +281,15 @@ class DelayCalculator
                                    std::vector<std::size_t>& term_point_idx_list);
   void updateParasiticArnoldiProjection(ParasiticArnoldiModel& arnoldi_model, std::vector<double>& basis_list, std::vector<std::size_t>& term_point_idx_list,
                                         std::size_t order_idx);
-  double calcParasiticArnoldiElmore(ParasiticArnoldiModel& arnoldi_model, std::string& sink_node_name);
-  double calcParasiticArnoldiElmore(ParasiticArnoldiModel& arnoldi_model, std::size_t term_idx);
   std::optional<double> calcParasiticArnoldiInputPortDelay(ParasiticNet& parasitic_net, std::string& source_node_name, std::string& sink_node_name,
-                                                           AnalysisType analysis_type, TransType trans_type);
+                                                           AnalysisType analysis_type, TransType trans_type, double input_slew);
+  ParasiticArnoldiTimingResult& getParasiticInputPortResult(ParasiticNet& parasitic_net, std::string& source_node_name, AnalysisType analysis_type,
+                                                            TransType trans_type, double input_slew);
+  ParasiticArnoldiTimingResult calcParasiticInputPortResult(ParasiticNet& parasitic_net, std::string& source_node_name, AnalysisType analysis_type,
+                                                            TransType trans_type, double input_slew);
+  double calcParasiticInputPortCrossing(std::vector<double>& time_constants, std::vector<double>& weights, double ramp, double voltage);
   std::optional<double> calcParasiticArnoldiInputPortSlew(ParasiticNet& parasitic_net, std::string& source_node_name, std::string& sink_node_name,
                                                           AnalysisType analysis_type, TransType trans_type, double input_slew);
-  double getParasiticArnoldiSlewScale(TransType trans_type);
   ParasiticArnoldiPoleResidue calcParasiticArnoldiPoleResidue(ParasiticArnoldiModel& arnoldi_model, double drive_resistance);
   bool solveParasiticArnoldiTridiagonalEigen(std::vector<double>& diagonal_list, std::vector<double>& off_diagonal_list, std::vector<double>& eigenvalue_list,
                                              std::vector<std::vector<double>>& eigenvector_list);

@@ -17,16 +17,15 @@
 #pragma once
 
 #include "Arc.hpp"
+#include "GraphVertex.hpp"
 #include "Instance.hpp"
-#include "InstancePower.hpp"
 #include "Net.hpp"
 #include "ParasiticLibrary.hpp"
 #include "Pin.hpp"
-#include "PowerActivity.hpp"
-#include "PowerSummary.hpp"
 #include "STAHeader.hpp"
 #include "Summary.hpp"
 #include "TimingConstraint.hpp"
+#include "TimingFanoutCheck.hpp"
 #include "TimingLibrary.hpp"
 #include "TimingPathGroup.hpp"
 #include "TimingPoint.hpp"
@@ -39,6 +38,9 @@ class Database
   Database() = default;
   ~Database() = default;
   // getter
+  std::vector<GraphVertex>& get_graph_vertex_list() { return _graph_vertex_list; }
+  std::vector<int32_t>& get_graph_order_list() { return _graph_order_list; }
+  std::map<std::string, TimingPoint>& get_driver_timing_point_map() { return _driver_timing_point_map; }
   std::string& get_design_name() { return _design_name; }
   std::map<std::string, Instance>& get_instance_map() { return _instance_map; }
   std::map<std::string, Pin>& get_pin_map() { return _pin_map; }
@@ -51,19 +53,32 @@ class Database
   std::vector<std::string>& get_timing_order_list() { return _timing_order_list; }
   std::map<std::string, TimingPoint>& get_timing_point_map() { return _timing_point_map; }
   std::vector<TimingPathGroup>& get_timing_path_group_list() { return _timing_path_group_list; }
-  std::map<std::string, PowerActivity>& get_vcd_activity_map() { return _vcd_activity_map; }
-  std::map<std::string, PowerActivity>& get_power_activity_map() { return _power_activity_map; }
-  std::map<std::string, InstancePower>& get_instance_power_map() { return _instance_power_map; }
-  PowerSummary& get_power_summary() { return _power_summary; }
   TimingLibrary& get_timing_library() { return _timing_library; }
   ParasiticLibrary& get_parasitic_library() { return _parasitic_library; }
   TimingConstraint& get_timing_constraint() { return _timing_constraint; }
   Summary& get_summary() { return _summary; }
+  std::vector<TimingFanoutCheck>& get_fanout_check_list() { return _fanout_check_list; }
   // setter
   void set_design_name(const std::string& design_name) { _design_name = design_name; }
   // function
+  TimingPoint& getDriverTimingPoint(const std::string& pin_name)
+  {
+    auto iter = _driver_timing_point_map.find(pin_name);
+    return iter == _driver_timing_point_map.end() ? _timing_point_map.at(pin_name) : iter->second;
+  }
+  TimingPoint& getSourceTimingPoint(Arc& arc)
+  {
+    return arc.get_type() == ArcType::kNet ? getDriverTimingPoint(arc.get_source_pin()) : _timing_point_map.at(arc.get_source_pin());
+  }
+  TimingPoint& getSinkTimingPoint(Arc& arc)
+  {
+    return arc.get_type() == ArcType::kCell ? getDriverTimingPoint(arc.get_sink_pin()) : _timing_point_map.at(arc.get_sink_pin());
+  }
 
  private:
+  std::vector<GraphVertex> _graph_vertex_list;
+  std::vector<int32_t> _graph_order_list;
+  std::map<std::string, TimingPoint> _driver_timing_point_map;
   std::string _design_name;
   std::map<std::string, Instance> _instance_map;
   std::map<std::string, Pin> _pin_map;
@@ -76,10 +91,7 @@ class Database
   std::vector<std::string> _timing_order_list;
   std::map<std::string, TimingPoint> _timing_point_map;
   std::vector<TimingPathGroup> _timing_path_group_list;
-  std::map<std::string, PowerActivity> _vcd_activity_map;
-  std::map<std::string, PowerActivity> _power_activity_map;
-  std::map<std::string, InstancePower> _instance_power_map;
-  PowerSummary _power_summary;
+  std::vector<TimingFanoutCheck> _fanout_check_list;
   TimingLibrary _timing_library;
   ParasiticLibrary _parasitic_library;
   TimingConstraint _timing_constraint;

@@ -31,6 +31,8 @@ class Arc
   Arc() = default;
   ~Arc() = default;
   // getter
+  int32_t get_source_vertex_idx() const { return _source_vertex_idx; }
+  int32_t get_sink_vertex_idx() const { return _sink_vertex_idx; }
   std::string& get_arc_name() { return _arc_name; }
   std::string& get_source_pin() { return _source_pin; }
   std::string& get_sink_pin() { return _sink_pin; }
@@ -48,9 +50,12 @@ class Arc
   std::map<TransType, TransType>& get_trans_type_map() { return _trans_type_map; }
   TimingCellArc* get_timing_cell_arc() { return _timing_cell_arc; }
   bool get_is_clock_arc() const { return _is_clock_arc; }
-  bool get_is_disable_arc() const { return _is_disable_arc; }
+  bool get_is_disable_arc() const { return _is_disable_arc || _is_case_analysis_disable; }
+  bool get_is_case_analysis_disable() const { return _is_case_analysis_disable; }
   bool get_is_loop_disable() const { return _is_loop_disable; }
   // setter
+  void set_source_vertex_idx(int32_t idx) { _source_vertex_idx = idx; }
+  void set_sink_vertex_idx(int32_t idx) { _sink_vertex_idx = idx; }
   void set_arc_name(const std::string& arc_name) { _arc_name = arc_name; }
   void set_source_pin(const std::string& source_pin) { _source_pin = source_pin; }
   void set_sink_pin(const std::string& sink_pin) { _sink_pin = sink_pin; }
@@ -79,6 +84,7 @@ class Arc
   void set_timing_cell_arc(TimingCellArc* timing_cell_arc) { _timing_cell_arc = timing_cell_arc; }
   void set_is_clock_arc(const bool is_clock_arc) { _is_clock_arc = is_clock_arc; }
   void set_is_disable_arc(const bool is_disable_arc) { _is_disable_arc = is_disable_arc; }
+  void set_is_case_analysis_disable(const bool value) { _is_case_analysis_disable = value; }
   void set_is_loop_disable(const bool is_loop_disable) { _is_loop_disable = is_loop_disable; }
   // function
   void update_timing_arc_delay(int32_t timing_arc_idx, AnalysisType analysis_type, TransType input_trans_type, TransType output_trans_type, double delay,
@@ -114,6 +120,8 @@ class Arc
   }
 
  private:
+  int32_t _source_vertex_idx = -1;
+  int32_t _sink_vertex_idx = -1;
   std::string _arc_name;
   std::string _source_pin;
   std::string _sink_pin;
@@ -133,6 +141,7 @@ class Arc
   TimingCellArc* _timing_cell_arc = nullptr;
   bool _is_clock_arc = false;
   bool _is_disable_arc = false;
+  bool _is_case_analysis_disable = false;
   bool _is_loop_disable = false;
 };
 
