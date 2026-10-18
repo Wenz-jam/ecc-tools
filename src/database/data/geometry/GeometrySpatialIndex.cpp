@@ -56,9 +56,9 @@ void GeometrySpatialIndex::insert(const ShapeRecord& record)
     return;
   }
 
-  for (int32_t x = range.min_x; x <= range.max_x; ++x) {
-    for (int32_t y = range.min_y; y <= range.max_y; ++y) {
-      _tiles[SpatialTileKey{record.layer_id, x, y}].push_back(record.id);
+  for (int64_t x = range.min_x; x <= range.max_x; ++x) {
+    for (int64_t y = range.min_y; y <= range.max_y; ++y) {
+      _tiles[SpatialTileKey{record.layer_id, static_cast<int32_t>(x), static_cast<int32_t>(y)}].push_back(record.id);
     }
   }
 }
@@ -78,9 +78,9 @@ void GeometrySpatialIndex::remove(const ShapeRecord& record)
     return;
   }
 
-  for (int32_t x = range.min_x; x <= range.max_x; ++x) {
-    for (int32_t y = range.min_y; y <= range.max_y; ++y) {
-      auto iter = _tiles.find(SpatialTileKey{record.layer_id, x, y});
+  for (int64_t x = range.min_x; x <= range.max_x; ++x) {
+    for (int64_t y = range.min_y; y <= range.max_y; ++y) {
+      auto iter = _tiles.find(SpatialTileKey{record.layer_id, static_cast<int32_t>(x), static_cast<int32_t>(y)});
       if (iter != _tiles.end()) {
         remove_id(iter->second, record.id);
       }
@@ -106,10 +106,10 @@ std::vector<ShapeId> GeometrySpatialIndex::query(LayerId layer_id, Rect32 bbox) 
   // A pathological viewport (e.g. full INT32 range at a fine tile size)
   // would visit ~2^64 tiles. Fall back to scanning populated tiles only:
   // exact, and bounded by actual index contents instead of the range.
-  const uint64_t x_count = static_cast<uint64_t>(range.max_x) - static_cast<uint64_t>(range.min_x) + 1;
-  const uint64_t y_count = static_cast<uint64_t>(range.max_y) - static_cast<uint64_t>(range.min_y) + 1;
+  const uint64_t x_count = static_cast<uint64_t>(static_cast<int64_t>(range.max_x) - range.min_x) + 1;
+  const uint64_t y_count = static_cast<uint64_t>(static_cast<int64_t>(range.max_y) - range.min_y) + 1;
   constexpr uint64_t kMaxDirectTileVisits = 1024ULL * 1024ULL;
-  if (x_count > kMaxDirectTileVisits || y_count > kMaxDirectTileVisits / (x_count == 0 ? 1 : x_count)) {
+  if (x_count > kMaxDirectTileVisits || y_count > kMaxDirectTileVisits / x_count) {
     for (const auto& [key, ids] : _tiles) {
       if (key.layer_id == layer_id && key.tile_x >= range.min_x && key.tile_x <= range.max_x && key.tile_y >= range.min_y
           && key.tile_y <= range.max_y) {
@@ -121,9 +121,9 @@ std::vector<ShapeId> GeometrySpatialIndex::query(LayerId layer_id, Rect32 bbox) 
     return result;
   }
 
-  for (int32_t x = range.min_x; x <= range.max_x; ++x) {
-    for (int32_t y = range.min_y; y <= range.max_y; ++y) {
-      const auto iter = _tiles.find(SpatialTileKey{layer_id, x, y});
+  for (int64_t x = range.min_x; x <= range.max_x; ++x) {
+    for (int64_t y = range.min_y; y <= range.max_y; ++y) {
+      const auto iter = _tiles.find(SpatialTileKey{layer_id, static_cast<int32_t>(x), static_cast<int32_t>(y)});
       if (iter != _tiles.end()) {
         result.insert(result.end(), iter->second.begin(), iter->second.end());
       }
@@ -144,10 +144,10 @@ GeometrySpatialIndex::TileRange GeometrySpatialIndex::tile_range(Rect32 bbox) co
 
 bool GeometrySpatialIndex::should_use_large_bucket(TileRange range) const
 {
-  // Cast before subtracting: max-min in int32 is UB for INT_MIN..MAX spans.
-  const uint64_t x_count = static_cast<uint64_t>(range.max_x) - static_cast<uint64_t>(range.min_x) + 1;
-  const uint64_t y_count = static_cast<uint64_t>(range.max_y) - static_cast<uint64_t>(range.min_y) + 1;
-  return x_count * y_count > _options.max_tiles_per_shape;
+  const uint64_t x_count = static_cast<uint64_t>(static_cast<int64_t>(range.max_x) - range.min_x) + 1;
+  const uint64_t y_count = static_cast<uint64_t>(static_cast<int64_t>(range.max_y) - range.min_y) + 1;
+  // Division also avoids overflow for a 2^32 by 2^32 tile range.
+  return x_count > _options.max_tiles_per_shape / y_count;
 }
 
 void GeometrySpatialIndex::remove_id(std::vector<ShapeId>& values, ShapeId id) const

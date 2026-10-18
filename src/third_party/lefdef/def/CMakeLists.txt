@@ -127,6 +127,7 @@ add_custom_command(
     ${DEF_PARSER_HEADER}
   COMMAND ${CMAKE_COMMAND} -E make_directory ${DEF_GENERATED_DIRECTORY}
   COMMAND ${BISON_EXECUTABLE}
+          --warnings=no-deprecated
           --no-lines
           -pdefyy
           --defines=${DEF_PARSER_HEADER}

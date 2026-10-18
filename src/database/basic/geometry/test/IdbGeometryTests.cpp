@@ -4,6 +4,9 @@
 #include "IdbLayerShape.h"
 #include "IdbTree.h"
 
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
 #include <cassert>
 #include <cstdint>
 #include <limits>
@@ -42,8 +45,8 @@ void test_tree_empty_and_invalid_access()
 
   Tree t(7);
   Iterator bad(nullptr, nullptr);
-  assert(!bad);            // null tree counts as invalid
-  assert(*bad == -1);      // no crash on deref
+  assert(!bad);        // null tree counts as invalid
+  assert(*bad == -1);  // no crash on deref
   assert(Tree::IsRoot(bad) == false);
   assert(Tree::isLeaf(bad) == false);
   assert(Tree::NumChildren(bad) == 0);
@@ -53,6 +56,7 @@ void test_tree_empty_and_invalid_access()
   assert(Tree::IsRoot(root_it) == true);
   Iterator parent = Tree::Parent(root_it);  // root has no parent: invalid, not crash
   assert(!parent);
+  assert(parent == t.end());
 }
 
 void test_tree_composite_ctor_skips_null_and_empty()
@@ -85,18 +89,48 @@ void test_rect_width_path_always_initializes()
   IdbRect vertical(0, 10, 0, 0, 4);
   assert(vertical.get_low_y() == 0);
   assert(vertical.get_high_y() == 10);
+
+  // Main treats a zero-length segment as vertical, including odd widths.
+  IdbRect point(5, 7, 5, 7, 5);
+  assert(point.get_low_x() == 3 && point.get_high_x() == 7);
+  assert(point.get_low_y() == 7 && point.get_high_y() == 7);
+}
+
+void test_rect_preserves_main_arithmetic()
+{
+  const int32_t coordinates[] = {-101, -3, -2, -1, 0, 1, 2, 3, 101};
+  for (int32_t lx : coordinates) {
+    for (int32_t ly : coordinates) {
+      for (int32_t hx : coordinates) {
+        for (int32_t hy : coordinates) {
+          IdbRect rect(lx, ly, hx, hy);
+          assert(rect.get_middle_point_x() == (lx + hx) / 2);
+          assert(rect.get_middle_point_y() == (ly + hy) / 2);
+          assert(rect.get_middle_point().get_x() == (lx + hx) / 2);
+          assert(rect.get_middle_point().get_y() == (ly + hy) / 2);
+          assert(rect.get_width() == std::abs(hx - lx));
+          assert(rect.get_height() == std::abs(hy - ly));
+        }
+      }
+    }
+  }
 }
 
 void test_rect_midpoint_and_size_avoid_overflow()
 {
-  IdbRect extreme(std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min(),
-                  std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max());
-  // (min + max) / 2 in int32 is UB; must compute without overflow.
-  assert(extreme.get_middle_point_x() == -1);
-  assert(extreme.get_middle_point_y() == -1);
+  IdbRect extreme(std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max(),
+                  std::numeric_limits<int32_t>::max());
+  // The sum is -1: preserve main's truncation toward zero, not floor rounding.
+  assert(extreme.get_middle_point_x() == 0);
+  assert(extreme.get_middle_point_y() == 0);
   // abs(INT32_MAX - INT32_MIN) overflows int32; must saturate.
   assert(extreme.get_width() == std::numeric_limits<int32_t>::max());
   assert(extreme.get_height() == std::numeric_limits<int32_t>::max());
+
+  IdbRect positive(std::numeric_limits<int32_t>::max() - 2, 0, std::numeric_limits<int32_t>::max(), 0);
+  assert(positive.get_middle_point_x() == std::numeric_limits<int32_t>::max() - 1);
+  IdbRect negative(0, std::numeric_limits<int32_t>::min(), 0, std::numeric_limits<int32_t>::min() + 2);
+  assert(negative.get_middle_point_y() == std::numeric_limits<int32_t>::min() + 1);
 }
 
 void test_rect_null_pointer_handling()
@@ -119,9 +153,11 @@ void test_layer_shape_empty_and_null_handling()
   IdbCoordinate<int32_t> avg = shape.get_average_xy();  // was: div-by-zero
   assert(avg.get_x() == 0 && avg.get_y() == 0);
 
-  IdbRect bbox = shape.get_bounding_box();  // was: INT_MAX/INT_MIN rect
-  assert(bbox.get_low_x() == 0 && bbox.get_low_y() == 0);
-  assert(bbox.get_high_x() == 0 && bbox.get_high_y() == 0);
+  IdbRect bbox = shape.get_bounding_box();  // Keep main's empty-range sentinel.
+  assert(bbox.get_low_x() == std::numeric_limits<int32_t>::max());
+  assert(bbox.get_low_y() == std::numeric_limits<int32_t>::max());
+  assert(bbox.get_high_x() == std::numeric_limits<int32_t>::min());
+  assert(bbox.get_high_y() == std::numeric_limits<int32_t>::min());
 
   shape.add_rect(static_cast<IdbRect*>(nullptr));  // must be ignored
   assert(shape.get_rect_list_num() == 0);
@@ -149,6 +185,10 @@ void test_layer_shape_assign_clears_and_skips_null()
 
   dst = dst;  // self-assignment guard
   assert(dst.get_rect_list_num() == 2);
+  assert(dst.get_rect(0) != src.get_rect(0));
+  src.get_rect_list().push_back(nullptr);
+  dst = src;
+  assert(dst.get_rect_list_num() == 2);
 }
 
 void test_layer_shape_average_uses_wide_accumulator()
@@ -172,6 +212,7 @@ int main()
   test_tree_empty_and_invalid_access();
   test_tree_composite_ctor_skips_null_and_empty();
   test_rect_width_path_always_initializes();
+  test_rect_preserves_main_arithmetic();
   test_rect_midpoint_and_size_avoid_overflow();
   test_rect_null_pointer_handling();
   test_layer_shape_empty_and_null_handling();

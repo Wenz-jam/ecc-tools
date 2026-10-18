@@ -5,12 +5,14 @@ add_library(ista_sdc_command
     ${ISTA_MODULE}/sdc_command/SdcCommand.cpp
     ${ISTA_MODULE}/sdc_command/SdcCommandRegistry.cpp
     ${ISTA_MODULE}/sdc_command/frontend/SdcTclCmd.cpp
+    ${ISTA_MODULE}/sdc_command/frontend/SetUnits.cpp
     ${ISTA_MODULE}/sdc_command/object/ObjectFilter.cpp
     ${ISTA_MODULE}/sdc_command/object/ObjectQuery.cpp
     ${ISTA_MODULE}/sdc_command/collection/RemoveFromCollection.cpp
     ${ISTA_MODULE}/sdc_command/object/AllPorts.cpp
     ${ISTA_MODULE}/sdc_command/object/CurrentDesign.cpp
     ${ISTA_MODULE}/sdc_command/object/GetCells.cpp
+    ${ISTA_MODULE}/sdc_command/object/GetFan.cpp
     ${ISTA_MODULE}/sdc_command/object/GetClocks.cpp
     ${ISTA_MODULE}/sdc_command/object/GetGeneratedClocks.cpp
     ${ISTA_MODULE}/sdc_command/object/GetLibCells.cpp
@@ -23,9 +25,13 @@ add_library(ista_sdc_command
     ${ISTA_MODULE}/sdc_command/clock/CreateClock.cpp
     ${ISTA_MODULE}/sdc_command/clock/CreateGeneratedClock.cpp
     ${ISTA_MODULE}/sdc_command/clock/SetClockGroups.cpp
+    ${ISTA_MODULE}/sdc_command/clock/SetClockLatency.cpp
+    ${ISTA_MODULE}/sdc_command/clock/RemoveClockLatency.cpp
     ${ISTA_MODULE}/sdc_command/clock/SetClockTransition.cpp
     ${ISTA_MODULE}/sdc_command/clock/SetClockUncertainty.cpp
+    ${ISTA_MODULE}/sdc_command/clock/RemoveClockUncertainty.cpp
     ${ISTA_MODULE}/sdc_command/clock/SetPropagatedClock.cpp
+    ${ISTA_MODULE}/sdc_command/clock/RemovePropagatedClock.cpp
     ${ISTA_MODULE}/sdc_command/delay/SetDrivingCell.cpp
     ${ISTA_MODULE}/sdc_command/delay/SetInputDelay.cpp
     ${ISTA_MODULE}/sdc_command/delay/SetInputTransition.cpp

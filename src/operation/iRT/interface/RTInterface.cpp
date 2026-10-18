@@ -24,6 +24,7 @@
 #include "LayerAssigner.hpp"
 #include "Monitor.hpp"
 #include "PinAccessor.hpp"
+#include "PlanarRect.hpp"
 #include "PlanarRouter.hpp"
 #include "RTHeader.hpp"
 #include "SupplyAnalyzer.hpp"
@@ -117,6 +118,9 @@ void RTInterface::runRT()
   RTPA.access();
   PinAccessor::destroyInst();
   RTUTIL.releaseMemory("PinAccessor");
+  // outputDef("irt_pa.def");
+
+  initRegionRoute();
 
   SupplyAnalyzer::initInst();
   RTSA.analyze();
@@ -125,9 +129,6 @@ void RTInterface::runRT()
   PlanarRouter::initInst();
   RTPR.generate();
   PlanarRouter::destroyInst();
-
-  RTDM.getDatabase().get_planar_routing_h_edge_map().free();
-  RTDM.getDatabase().get_planar_routing_v_edge_map().free();
 
   LayerAssigner::initInst();
   RTLA.assign();
@@ -139,6 +140,7 @@ void RTInterface::runRT()
   TrackAssigner::initInst();
   RTTA.assign();
   TrackAssigner::destroyInst();
+  // outputDef("irt_ta.def");
 
   DetailedRouter::initInst();
   RTDR.route();
@@ -154,6 +156,53 @@ void RTInterface::runRT()
   RTDE.destroy();
 
   RTLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
+}
+
+void RTInterface::outputDef(const std::string& def_name)
+{
+  const std::string def_path = RTDM.getConfig().temp_directory_path + def_name;
+  RTLOG.info(Loc::current(), "Save def to : ", def_path);
+
+  output();
+  if (!dmInst->saveDef(def_path)) {
+    RTLOG.error(Loc::current(), "Failed to save DEF: ", def_path);
+  }
+}
+
+void RTInterface::initRegionRoute()
+{
+  RegionRoute& region_route = RTDM.getDatabase().get_region_route();
+  region_route = RegionRoute();
+
+  const std::optional<PlanarRect> region_rect;
+  if (!region_rect.has_value()) {
+    return;
+  }
+
+  PlanarRect real_rect = region_rect.value();
+  Die& die = RTDM.getDatabase().get_die();
+  if (real_rect.isIncorrect() || !RTUTIL.isInside(die.get_real_rect(), real_rect)) {
+    RTLOG.error(Loc::current(), "The regional routing rectangle is invalid or outside the die!");
+  }
+
+  std::vector<Net>& net_list = RTDM.getDatabase().get_net_list();
+  for (Net& net : net_list) {
+    if (net.get_pin_list().size() < 2) {
+      continue;
+    }
+    for (Pin& pin : net.get_pin_list()) {
+      if (RTUTIL.isInside(real_rect, pin.get_access_point().get_real_coord())) {
+        region_route.get_net_idx_set().insert(net.get_net_idx());
+        break;
+      }
+    }
+  }
+  if (region_route.get_net_idx_set().empty()) {
+    RTLOG.error(Loc::current(), "The regional routing rectangle has no net with at least two pins!");
+  }
+  region_route.set_enable(true);
+  RTLOG.info(Loc::current(), "Enabled regional routing in rect ", real_rect.get_ll_x(), ",", real_rect.get_ll_y(), "-", real_rect.get_ur_x(), ",",
+             real_rect.get_ur_y(), " for ", region_route.get_net_idx_set().size(), " complete nets across the die");
 }
 
 void RTInterface::destroyRT()
@@ -889,6 +938,15 @@ void RTInterface::wrapMacroList()
   for (idb::IdbInstance* idb_instance : idb_instance_list) {
     if (idb_instance == nullptr || idb_instance->get_cell_master() == nullptr || !idb_instance->get_cell_master()->is_block()) {
       continue;
+    }
+    idb::IdbCellMaster* idb_cell_master = idb_instance->get_cell_master();
+    if (idb_cell_master->has_macro_property()) {
+      for (idb::macro::ObsSpacing& obs_spacing : idb_cell_master->get_macro_property()->get_obs_spacing_list()) {
+        RTLOG.info(Loc::current(), "macro ", idb_cell_master->get_name(), " obs spacing ", obs_spacing.get_layer()->get_name(),
+                   " = ", obs_spacing.get_min_spacing());
+      }
+    } else {
+      RTLOG.info(Loc::current(), "macro ", idb_cell_master->get_name(), " obs spacing is empty!");
     }
     idb_instance->set_bounding_box();
     idb::IdbRect* idb_bbox = idb_instance->get_bounding_box();

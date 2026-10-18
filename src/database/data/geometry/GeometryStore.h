@@ -84,9 +84,7 @@ class GeometryStore
   bool update_rect(ShapeId id, Rect32 rect, uint64_t command_id = 0);
   bool delete_shape(ShapeId id);
 
-  // The returned pointer and all spans below borrow store internals:
-  // they dangle after any mutating call (add_*/update_rect/delete_shape/
-  // replace_snapshot/clear*). Copy what you need instead of retaining them.
+  // Returned pointers/spans borrow storage and may be invalidated by mutations.
   const ShapeRecord* find_shape(ShapeId id) const;
   OwnerRef owner_of(ShapeId id) const;
 

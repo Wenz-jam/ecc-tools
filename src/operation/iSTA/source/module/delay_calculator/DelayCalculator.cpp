@@ -95,11 +95,6 @@ void DelayCalculator::destroy()
   STALOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
 
-double DelayCalculator::getPowerOutputLoad(std::string& output_pin, AnalysisType analysis_type, TransType output_trans_type)
-{
-  return getOutputPinLoad(output_pin, analysis_type, output_trans_type);
-}
-
 bool DelayCalculator::calculateDrivingCell(std::string& output_pin, TimingCellArc& timing_cell_arc, AnalysisType analysis_type, TransType output_trans_type,
                                            double input_transition_rise, double input_transition_fall, DCTimingResult& timing_result)
 {
@@ -116,7 +111,7 @@ bool DelayCalculator::calculateDrivingCell(std::string& output_pin, TimingCellAr
   double selected_slew = 0.0;
   for (TransType input_trans_type : {TransType::kRise, TransType::kFall}) {
     const double input_slew = input_trans_type == TransType::kRise ? input_transition_rise : input_transition_fall;
-    for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type)) {
+    for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type, output_pin)) {
       const bool has_delay_table = timing_arc->get_delay_table_map().contains(output_trans_type);
       const bool has_slew_table = timing_arc->get_slew_table_map().contains(output_trans_type);
       if (!has_delay_table && !has_slew_table) {
@@ -155,6 +150,7 @@ void DelayCalculator::clearParasiticCache()
 {
   _parasitic_resistor_map_cache.clear();
   _parasitic_load_map_cache.clear();
+  _parasitic_root_map_cache.clear();
   _parasitic_delay_map_cache.clear();
   _parasitic_impulse_map_cache.clear();
   _parasitic_dmp_model_cache.clear();
@@ -278,8 +274,19 @@ void DelayCalculator::calculateTimingCheckArc(DCTask& dc_task)
       if (timing_arc->get_check_table_map().count(dc_task.get_data_trans_type()) == 0) {
         continue;
       }
-      double delay = timing_arc->get_check_table_map()[dc_task.get_data_trans_type()].findValue(dc_task.get_clock_slew() * timing_arc->get_time_unit_scale(),
-                                                                                                dc_task.get_data_slew() * timing_arc->get_time_unit_scale());
+      // Liberty's recovery/removal checks constrain the related clock edge.
+      // Their constrained-pin axis is therefore the clock transition, while
+      // the asynchronous data transition is the related-pin axis. Setup and
+      // hold use the opposite data/clock role. TimingTable::findValue swaps
+      // the arguments for a constrained-transition first axis, so reverse the
+      // call arguments only for recovery/removal to preserve the Liberty axis
+      // semantics.
+      const bool recovery_or_removal = timing_check_arc->get_check_type() == TimingCheckType::kRecovery
+                                       || timing_check_arc->get_check_type() == TimingCheckType::kRemoval;
+      const double first_slew = recovery_or_removal ? dc_task.get_data_slew() : dc_task.get_clock_slew();
+      const double second_slew = recovery_or_removal ? dc_task.get_clock_slew() : dc_task.get_data_slew();
+      double delay = timing_arc->get_check_table_map()[dc_task.get_data_trans_type()].findValue(first_slew * timing_arc->get_time_unit_scale(),
+                                                                                                second_slew * timing_arc->get_time_unit_scale());
       delay_list.push_back(delay / timing_arc->get_time_unit_scale());
     }
     if (!delay_list.empty()) {
@@ -387,7 +394,7 @@ double DelayCalculator::calcTimingCellArcDelay(Arc& arc, TimingCellArc& timing_c
   double input_slew = 0.0;
   double raw_output_load = getArcOutputLoad(arc, analysis_type, output_trans_type);
   std::vector<double> delay_list;
-  for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type)) {
+  for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type, arc.get_sink_pin())) {
     if (timing_arc->get_delay_table_map().count(output_trans_type) == 0) {
       continue;
     }
@@ -425,7 +432,7 @@ double DelayCalculator::calcTimingCellArcDelay(Arc& arc, TimingCellArc& timing_c
   }
   double raw_output_load = getArcOutputLoad(arc, analysis_type, output_trans_type);
   std::vector<double> delay_list;
-  for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type)) {
+  for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type, arc.get_sink_pin())) {
     if (timing_arc->get_delay_table_map().count(output_trans_type) == 0) {
       continue;
     }
@@ -459,7 +466,7 @@ double DelayCalculator::calcTimingCellArcSlew(Arc& arc, TimingCellArc& timing_ce
     return input_slew;
   }
   double output_load = getArcOutputLoad(arc, analysis_type, output_trans_type);
-  std::vector<TimingArc*> candidate_arc_list = getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type);
+  std::vector<TimingArc*> candidate_arc_list = getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type, arc.get_sink_pin());
   std::vector<double> slew_list;
   for (TimingArc* timing_arc : candidate_arc_list) {
     if (timing_arc->get_slew_table_map().count(output_trans_type) == 0) {
@@ -563,7 +570,8 @@ std::vector<TransType> DelayCalculator::getOutputTransTypeList(TimingCellArc& ti
   return output_trans_type_list;
 }
 
-std::vector<TimingArc*> DelayCalculator::getCandidateTimingArcList(TimingCellArc& timing_cell_arc, TransType input_trans_type, TransType output_trans_type)
+std::vector<TimingArc*> DelayCalculator::getCandidateTimingArcList(TimingCellArc& timing_cell_arc, TransType input_trans_type, TransType output_trans_type,
+                                                                   const std::string& output_pin)
 {
   bool is_flip = input_trans_type != output_trans_type;
   std::vector<TimingArc*> candidate_arc_list;
@@ -576,6 +584,26 @@ std::vector<TimingArc*> DelayCalculator::getCandidateTimingArcList(TimingCellArc
     }
     if (!isMatchTimingType(timing_arc, output_trans_type)) {
       continue;
+    }
+    if (!timing_arc.get_when_expression().get_is_empty() && !output_pin.empty()) {
+      Database& database = STADM.getDatabase();
+      auto pin = database.get_pin_map().find(output_pin);
+      if (pin != database.get_pin_map().end() && !pin->second.get_is_port()) {
+        std::map<std::string, bool> values;
+        for (LogicExpressionTerm& term : timing_arc.get_when_expression().get_term_list()) {
+          if (term.get_operation_type() != LogicOperationType::kPort) {
+            continue;
+          }
+          auto& effective = database.get_timing_constraint().get_effective_case_analysis_map();
+          auto value = effective.find(pin->second.get_instance_name() + ":" + term.get_port_name());
+          if (value != effective.end() && (value->second == TimingCaseValue::kZero || value->second == TimingCaseValue::kOne)) {
+            values[term.get_port_name()] = value->second == TimingCaseValue::kOne;
+          }
+        }
+        if (timing_arc.get_when_expression().evaluate_constant(values) == std::optional<bool>(false)) {
+          continue;
+        }
+      }
     }
     candidate_arc_list.push_back(&timing_arc);
   }
@@ -744,7 +772,7 @@ double DelayCalculator::getArcOutputLoad(Arc& arc, AnalysisType analysis_type, T
     return 0.0;
   }
   Net& net = database.get_net_map()[sink_pin.get_net_name()];
-  return getNetOutputLoad(net, analysis_type, output_trans_type);
+  return getNetOutputLoad(net, sink_pin_name, analysis_type, output_trans_type);
 }
 
 double DelayCalculator::getOutputPinLoad(std::string& output_pin, AnalysisType analysis_type, TransType output_trans_type)
@@ -758,10 +786,10 @@ double DelayCalculator::getOutputPinLoad(std::string& output_pin, AnalysisType a
     return 0.0;
   }
   Net& net = database.get_net_map()[pin.get_net_name()];
-  return getNetOutputLoad(net, analysis_type, output_trans_type);
+  return getNetOutputLoad(net, output_pin, analysis_type, output_trans_type);
 }
 
-double DelayCalculator::getNetOutputLoad(Net& net, AnalysisType analysis_type, TransType output_trans_type)
+double DelayCalculator::getNetOutputLoad(Net& net, const std::string& driver_pin, AnalysisType analysis_type, TransType output_trans_type)
 {
   Database& database = STADM.getDatabase();
   auto& net_load_map = database.get_timing_constraint().get_net_load_map();
@@ -769,7 +797,9 @@ double DelayCalculator::getNetOutputLoad(Net& net, AnalysisType analysis_type, T
   if (load_constraint != net_load_map.end() && load_constraint->second.has(analysis_type, output_trans_type)) {
     double output_load = load_constraint->second.get(analysis_type, output_trans_type);
     for (std::string& load_pin_name : net.get_load_pin_list()) {
-      output_load += getPinCapacitance(load_pin_name, analysis_type, output_trans_type);
+      if (load_pin_name != driver_pin) {
+        output_load += getPinCapacitance(load_pin_name, analysis_type, output_trans_type);
+      }
     }
     return output_load;
   }
@@ -777,18 +807,20 @@ double DelayCalculator::getNetOutputLoad(Net& net, AnalysisType analysis_type, T
   double output_load = 0.0;
   if (database.get_parasitic_library().get_net_map().count(net.get_net_name()) > 0) {
     ParasiticNet& parasitic_net = database.get_parasitic_library().get_net_map()[net.get_net_name()];
-    output_load = getParasiticNetOutputLoad(net, parasitic_net, analysis_type, output_trans_type);
+    output_load = getParasiticNetOutputLoad(driver_pin, parasitic_net, analysis_type, output_trans_type);
   } else {
     for (std::string& load_pin_name : net.get_load_pin_list()) {
-      output_load += getPinCapacitance(load_pin_name, analysis_type, output_trans_type);
+      if (load_pin_name != driver_pin) {
+        output_load += getPinCapacitance(load_pin_name, analysis_type, output_trans_type);
+      }
     }
   }
   return output_load;
 }
 
-double DelayCalculator::getParasiticNetOutputLoad(Net& net, ParasiticNet& parasitic_net, AnalysisType analysis_type, TransType trans_type)
+double DelayCalculator::getParasiticNetOutputLoad(const std::string& driver_pin, ParasiticNet& parasitic_net, AnalysisType analysis_type, TransType trans_type)
 {
-  std::string source_node_name = getParasiticNodeName(parasitic_net, net.get_driver_pin());
+  std::string source_node_name = getParasiticNodeName(parasitic_net, driver_pin);
   if (source_node_name.empty()) {
     return getParasiticTotalLoad(parasitic_net, analysis_type, trans_type);
   }
@@ -922,10 +954,14 @@ double DelayCalculator::getParasiticNodeLoad(ParasiticNet& parasitic_net, std::s
 void DelayCalculator::buildParasiticDelayMap(ParasiticNet& parasitic_net, std::string& source_node_name, AnalysisType analysis_type, TransType trans_type)
 {
   std::string& net_name = parasitic_net.get_net_name();
-  if (_parasitic_delay_map_cache[net_name][analysis_type][trans_type].count(source_node_name) > 0
-      && _parasitic_impulse_map_cache[net_name][analysis_type][trans_type].count(source_node_name) > 0) {
+  std::string& cached_root = _parasitic_root_map_cache[net_name][analysis_type][trans_type];
+  if (cached_root == source_node_name && !cached_root.empty()) {
     return;
   }
+  cached_root = source_node_name;
+  _parasitic_load_map_cache[net_name][analysis_type][trans_type].clear();
+  _parasitic_delay_map_cache[net_name][analysis_type][trans_type].clear();
+  _parasitic_impulse_map_cache[net_name][analysis_type][trans_type].clear();
 
   if (_parasitic_resistor_map_cache.count(net_name) == 0) {
     buildParasiticResistorMap(parasitic_net, _parasitic_resistor_map_cache[net_name]);
@@ -962,6 +998,12 @@ double DelayCalculator::updateParasiticLoadMap(ParasiticNet& parasitic_net, std:
   visited_node_set.insert(node_name);
 
   double subtree_load = getParasiticNodeLoad(parasitic_net, node_name, analysis_type, trans_type);
+  if (parent_node_name.empty()) {
+    std::string driver_pin = getPinNameByParasiticNodeName(node_name);
+    if (STADM.getDatabase().get_pin_map().contains(driver_pin)) {
+      subtree_load -= getPinCapacitance(driver_pin, analysis_type, trans_type);
+    }
+  }
   if (resistor_map.count(node_name) == 0) {
     _parasitic_load_map_cache[parasitic_net.get_net_name()][analysis_type][trans_type][node_name] = subtree_load;
     return subtree_load;
@@ -1075,7 +1117,7 @@ void DelayCalculator::buildParasiticResistorMap(ParasiticNet& parasitic_net, std
   }
 }
 
-std::string DelayCalculator::getParasiticNodeName(ParasiticNet& parasitic_net, std::string& pin_name)
+std::string DelayCalculator::getParasiticNodeName(ParasiticNet& parasitic_net, const std::string& pin_name)
 {
   if (parasitic_net.get_node_map().count(pin_name) > 0) {
     return pin_name;
@@ -2506,7 +2548,7 @@ void DelayCalculator::initParasiticArnoldiTree(ParasiticNet& parasitic_net, std:
   node_name_list.push_back(source_node_name);
   parent_idx_list.push_back(-1);
   resistance_list.push_back(0.0);
-  capacitance_list.push_back(getParasiticNodeLoad(parasitic_net, source_node_name, analysis_type, trans_type));
+  capacitance_list.push_back(parasitic_net.get_node_map()[source_node_name].get_capacitance());
   visited_node_set.insert(source_node_name);
 
   std::vector<std::size_t> stack_node_idx_list;
@@ -3679,7 +3721,7 @@ double DelayCalculator::calcTimingCellArcDelay(std::string& output_pin, TimingCe
   }
   double output_load = getOutputPinLoad(output_pin, analysis_type, output_trans_type);
   std::vector<double> delay_list;
-  for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type)) {
+  for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type, output_pin)) {
     if (timing_arc->get_delay_table_map().count(output_trans_type) == 0) {
       continue;
     }
@@ -3707,7 +3749,7 @@ double DelayCalculator::calcTimingCellArcSlew(std::string& output_pin, TimingCel
   }
   double output_load = getOutputPinLoad(output_pin, analysis_type, output_trans_type);
   std::vector<double> slew_list;
-  for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type)) {
+  for (TimingArc* timing_arc : getCandidateTimingArcList(timing_cell_arc, input_trans_type, output_trans_type, output_pin)) {
     if (timing_arc->get_slew_table_map().count(output_trans_type) == 0) {
       continue;
     }

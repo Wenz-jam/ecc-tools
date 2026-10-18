@@ -35,13 +35,9 @@ class LibArcSet;
 class LibAxis;
 class LibAttrValue;
 class LibCell;
-class LibInternalPowerInfo;
-class LibLeakagePower;
 class LibLibrary;
 class LibLutTableTemplate;
 class LibPort;
-class LibPowerArc;
-class LibPowerArcSet;
 class LibTable;
 class LibTableModel;
 enum class IdbConnectType : uint8_t;
@@ -61,14 +57,13 @@ class LogicExpression;
 class ParasiticNet;
 class ParasiticNode;
 enum class PinDirection;
+enum class TimingCaseValue;
 class Net;
 class Pin;
 class TimingArc;
 class TimingCell;
 class TimingCellArc;
 class TimingCheckArc;
-class TimingLeakagePower;
-class TimingPowerArc;
 class TimingTable;
 class TCModel;
 class TCLib;
@@ -104,6 +99,8 @@ class STAInterface
   void runSTA();
   void extractLib();
   void destroySTA();
+  bool isInitialized() const { return _initialized; }
+  bool isTimingReady() const { return _timing_ready; }
 #endif
 
 #endif
@@ -116,17 +113,18 @@ class STAInterface
   void input(std::map<std::string, std::any>& config_map);
   void wrapConfig(std::map<std::string, std::any>& config_map);
   void wrapDatabase();
-  void wrapVcdActivity();
-  std::string wrapVcdPinName(std::string& vcd_signal_name);
   void wrapDBInfo();
   void wrapConstraintFilePath();
   void wrapInstanceList();
   void wrapInstance(idb::IdbInstance* idb_instance);
   void wrapInstancePinList(idb::IdbInstance* idb_instance);
   void wrapInstancePin(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin);
+  bool wrapSignalPin(idb::IdbPin* idb_pin);
   bool wrapSignalConnectType(idb::IdbConnectType connect_type);
+  bool isPGNet(idb::IdbNet* idb_net);
   std::string wrapInstancePinName(idb::IdbInstance* idb_instance, idb::IdbPin* idb_pin);
   PinDirection wrapPinDirection(idb::IdbConnectDirection idb_direction);
+  TimingCaseValue wrapConstantValue(idb::IdbPin* idb_pin);
   void wrapPinCoordinate(Pin& pin, idb::IdbPin* idb_pin);
   void wrapPortList();
   void wrapPortPin(idb::IdbPin* idb_pin);
@@ -141,22 +139,14 @@ class STAInterface
   void wrapNetPinNameList(Net& net, std::string& pin_name);
   void wrapNetToDatabase(Net& net);
   void wrapTimingLibrary();
-  void wrapTimingCellMap(std::vector<std::unique_ptr<idb::LibLibrary>>& lib_list);
-  void wrapTimingLibraryInfo(std::vector<std::unique_ptr<idb::LibLibrary>>& lib_list);
-  idb::LibLibrary* wrapReferenceLib(std::vector<std::unique_ptr<idb::LibLibrary>>& lib_list);
+  void wrapTimingCellMap(const std::vector<idb::LibLibrary*>& lib_list);
+  void wrapTimingLibraryInfo(const std::vector<idb::LibLibrary*>& lib_list);
+  idb::LibLibrary* wrapReferenceLib(const std::vector<idb::LibLibrary*>& lib_list);
   TimingCapacitiveUnit wrapTimingCapacitiveUnit(idb::LibLibrary* lib_library);
   TimingResistanceUnit wrapTimingResistanceUnit(idb::LibLibrary* lib_library);
   TimingTimeUnit wrapTimingTimeUnit(idb::LibLibrary* lib_library);
   void wrapTimingCell(idb::LibCell* lib_cell);
   void wrapTimingCellPort(TimingCell& timing_cell, idb::LibPort* lib_port);
-  void wrapTimingCellSequential(TimingCell& timing_cell, const idb::LibCell* lib_cell);
-  void wrapTimingCellPower(TimingCell& timing_cell, idb::LibCell* lib_cell);
-  void wrapTimingCellLeakagePower(TimingCell& timing_cell, idb::LibCell* lib_cell);
-  void wrapTimingCellPowerConditions(TimingCell& timing_cell);
-  TimingPowerArc wrapTimingPowerArc(idb::LibPowerArc* lib_power_arc);
-  TimingPowerArc wrapTimingPortPowerArc(idb::LibInternalPowerInfo* internal_power_info, std::string& port_name, idb::LibLibrary* lib_library);
-  void wrapTimingPowerArcTable(TimingPowerArc& timing_power_arc, idb::LibTableModel* power_table_model);
-  TimingLeakagePower wrapTimingLeakagePower(idb::LibLeakagePower* lib_leakage_power);
   LogicExpression wrapLogicExpression(const std::string& expression_string);
   void wrapLogicExpressionTermList(LogicExpression& logic_expression, LibertyExpr* liberty_expr);
   LogicOperationType wrapLogicOperationType(int32_t liberty_expr_op);
@@ -215,6 +205,9 @@ class STAInterface
 
  private:
   static STAInterface* _sta_interface_instance;
+
+  bool _initialized = false;
+  bool _timing_ready = false;
 
   STAInterface() = default;
   STAInterface(const STAInterface& other) = delete;

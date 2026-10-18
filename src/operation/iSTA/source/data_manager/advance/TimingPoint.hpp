@@ -34,6 +34,7 @@ struct TimingClockPointState
   std::map<AnalysisType, std::map<TransType, double>> predecessor_arc_delay_map;
   std::map<AnalysisType, std::map<TransType, TransType>> predecessor_trans_type_map;
   std::map<AnalysisType, std::map<TransType, std::string>> physical_predecessor_map;
+  std::map<AnalysisType, std::map<TransType, int32_t>> predecessor_vertex_map;
   std::map<AnalysisType, std::map<TransType, double>> physical_predecessor_arc_delay_map;
   std::map<AnalysisType, std::map<TransType, TransType>> physical_predecessor_trans_type_map;
 };
@@ -46,6 +47,7 @@ class TimingPoint
   // getter
   double get_arrival() const { return _arrival; }
   double get_required() const { return _required; }
+  double get_setup_check_time() const { return _setup_check_time; }
   double get_slack() const { return _slack; }
   double get_launch_time() const { return _launch_time; }
   int32_t get_level() const { return _level; }
@@ -82,6 +84,7 @@ class TimingPoint
   // setter
   void set_arrival(const double arrival) { _arrival = arrival; }
   void set_required(const double required) { _required = required; }
+  void set_setup_check_time(const double setup_check_time) { _setup_check_time = setup_check_time; }
   void set_slack(const double slack) { _slack = slack; }
   void set_launch_time(const double launch_time) { _launch_time = launch_time; }
   void set_level(const int32_t level) { _level = level; }
@@ -130,6 +133,7 @@ class TimingPoint
  private:
   double _arrival = -std::numeric_limits<double>::infinity();
   double _required = std::numeric_limits<double>::infinity();
+  double _setup_check_time = 0.0;
   double _slack = 0.0;
   double _launch_time = 0.0;
   int32_t _level = 0;

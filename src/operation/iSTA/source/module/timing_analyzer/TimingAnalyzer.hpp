@@ -72,6 +72,8 @@ class TimingAnalyzer
   void propagateRequired();
   double resolveRequiredTime();
   void seedEndPointRequired(double required_time);
+  TimingPathState* getWorstEndPointPathState(std::string& end_point, AnalysisType analysis_type);
+  double getEndPointSetupCheckTime(std::string& end_point);
   double getEndPointRequired(std::string& end_point, double default_required_time, AnalysisType analysis_type);
   double getEndPointRequired(std::string& end_point, double default_required_time, AnalysisType analysis_type, TransType data_trans_type, double data_slew);
   double getEndPointRequired(std::string& start_point, std::string& end_point, double default_required_time, AnalysisType analysis_type,
@@ -163,10 +165,8 @@ class TimingAnalyzer
   bool isTimingCheckEndPoint(std::string& end_point);
   TimingPath buildTimingPath(std::string& end_point, AnalysisType analysis_type, PathSourceType source_type, TimingPathState& end_path_state);
   void buildPathTrace(std::string& end_point, AnalysisType analysis_type, PathSourceType source_type, TimingPathState& end_path_state,
-                      std::vector<std::string>& path_pin_name_list, std::vector<TransType>& path_trans_type_list,
-                      std::vector<std::string>& path_state_tag_list);
-  std::vector<std::size_t> getPathArcIdxList(std::vector<std::string>& path_pin_name_list, std::vector<TransType>& path_trans_type_list,
-                                             std::vector<std::string>& path_state_tag_list, AnalysisType analysis_type, PathSourceType source_type);
+                      std::vector<std::string>& path_pin_name_list, std::vector<TransType>& path_trans_type_list, std::vector<std::string>& path_state_tag_list,
+                      std::vector<std::size_t>& path_arc_idx_list);
   void updatePathDelay(TimingPath& timing_path, Arc* arc, double arc_delay);
   void updateClockInfo(TimingPath& timing_path, AnalysisType analysis_type, TimingPathState& end_path_state);
   TimingPathPoint makeTimingPathPoint(std::string& pin_name, Arc* arc, AnalysisType analysis_type, PathSourceType source_type, TransType input_trans_type,

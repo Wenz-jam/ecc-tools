@@ -128,22 +128,16 @@ IdbRect IdbLayerShape::get_bounding_box()
   int32_t bounding_box_ll_y = INT_MAX;
   int32_t bounding_box_ur_x = INT_MIN;
   int32_t bounding_box_ur_y = INT_MIN;
-  bool found = false;
   for (IdbRect* rect : _rect_list)
 
   {
     if (rect == nullptr) {
       continue;
     }
-    found = true;
     bounding_box_ll_x = std::min(bounding_box_ll_x, rect->get_low_x());
     bounding_box_ll_y = std::min(bounding_box_ll_y, rect->get_low_y());
     bounding_box_ur_x = std::max(bounding_box_ur_x, rect->get_high_x());
     bounding_box_ur_y = std::max(bounding_box_ur_y, rect->get_high_y());
-  }
-
-  if (!found) {
-    return IdbRect(0, 0, 0, 0);
   }
 
   return IdbRect(bounding_box_ll_x, bounding_box_ll_y, bounding_box_ur_x, bounding_box_ur_y);

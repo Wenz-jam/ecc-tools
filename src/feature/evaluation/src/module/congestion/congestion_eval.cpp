@@ -227,7 +227,7 @@ string CongestionEval::evalEGR(string rt_dir_path, string egr_type, string outpu
           while (std::getline(file, line)) {
             std::istringstream iss(line);
             std::string value;
-            int col = 0;
+            size_t col = 0;
             while (std::getline(iss, value, ',')) {
               double num_value = std::stod(value);
               if (is_first_file) {
@@ -1187,7 +1187,7 @@ CongestionValue CongestionEval::calEGRCongestion(const std::string& save_path)
           while (std::getline(file, line)) {
             std::istringstream iss(line);
             std::string value;
-            int col = 0;
+            size_t col = 0;
             
             while (std::getline(iss, value, ',')) {
               double num_value = std::stod(value);

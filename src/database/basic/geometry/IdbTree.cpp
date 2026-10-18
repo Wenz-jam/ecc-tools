@@ -106,8 +106,7 @@ Tree& Tree ::operator=(const Tree& t)
   if (this == &t) {
     return *this;
   }
-  // Build the replacement node list first so the object stays valid
-  // if cloning throws; only then release the old nodes.
+  // Clone before releasing the current nodes.
   List new_nodes;
   if (!t._nodes.empty()) {
     clone(t._nodes.front(), new_nodes, 0);
@@ -256,7 +255,7 @@ bool Tree ::isLeaf(Iterator it)
 
 Iterator Tree ::Parent(Iterator it)
 {
-  if (it._tree == nullptr || it._lit == it._tree->_nodes.end() || *it._lit == nullptr || (*it._lit)->_parent == nullptr) {
+  if (it._tree == nullptr || it._lit == it._tree->_nodes.end() || *it._lit == nullptr) {
     return Iterator();
   }
   TreeNode p = *it;

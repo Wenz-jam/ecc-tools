@@ -1,15 +1,25 @@
 #include "GeometryEdit.h"
 #include "GeometryDelta.h"
+#include "GeometryLayerMetadata.h"
 #include "GeometrySpatialIndex.h"
 #include "GeometrySnapshotSchema.h"
 #include "GeometryStore.h"
+#include "GeometryThumbnail.h"
 #include "GeometryTilePyramid.h"
 #include "GeometryTypes.h"
 #include "ShapeId.h"
 #include "ShapeTable.h"
 
+#include <zlib.h>
+
+#ifdef NDEBUG
+#undef NDEBUG
+#endif
+#include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <map>
 #include <string>
@@ -798,9 +808,9 @@ void test_spatial_query_handles_full_range_viewport()
   GeometryStore store;
   const ShapeId id = store.add_rect(1, Rect32{0, 0, 10, 10}, OwnerRef{OwnerType::kDie});
 
-  const std::vector<ShapeId> hits = store.query_intersect(
-      1, Rect32{std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min(),
-                std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max()});
+  const std::vector<ShapeId> hits
+      = store.query_intersect(1, Rect32{std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min(),
+                                        std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max()});
 
   assert(hits.size() == 1);
   assert(hits[0] == id);
@@ -810,12 +820,119 @@ void test_snapshot_rejects_wrapped_payload_range()
 {
   ShapeTable table;
 
+  ShapeRecord original;
+  original.id = 7;
+  original.bbox = Rect32{1, 2, 3, 4};
+  table.insert(original, RectPayload{original.bbox});
+  const size_t payload_size = table.payloads().size();
+
   ShapeRecord record;
   record.id = 1;
   record.payload_offset = std::numeric_limits<uint64_t>::max();
   record.payload_size = 1;
 
   assert(!table.replace_snapshot({record}, {}));
+  assert(table.size() == 1 && table.find(7) != nullptr);
+  assert(table.find(7)->bbox.lx == 1);
+  assert(table.payloads().size() == payload_size);
+}
+
+void test_geometry_indices_handle_extreme_tile_coordinates()
+{
+  GeometryStoreOptions options;
+  options.spatial_index.tile_size = 1;
+  options.lod_pyramid.base_tile_size = 1;
+  options.lod_pyramid.lod_level_count = 1;
+  GeometryStore store(options);
+  const int32_t min = std::numeric_limits<int32_t>::min();
+  const int32_t max = std::numeric_limits<int32_t>::max();
+  const Rect32 full_range{min, min, max, max};
+  const Rect32 max_point{max, max, max, max};
+  const Rect32 min_point{min, min, min, min};
+
+  const ShapeId large = store.add_rect(1, full_range, OwnerRef{OwnerType::kDie});
+  const ShapeId high = store.add_rect(1, max_point, OwnerRef{OwnerType::kCore});
+  const ShapeId low = store.add_rect(1, min_point, OwnerRef{OwnerType::kCore});
+  store.add_rect(2, max_point, OwnerRef{OwnerType::kCore});
+  store.rebuild_lod_tiles();
+
+  assert((store.query_intersect(1, full_range) == std::vector<ShapeId>{large, high, low}));
+  assert((store.query_intersect(1, max_point) == std::vector<ShapeId>{large, high}));
+  assert((store.query_intersect(1, min_point) == std::vector<ShapeId>{large, low}));
+  assert(store.query_lod_tiles(0, 1, full_range).size() == 3);
+  assert(store.query_lod_tiles(0, 1, max_point).size() == 2);
+
+  assert(store.update_rect(high, Rect32{0, 0, 0, 0}));
+  store.rebuild_dirty_lod_tiles();
+  assert((store.query_intersect(1, max_point) == std::vector<ShapeId>{large}));
+  assert(store.query_lod_tiles(0, 1, max_point).size() == 1);
+  assert(store.delete_shape(large));
+  assert(store.delete_shape(low));
+  store.rebuild_dirty_lod_tiles();
+  assert((store.query_intersect(1, full_range) == std::vector<ShapeId>{high}));
+  assert(store.query_lod_tiles(0, 1, full_range).size() == 1);
+}
+
+void test_geometry_query_fallback_preserves_results_and_order()
+{
+  GeometryStoreOptions options;
+  options.spatial_index.tile_size = 4;
+  options.lod_pyramid.base_tile_size = 4;
+  options.lod_pyramid.lod_level_count = 1;
+  options.lod_pyramid.max_tile_refs_per_shape = 4;
+  GeometryStore store(options);
+  for (int32_t x = -8; x <= 8; x += 4) {
+    for (int32_t y = -8; y <= 8; y += 4) {
+      store.add_rect(1, Rect32{x, y, x, y}, OwnerRef{OwnerType::kCore});
+    }
+  }
+  // The large summary and a regular tile share the same sorting key.
+  store.add_rect(1, Rect32{-8, -8, 8, 8}, OwnerRef{OwnerType::kDie});
+  store.add_rect(2, Rect32{-8, -8, 8, 8}, OwnerRef{OwnerType::kDie});
+  const Rect32 local{-16, -16, 16, 16};
+  const Rect32 wide{-100000, -100000, 100000, 100000};
+  assert(store.query_intersect(1, local) == store.query_intersect(1, wide));
+  store.rebuild_lod_tiles();
+  const auto direct = store.query_lod_tiles(0, 1, local);
+  const auto fallback = store.query_lod_tiles(0, 1, wide);
+  assert(direct.size() == fallback.size());
+  for (size_t i = 0; i < direct.size(); ++i) {
+    assert(direct[i].lod_level == fallback[i].lod_level);
+    assert(direct[i].layer_id == fallback[i].layer_id);
+    assert(direct[i].tile_x == fallback[i].tile_x);
+    assert(direct[i].tile_y == fallback[i].tile_y);
+    assert(direct[i].shape_count == fallback[i].shape_count);
+    assert(direct[i].bbox.lx == fallback[i].bbox.lx && direct[i].bbox.ly == fallback[i].bbox.ly);
+    assert(direct[i].bbox.hx == fallback[i].bbox.hx && direct[i].bbox.hy == fallback[i].bbox.hy);
+  }
+}
+
+void test_geometry_queries_match_exact_intersections()
+{
+  GeometryStoreOptions options;
+  options.spatial_index.tile_size = 8;
+  options.spatial_index.max_tiles_per_shape = 4;
+  GeometryStore store(options);
+  for (int32_t i = 0; i < 100; ++i) {
+    const int32_t x = (i * 37) % 201 - 100;
+    const int32_t y = (i * 53) % 201 - 100;
+    store.add_rect(i % 3, Rect32{x, y, x + i % 25, y + i % 19}, OwnerRef{OwnerType::kCore});
+  }
+  for (int32_t x = -120; x < 120; x += 13) {
+    for (int32_t y = -120; y < 120; y += 17) {
+      const Rect32 viewport{x, y, x + 40, y + 32};
+      for (LayerId layer = 0; layer < 3; ++layer) {
+        std::vector<ShapeId> expected;
+        for (const ShapeRecord& record : store.records()) {
+          if (record.layer_id == layer && intersects(record.bbox, viewport)) {
+            expected.push_back(record.id);
+          }
+        }
+        std::sort(expected.begin(), expected.end());
+        assert(store.query_intersect(layer, viewport) == expected);
+      }
+    }
+  }
 }
 
 void test_add_rect_stores_only_low_16_flag_bits()
@@ -858,12 +975,110 @@ void test_lod_query_handles_full_range_viewport_at_high_lod()
 
   // lod 40 with base tile 4096 would shift-overflow tile_size and then
   // iterate ~2^64 tiles without the saturation + populated-scan fallback.
-  const std::vector<GeometryTileSummary> tiles = store.query_lod_tiles(
-      40, 1, Rect32{std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min(),
-                    std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max()});
+  const std::vector<GeometryTileSummary> tiles
+      = store.query_lod_tiles(40, 1,
+                              Rect32{std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::min(),
+                                     std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::max()});
 
   assert(!tiles.empty());
   assert(tiles[0].shape_count == 1);
+}
+
+uint32_t read_be32(const std::vector<uint8_t>& bytes, size_t offset)
+{
+  return (static_cast<uint32_t>(bytes[offset]) << 24) | (static_cast<uint32_t>(bytes[offset + 1]) << 16)
+         | (static_cast<uint32_t>(bytes[offset + 2]) << 8) | static_cast<uint32_t>(bytes[offset + 3]);
+}
+
+void test_render_thumbnail_png_writes_valid_png()
+{
+  GeometryStore store;
+  store.add_rect(1, Rect32{0, 0, 800, 400}, OwnerRef{OwnerType::kDie});
+  store.add_rect(2, Rect32{100, 100, 300, 200}, OwnerRef{OwnerType::kCore});
+  store.add_rect(2, Rect32{400, 50, 700, 350}, OwnerRef{OwnerType::kCore});
+
+  LinePayload horizontal;
+  horizontal.begin = Point32{0, 390};
+  horizontal.end = Point32{800, 390};
+  horizontal.width = 10;
+  store.add_line(3, horizontal, OwnerRef{OwnerType::kNetWireSegment});
+
+  LinePayload vertical;
+  vertical.begin = Point32{390, 0};
+  vertical.end = Point32{390, 400};
+  vertical.width = 10;
+  store.add_line(3, vertical, OwnerRef{OwnerType::kNetWireSegment});
+
+  PointPayload point;
+  point.point = Point32{200, 300};
+  store.add_point(4, point, OwnerRef{OwnerType::kPinPortShape});
+
+  // Layer without metadata (structural background, drawn underneath).
+  store.add_rect(9, Rect32{0, 0, 800, 400}, OwnerRef{OwnerType::kDie});
+
+  std::vector<GeometryLayerMetadata> layers(3);
+  layers[0].layer_id = 1;
+  layers[0].name = "METAL1";
+  layers[1].layer_id = 2;
+  layers[1].name = "M2";
+  layers[2].layer_id = 3;
+  layers[2].name = "VIA1";
+  layers[2].type = "via";
+
+  const std::filesystem::path png_path = std::filesystem::temp_directory_path() / "geometry_thumbnail_test.png";
+  assert(render_thumbnail_png(store, layers, png_path, 256, 128));
+
+  std::ifstream in(png_path, std::ios::binary);
+  const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  in.close();
+  assert(bytes.size() > 8 + 12 + 13);
+
+  static constexpr uint8_t kSignature[8] = {0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a};
+  for (size_t i = 0; i < 8; ++i) {
+    assert(bytes[i] == kSignature[i]);
+  }
+
+  assert(read_be32(bytes, 8) == 13);
+  assert(bytes[12] == 'I' && bytes[13] == 'H' && bytes[14] == 'D' && bytes[15] == 'R');
+  assert(read_be32(bytes, 16) == 256);
+  assert(read_be32(bytes, 20) == 128);
+  assert(bytes[24] == 8);
+  assert(bytes[25] == 2);
+
+  std::vector<uint8_t> compressed;
+  size_t offset = 8;
+  while (offset + 12 <= bytes.size()) {
+    const uint32_t length = read_be32(bytes, offset);
+    const bool is_idat = bytes[offset + 4] == 'I' && bytes[offset + 5] == 'D' && bytes[offset + 6] == 'A'
+                         && bytes[offset + 7] == 'T';
+    if (is_idat) {
+      compressed.insert(compressed.end(), bytes.begin() + offset + 8, bytes.begin() + offset + 8 + length);
+    }
+    offset += 12 + length;
+  }
+  assert(!compressed.empty());
+
+  std::vector<uint8_t> raw(128 * (1 + 256 * 3));
+  uLongf raw_size = raw.size();
+  assert(uncompress(raw.data(), &raw_size, compressed.data(), compressed.size()) == Z_OK);
+  assert(raw_size == raw.size());
+
+  bool has_non_white_pixel = false;
+  for (size_t row = 0; row < 128 && !has_non_white_pixel; ++row) {
+    const size_t row_begin = row * (1 + 256 * 3);
+    for (size_t i = 1; i < 1 + 256 * 3; ++i) {
+      if (raw[row_begin + i] != 255) {
+        has_non_white_pixel = true;
+        break;
+      }
+    }
+  }
+  assert(has_non_white_pixel);
+
+  std::filesystem::remove(png_path);
+
+  GeometryStore empty_store;
+  assert(!render_thumbnail_png(empty_store, {}, png_path, 64, 64));
 }
 
 }  // namespace
@@ -900,8 +1115,12 @@ int main()
   test_add_line_with_extreme_width_saturates_bbox();
   test_spatial_query_handles_full_range_viewport();
   test_snapshot_rejects_wrapped_payload_range();
+  test_geometry_indices_handle_extreme_tile_coordinates();
+  test_geometry_query_fallback_preserves_results_and_order();
+  test_geometry_queries_match_exact_intersections();
   test_add_rect_stores_only_low_16_flag_bits();
   test_delete_shape_saturates_version_at_max();
   test_lod_query_handles_full_range_viewport_at_high_lod();
+  test_render_thumbnail_png_writes_valid_png();
   return 0;
 }

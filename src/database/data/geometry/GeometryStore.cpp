@@ -195,8 +195,7 @@ void GeometryStore::append_delta(GeometryDeltaOp op, ShapeId shape_id, ShapeVers
 ShapeId GeometryStore::add_rect(LayerId layer_id, Rect32 rect, OwnerRef owner, uint32_t flags)
 {
   rect = normalize(rect);
-  // Only the low 16 bits are stored; callers must keep flags within range.
-  const uint16_t record_flags = static_cast<uint16_t>(flags & 0xFFFFu);
+  const uint16_t record_flags = static_cast<uint16_t>(flags);
   const AllocatedShapeIdentity identity =
       allocate_shape_identity(owner, layer_id, ShapeKind::kRect, record_flags, rect);
   const uint32_t owner_index = static_cast<uint32_t>(_owners.size());
@@ -223,8 +222,7 @@ ShapeId GeometryStore::add_rect(LayerId layer_id, Rect32 rect, OwnerRef owner, u
 ShapeId GeometryStore::add_point(LayerId layer_id, PointPayload point, OwnerRef owner, uint32_t flags)
 {
   const Rect32 bbox{point.point.x, point.point.y, point.point.x, point.point.y};
-  // Only the low 16 bits are stored; callers must keep flags within range.
-  const uint16_t record_flags = static_cast<uint16_t>(flags & 0xFFFFu);
+  const uint16_t record_flags = static_cast<uint16_t>(flags);
   const AllocatedShapeIdentity identity =
       allocate_shape_identity(owner, layer_id, ShapeKind::kPoint, record_flags, bbox);
   const uint32_t owner_index = static_cast<uint32_t>(_owners.size());
@@ -256,8 +254,7 @@ ShapeId GeometryStore::add_line(LayerId layer_id, LinePayload line, OwnerRef own
   const int64_t max_x = std::max<int64_t>(line.begin.x, line.end.x) + half_width;
   const int64_t max_y = std::max<int64_t>(line.begin.y, line.end.y) + half_width;
   const Rect32 bbox{saturate_to_int32(min_x), saturate_to_int32(min_y), saturate_to_int32(max_x), saturate_to_int32(max_y)};
-  // Only the low 16 bits are stored; callers must keep flags within range.
-  const uint16_t record_flags = static_cast<uint16_t>(flags & 0xFFFFu);
+  const uint16_t record_flags = static_cast<uint16_t>(flags);
   const AllocatedShapeIdentity identity =
       allocate_shape_identity(owner, layer_id, ShapeKind::kLine, record_flags, bbox);
   const uint32_t owner_index = static_cast<uint32_t>(_owners.size());

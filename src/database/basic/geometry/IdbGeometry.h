@@ -119,20 +119,9 @@ class IdbRect
   int32_t get_high_x() const { return _hx; }
   int32_t get_high_y() const { return _hy; }
   IdbCoordinate<int32_t> get_high_point() const { return IdbCoordinate<int32_t>(_hx, _hy); }
-  IdbCoordinate<int32_t> get_middle_point() const
-  {
-    return IdbCoordinate<int32_t>(get_middle_point_x(), get_middle_point_y());
-  }
-  int32_t get_middle_point_x() const
-  {
-    const int64_t mid = static_cast<int64_t>(_lx) + (static_cast<int64_t>(_hx) - static_cast<int64_t>(_lx)) / 2;
-    return static_cast<int32_t>(mid);
-  }
-  int32_t get_middle_point_y() const
-  {
-    const int64_t mid = static_cast<int64_t>(_ly) + (static_cast<int64_t>(_hy) - static_cast<int64_t>(_ly)) / 2;
-    return static_cast<int32_t>(mid);
-  }
+  IdbCoordinate<int32_t> get_middle_point() const { return IdbCoordinate<int32_t>(get_middle_point_x(), get_middle_point_y()); }
+  int32_t get_middle_point_x() const { return static_cast<int32_t>((static_cast<int64_t>(_lx) + _hx) / 2); }
+  int32_t get_middle_point_y() const { return static_cast<int32_t>((static_cast<int64_t>(_ly) + _hy) / 2); }
 
   int32_t get_width() const
   {

@@ -24,7 +24,6 @@
 #include "IdbSpecialNet.h"
 #include "feature_manager.h"
 #include <idm.h>
-#include "view_json_io.h"
 
 #include <optional>
 #include <utility>
@@ -136,9 +135,12 @@ bool initLvsVerilog(const std::string& verilog_path, const std::string& top_modu
   return dmInst->addVerilog(verilog_path, top_module);
 }
 
-bool initLib(const std::vector<std::string>& lib_paths)
+bool initLib(const std::vector<std::string>& lib_paths, std::optional<int32_t> thread_number)
 {
   dmInst->get_config().set_lib_paths(lib_paths);
+  if (thread_number.has_value()) {
+    dmInst->get_config().set_thread_number(*thread_number);
+  }
   return dmInst->readLib(lib_paths);
 }
 
@@ -177,9 +179,9 @@ bool saveNetList(const std::string& netlist_path, std::set<std::string> exclude_
   return true;
 }
 
-bool saveGDSII(const std::string& gds_name, bool is_hardened /* = false */)
+bool saveGDSII(const std::string& gds_name, const std::string& layer_map_path)
 {
-  return dmInst->saveGDSII(gds_name, is_hardened);
+  return dmInst->saveGDSII(gds_name, layer_map_path);
 }
 
 bool saveJson(const std::string& path)
@@ -189,18 +191,7 @@ bool saveJson(const std::string& path)
   return dmInst->saveJSON(path, options);
 }
 
-bool saveViewJson(const std::string& output_dir, const std::string& json_format, bool compress)
-{
-  idb::ViewJsonWriteOptions options;
-  if (!idb::parseViewJsonFormat(json_format, options.format)) {
-    ECCLOG.warn(ecc::Loc::current(), "Save view json failed: unsupported json_format `", json_format, "`, expected `pretty` or `compact`.");
-    return false;
-  }
-  options.compress = compress;
-  return dmInst->saveViewJson(output_dir, options);
-}
-
-bool saveGeometrySnapshot(const std::string& output_dir, bool include_drc)
+bool saveGeometrySnapshot(const std::string& output_dir, bool include_drc, const std::string& thumbnail_path)
 {
   idb::IdbDesign* design = dmInst->get_idb_design();
   idb::IdbLayout* layout = dmInst->get_idb_layout();
@@ -237,7 +228,7 @@ bool saveGeometrySnapshot(const std::string& output_dir, bool include_drc)
     }
   }
 
-  return ecc::geometry::export_geometry_snapshot(*design, *layout, output_dir, std::move(drc)).ok;
+  return ecc::geometry::export_geometry_snapshot(*design, *layout, output_dir, std::move(drc), thumbnail_path).ok;
 }
 
 bool placeInstance(const std::string& inst_name, int llx, int lly, const std::string& orient, const std::string& cellmaster,
@@ -308,11 +299,6 @@ bool resetGeometrySession()
 {
   geometry_edit_session().reset();
   return true;
-}
-
-bool applyViewJsonEdits(const std::string& edits_path, bool compress)
-{
-  return dmInst->applyViewJsonEdits(edits_path, compress);
 }
 
 bool saveData(const std::string& path)

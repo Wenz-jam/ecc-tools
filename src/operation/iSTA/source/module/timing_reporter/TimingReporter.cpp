@@ -728,8 +728,12 @@ void TimingReporter::outputTimingPathJson(std::ofstream* json_file, TimingPath& 
   outputJsonNumber(json_file, timing_path.get_required_time());
   (*json_file) << ",\"cppr_ns\":";
   outputJsonNumber(json_file, timing_path.get_clock_reconvergence_pessimism());
+  (*json_file) << ",\"launch_clock_source_latency_ns\":";
+  outputJsonNumber(json_file, timing_path.get_launch_clock_source_latency());
   (*json_file) << ",\"launch_clock_network_delay_ns\":";
   outputJsonNumber(json_file, timing_path.get_launch_clock_network_delay());
+  (*json_file) << ",\"capture_clock_source_latency_ns\":";
+  outputJsonNumber(json_file, timing_path.get_capture_clock_source_latency());
   (*json_file) << ",\"capture_clock_network_delay_ns\":";
   outputJsonNumber(json_file, timing_path.get_capture_clock_network_delay());
   (*json_file) << ",\"stages\":[";
@@ -968,7 +972,7 @@ void TimingReporter::outputTimingPathHeader(std::ofstream* report_file, TimingPa
   outputStartEndPoint(report_file, "Startpoint", getStartPointText(timing_path));
   outputStartEndPoint(report_file, "Endpoint", getEndPointText(timing_path));
   if (isRegisterStartPoint(timing_path.get_start_point()) && isRegisterEndPoint(timing_path.get_end_point())) {
-    (*report_file) << "  Last common pin: " << getPTPinName(timing_path.get_last_common_pin()) << "\n";
+    (*report_file) << "  Last common pin: " << getReportPinName(timing_path.get_last_common_pin()) << "\n";
   }
   (*report_file) << "  Path Group: " << path_group_name << "\n";
   (*report_file) << "  Path Type: " << GetDelayTypeName()(delay_type) << "\n\n";
@@ -1012,11 +1016,11 @@ std::string TimingReporter::getStartPointText(TimingPath& timing_path)
   Database& database = STADM.getDatabase();
   Pin& start_pin = database.get_pin_map()[timing_path.get_start_point()];
   std::string clock_name = getClockName(timing_path);
-  std::string start_point = getPTPinName(timing_path.get_start_point());
+  std::string start_point = getReportPinName(timing_path.get_start_point());
   if (!start_pin.get_is_port()) {
     Instance& start_instance = database.get_instance_map()[start_pin.get_instance_name()];
     if (start_instance.get_is_sequential() && isInternalStartPoint(timing_path)) {
-      start_point = getPTPinName(start_instance.get_clock_pin_name());
+      start_point = getReportPinName(start_instance.get_clock_pin_name());
       return STAUTIL.getString(start_point, " (internal path startpoint clocked by ", clock_name, ")");
     }
     start_point = start_pin.get_instance_name();
@@ -1095,7 +1099,7 @@ std::string TimingReporter::getEndPointText(TimingPath& timing_path)
   Database& database = STADM.getDatabase();
   Pin& end_pin = database.get_pin_map()[timing_path.get_end_point()];
   std::string clock_name = timing_path.get_capture_clock_name();
-  std::string end_point = getPTPinName(timing_path.get_end_point());
+  std::string end_point = getReportPinName(timing_path.get_end_point());
   if (!end_pin.get_is_port()) {
     end_point = end_pin.get_instance_name();
   }
@@ -1212,14 +1216,19 @@ void TimingReporter::outputLaunchClockInfo(std::ofstream* report_file, TimingPat
   Database& database = STADM.getDatabase();
   std::string clock_name = getClockName(timing_path);
   double launch_time = timing_path.get_launch_time();
+  double launch_clock_source_latency = timing_path.get_launch_clock_source_latency();
   double launch_clock_network_delay = timing_path.get_launch_clock_network_delay();
-  double launch_clock_edge = launch_time - launch_clock_network_delay;
+  double launch_clock_edge = launch_time - launch_clock_source_latency - launch_clock_network_delay;
   outputTimingLine(report_file, STAUTIL.getString("clock ", clock_name, " (", getLaunchClockEdgeText(timing_path, delay_type), " edge)"), launch_clock_edge,
                    launch_clock_edge, true, "", label_width);
-  if (isClockSourceStartPoint(timing_path.get_start_point())) {
-    outputTimingLine(report_file, "clock source latency", 0.0, launch_time, true, "", label_width);
-  } else {
-    outputTimingLine(report_file, getClockNetworkDelayLabel(timing_path), launch_clock_network_delay, launch_time, true, "", label_width);
+  double clock_path = launch_clock_edge;
+  if (std::fabs(launch_clock_source_latency) > STA_ERROR || isClockSourceStartPoint(timing_path.get_start_point())) {
+    clock_path += launch_clock_source_latency;
+    outputTimingLine(report_file, "clock source latency", launch_clock_source_latency, clock_path, true, "", label_width);
+  }
+  if (!isClockSourceStartPoint(timing_path.get_start_point())) {
+    clock_path += launch_clock_network_delay;
+    outputTimingLine(report_file, getClockNetworkDelayLabel(timing_path), launch_clock_network_delay, clock_path, true, "", label_width);
   }
 
   std::string start_clock_pin = getStartClockPin(timing_path);
@@ -1387,28 +1396,28 @@ std::string TimingReporter::getPointLabel(TimingPathPoint& path_point)
   Pin& pin = database.get_pin_map()[path_point.get_pin_name()];
   if (pin.get_is_port()) {
     if (pin.get_direction() == PinDirection::kInput) {
-      return STAUTIL.getString(getPTPinName(path_point.get_pin_name()), " (in)");
+      return STAUTIL.getString(getReportPinName(path_point.get_pin_name()), " (in)");
     }
     if (pin.get_direction() == PinDirection::kOutput) {
-      return STAUTIL.getString(getPTPinName(path_point.get_pin_name()), " (out)");
+      return STAUTIL.getString(getReportPinName(path_point.get_pin_name()), " (out)");
     }
   }
-  std::string point_label = getPTPinName(path_point.get_pin_name());
-  std::string cell_name = getPTCellName(path_point);
+  std::string point_label = getReportPinName(path_point.get_pin_name());
+  std::string cell_name = getReportCellName(path_point);
   if (!cell_name.empty()) {
     point_label = STAUTIL.getString(point_label, " (", cell_name, ")");
   }
   return point_label;
 }
 
-std::string TimingReporter::getPTPinName(std::string& pin_name)
+std::string TimingReporter::getReportPinName(std::string& pin_name)
 {
-  std::string pt_pin_name = pin_name;
-  std::replace(pt_pin_name.begin(), pt_pin_name.end(), ':', '/');
-  return pt_pin_name;
+  std::string report_pin_name = pin_name;
+  std::replace(report_pin_name.begin(), report_pin_name.end(), ':', '/');
+  return report_pin_name;
 }
 
-std::string TimingReporter::getPTCellName(TimingPathPoint& path_point)
+std::string TimingReporter::getReportCellName(TimingPathPoint& path_point)
 {
   return path_point.get_cell_name();
 }
@@ -1418,13 +1427,20 @@ void TimingReporter::outputRequiredClockInfo(std::ofstream* report_file, TimingP
   Database& database = STADM.getDatabase();
   std::string clock_name = timing_path.get_capture_clock_name();
   double capture_time = timing_path.get_capture_time();
-  double clock_edge = capture_time - timing_path.get_capture_clock_network_delay() - timing_path.get_clock_reconvergence_pessimism();
+  double capture_clock_source_latency = timing_path.get_capture_clock_source_latency();
+  double clock_edge = capture_time - capture_clock_source_latency - timing_path.get_capture_clock_network_delay()
+                      - timing_path.get_clock_reconvergence_pessimism();
   double capture_clock_network_delay = timing_path.get_capture_clock_network_delay();
   outputTimingLine(report_file,
                    STAUTIL.getString("clock ", clock_name, timing_path.get_capture_clock_transition() == TransType::kFall ? " (fall edge)" : " (rise edge)"),
                    clock_edge, clock_edge, true, "", label_width);
-  outputTimingLine(report_file, getClockNetworkDelayLabel(timing_path), capture_clock_network_delay, clock_edge + capture_clock_network_delay, true, "",
-                   label_width);
+  double clock_path = clock_edge;
+  if (std::fabs(capture_clock_source_latency) > STA_ERROR) {
+    clock_path += capture_clock_source_latency;
+    outputTimingLine(report_file, "clock source latency", capture_clock_source_latency, clock_path, true, "", label_width);
+  }
+  clock_path += capture_clock_network_delay;
+  outputTimingLine(report_file, getClockNetworkDelayLabel(timing_path), capture_clock_network_delay, clock_path, true, "", label_width);
   outputTimingLine(report_file, "clock reconvergence pessimism", timing_path.get_clock_reconvergence_pessimism(), capture_time, true, "", label_width);
   if (!timing_path.get_capture_clock_pin().empty()) {
     outputTimingLine(report_file, getPinLabel(timing_path.get_capture_clock_pin()), 0.0, capture_time, false,
@@ -1498,7 +1514,7 @@ double TimingReporter::getOutputDelay(TimingPath& timing_path, DelayType delay_t
 std::string TimingReporter::getPinLabel(std::string& pin_name)
 {
   Database& database = STADM.getDatabase();
-  std::string point_label = getPTPinName(pin_name);
+  std::string point_label = getReportPinName(pin_name);
   Pin& pin = database.get_pin_map()[pin_name];
   if (!pin.get_instance_name().empty() && database.get_instance_map().count(pin.get_instance_name()) > 0) {
     point_label = STAUTIL.getString(point_label, " (", database.get_instance_map()[pin.get_instance_name()].get_cell_name(), ")");
