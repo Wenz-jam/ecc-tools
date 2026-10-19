@@ -1,5 +1,6 @@
 add_library(ista_interface
     ${ISTA_INTERFACE}/STAInterface.cpp
+    ${ISTA_INTERFACE}/HierarchyImport.cpp
     ${ISTA_INTERFACE}/LibertyExportAdapter.cpp
     ${ISTA_INTERFACE}/TimingExportAdapter.cpp
 )
@@ -9,6 +10,8 @@ target_link_libraries(ista_interface
     ista_source
     ista_sdc_command
     idm
+    verilog_builder
+    verilog
     liberty
     spef
 )
