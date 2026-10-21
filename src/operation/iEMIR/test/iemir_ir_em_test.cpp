@@ -164,6 +164,97 @@ bool checkRepeatedIRLoads(const std::filesystem::path& directory)
   return passed;
 }
 
+bool checkViaElectricalAndEMRules()
+{
+  auto& db = EMIRDM.getDatabase();
+  db.set_micron_dbu(1000);
+  db.get_power_net_map().clear();
+  db.get_power_graph_map().clear();
+  db.get_em_tech().clear();
+  iemir::EMViaRule rule;
+  rule.set_name("VIA2");
+  rule.set_resistance_per_cut(12.0);
+  rule.set_em_limit_ma(1.0);
+  db.get_em_tech().get_via_rule_map()["VIA2"] = rule;
+  // A misleading master name must not override its actual cut layer.
+  rule.set_name("VIA1");
+  rule.set_em_limit_ma(10.0);
+  db.get_em_tech().get_via_rule_map()["VIA1"] = rule;
+  iemir::EMMetalRule metal;
+  metal.set_name("MET1");
+  metal.set_resistance_per_square(1.0);
+  metal.set_em_limit_ma_per_um(1.0);
+  db.get_em_tech().get_metal_rule_map()["MET1"] = metal;
+  bool ok = true;
+  for (bool explicit_parasitics : {true, false}) {
+    iemir::PowerNet net;
+    net.set_net_name("VDD");
+    net.set_type(iemir::PowerNetType::kPower);
+    net.set_has_explicit_parasitics(explicit_parasitics);
+    iemir::PowerWireSegment wire;
+    wire.set_layer_idx(1);
+    wire.set_layer_name("MET1");
+    wire.set_second_x(1000);
+    wire.set_width(1000);
+    if (explicit_parasitics) wire.set_resistance(1.0);
+    net.get_wire_segment_list().push_back(wire);
+    iemir::PowerVia via;
+    via.set_via_name("VIA1_CUSTOM");
+    via.set_cut_layer_name("VIA2");
+    via.set_bottom_layer_idx(1);
+    via.set_top_layer_idx(2);
+    via.set_cut_num(2);
+    via.set_resistance(8.0);
+    net.get_via_list().push_back(via);
+    iemir::PowerPin pin;
+    pin.set_layer_idx(1);
+    pin.set_is_source(true);
+    net.get_pin_list().push_back(pin);
+    db.get_power_net_map()["VDD"] = net;
+    iemir::GraphBuilder::initInst();
+    EMIRGB.build();
+    iemir::GraphBuilder::destroyInst();
+    auto& graph = db.get_power_graph_map().at("VDD");
+    graph.get_edge_list().reserve(graph.get_edge_list().size() + 1);
+    auto edge_it = std::find_if(graph.get_edge_list().begin(), graph.get_edge_list().end(),
+        [](auto& edge) { return edge.get_type() == iemir::PowerEdgeType::kVia; });
+    if (edge_it == graph.get_edge_list().end()) { ok = false; continue; }
+    auto& edge = *edge_it;
+    graph.get_node_list()[edge.get_first_node_id()].set_voltage(1.0);
+    graph.get_node_list()[edge.get_second_node_id()].set_voltage(0.996);
+    auto legacy = edge;
+    legacy.set_edge_id(graph.get_edge_list().size());
+    legacy.set_cut_layer_name("");
+    graph.get_edge_list().push_back(legacy);
+    iemir::EMAnalyzer::initInst();
+    EMIREA.analyze();
+    iemir::EMAnalyzer::destroyInst();
+    const double expected_r = explicit_parasitics ? 8.0 : 6.0;
+    const double expected_current = 0.004 / expected_r;
+    const bool passed = edge.get_resistance() == expected_r && edge.get_em_rule_name() == "VIA2"
+        && std::abs(edge.get_current() - expected_current) < 1.e-12
+        && std::abs(edge.get_em_limit() - 0.002) < 1.e-12
+        && std::abs(edge.get_em_ratio_percent() - 100.0 * expected_current / 0.002) < 1.e-9;
+    if (!passed) std::cerr << "Via physical-rule mismatch: explicit=" << explicit_parasitics
+        << " R=" << edge.get_resistance() << " rule=" << edge.get_em_rule_name()
+        << " current=" << edge.get_current() << " limit=" << edge.get_em_limit() << "\n";
+    const auto& legacy_result = graph.get_edge_list().back().get_em_evaluation();
+    ok = passed && legacy_result.status == iemir::EMEvalStatus::kEvaluated
+        && std::abs(graph.get_edge_list().back().get_em_limit() - 0.020) < 1.e-12 && ok;
+    // Known cut-layer identity is authoritative even if a master-name fallback exists.
+    edge.set_cut_layer_name("VIA1_CUSTOM");
+    iemir::EMAnalyzer::initInst();
+    EMIREA.analyze();
+    iemir::EMAnalyzer::destroyInst();
+    ok = edge.get_em_evaluation().status == iemir::EMEvalStatus::kNoRule && !edge.get_has_em_limit()
+        && graph.get_edge_list().back().get_em_evaluation().status == iemir::EMEvalStatus::kEvaluated && ok;
+  }
+  db.get_power_net_map().clear();
+  db.get_power_graph_map().clear();
+  db.get_em_tech().clear();
+  return ok;
+}
+
 bool checkShiftedViaGraph(const std::filesystem::path& directory)
 {
   iemir::PowerNet power_net;
@@ -657,7 +748,7 @@ int main(int argc, char* argv[])
   EMIRDM.getConfig().ia_temp_directory_path = report_directory_path.string() + "/";
   EMIRDM.getConfig().gb_temp_directory_path = report_directory_path.string() + "/";
 
-  bool is_pass = checkTinyEMValues() && checkEMStatesAndReports(report_directory_path) && checkInstancePowerReader(report_directory_path) && checkTechnologyResistanceFormula()
+  bool is_pass = checkViaElectricalAndEMRules() && checkTinyEMValues() && checkEMStatesAndReports(report_directory_path) && checkInstancePowerReader(report_directory_path) && checkTechnologyResistanceFormula()
                  && checkResistanceNetworkReader(report_directory_path)
                  && checkShiftedViaGraph(report_directory_path) && checkPointSourceDoesNotShortNearbySegment() && checkImportedPinAreaInjection()
                  && checkViaUsesConnectedResistorJunction() && checkSubMicroampLoad() && checkRepeatedIRLoads(report_directory_path);

@@ -35,6 +35,7 @@ class PowerEdge
   int32_t get_layer_idx() { return _layer_idx; }
   std::string& get_layer_name() { return _layer_name; }
   std::string& get_via_name() { return _via_name; }
+  std::string& get_cut_layer_name() { return _cut_layer_name; }
   int32_t get_width() { return _width; }
   int32_t get_length() { return _length; }
   int32_t get_cut_num() { return _cut_num; }
@@ -61,6 +62,7 @@ class PowerEdge
   void set_layer_idx(int32_t layer_idx) { _layer_idx = layer_idx; }
   void set_layer_name(const std::string& layer_name) { _layer_name = layer_name; }
   void set_via_name(const std::string& via_name) { _via_name = via_name; }
+  void set_cut_layer_name(const std::string& name) { _cut_layer_name = name; }
   void set_width(int32_t width) { _width = width; }
   void set_length(int32_t length) { _length = length; }
   void set_cut_num(int32_t cut_num) { _cut_num = cut_num; }
@@ -89,6 +91,7 @@ class PowerEdge
   int32_t _layer_idx = -1;
   std::string _layer_name;
   std::string _via_name;
+  std::string _cut_layer_name;
   int32_t _width = 0;
   int32_t _length = 0;
   int32_t _cut_num = 0;

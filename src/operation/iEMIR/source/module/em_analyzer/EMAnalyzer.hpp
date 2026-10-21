@@ -51,6 +51,7 @@ class EMAnalyzer
   };
   std::unordered_map<std::string, ResolvedRule<EMMetalRule>> _metal_rules;
   std::unordered_map<std::string, ResolvedRule<EMViaRule>> _via_rules;
+  std::unordered_map<std::string, ResolvedRule<EMViaRule>> _via_cut_rules;
   // Rebuilt on each analyze(): no pointers survive a rule reload.
   void prepareRules();
   // function
@@ -62,7 +63,7 @@ class EMAnalyzer
   double getDBUToMicronRatio();
   double getMicronValue(int32_t dbu_value);
   EMMetalRule* getMetalRule(const std::string& layer_name);
-  EMViaRule* getViaRule(const std::string& via_name);
+  EMViaRule* getViaRule(const std::string& via_name, bool allow_name_fallback = true);
   std::string getNormalizedRuleName(const std::string& rule_name);
   double calcWireEMLimit(PowerEdge& power_edge, EMMetalRule& metal_rule);
   double calcViaEMLimit(PowerEdge& power_edge, EMViaRule& via_rule);

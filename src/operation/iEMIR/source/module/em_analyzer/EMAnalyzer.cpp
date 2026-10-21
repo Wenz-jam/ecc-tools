@@ -111,6 +111,7 @@ void EMAnalyzer::analyze()
   // Bindings are run-local; do not retain pointers into a replaceable technology database.
   _metal_rules.clear();
   _via_rules.clear();
+  _via_cut_rules.clear();
 
   EMIRLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
@@ -149,6 +150,7 @@ void EMAnalyzer::prepareRules()
 {
   _metal_rules.clear();
   _via_rules.clear();
+  _via_cut_rules.clear();
   auto classify = [](const std::string& name, const std::string& resolved, bool via) {
     if (name == resolved) return EMRuleMatch::kExact;
     if (normalizeRuleName(name) == resolved) return EMRuleMatch::kNormalized;
@@ -164,15 +166,19 @@ void EMAnalyzer::prepareRules()
         if (rule && !rule->get_has_em_rule()) rule = nullptr;
         _metal_rules.emplace(edge.get_layer_name(), ResolvedRule<EMMetalRule>{rule,
             rule ? classify(edge.get_layer_name(), rule->get_name(), false) : EMRuleMatch::kNone});
-      } else if (edge.get_type() == PowerEdgeType::kVia && !_via_rules.count(edge.get_via_name())) {
-        auto* rule = getViaRule(edge.get_via_name());
+      } else if (edge.get_type() == PowerEdgeType::kVia) {
+        const bool has_cut_layer = !edge.get_cut_layer_name().empty();
+        const auto& name = has_cut_layer ? edge.get_cut_layer_name() : edge.get_via_name();
+        auto& cache = has_cut_layer ? _via_cut_rules : _via_rules;
+        if (cache.count(name)) continue;
+        auto* rule = getViaRule(name, !has_cut_layer);
         if (rule && !rule->get_has_em_rule()) rule = nullptr;
-        _via_rules.emplace(edge.get_via_name(), ResolvedRule<EMViaRule>{rule,
-            rule ? classify(edge.get_via_name(), rule->get_name(), true) : EMRuleMatch::kNone});
+        cache.emplace(name, ResolvedRule<EMViaRule>{rule,
+            rule ? classify(name, rule->get_name(), true) : EMRuleMatch::kNone});
       }
     }
   }
-  EMIRLOG.info(Loc::current(), "Resolved EM rule keys: wires=", _metal_rules.size(), ", vias=", _via_rules.size());
+  EMIRLOG.info(Loc::current(), "Resolved EM rule keys: wires=", _metal_rules.size(), ", vias=", _via_rules.size() + _via_cut_rules.size());
 }
 
 void EMAnalyzer::analyzePowerEdge(PowerGraph& power_graph, PowerEdge& power_edge, EAModel& ea_model)
@@ -234,7 +240,8 @@ void EMAnalyzer::analyzePowerEdge(PowerGraph& power_graph, PowerEdge& power_edge
     }
     limit = calcWireEMLimit(power_edge, *binding.rule);
   } else if (power_edge.get_type() == PowerEdgeType::kVia) {
-    auto binding = _via_rules.at(power_edge.get_via_name());
+    const bool has_cut_layer = !power_edge.get_cut_layer_name().empty();
+    auto binding = has_cut_layer ? _via_cut_rules.at(power_edge.get_cut_layer_name()) : _via_rules.at(power_edge.get_via_name());
     evaluation.match = binding.match;
     if (!binding.rule) { evaluation.status = EMEvalStatus::kNoRule; return; }
     power_edge.set_em_rule_name(binding.rule->get_name());
@@ -280,7 +287,7 @@ EMMetalRule* EMAnalyzer::getMetalRule(const std::string& layer_name)
   return nullptr;
 }
 
-EMViaRule* EMAnalyzer::getViaRule(const std::string& via_name)
+EMViaRule* EMAnalyzer::getViaRule(const std::string& via_name, bool allow_name_fallback)
 {
   EMTech& em_tech = EMIRDM.getDatabase().get_em_tech();
   std::string normalized_via_name = normalizeRuleName(via_name);
@@ -290,6 +297,8 @@ EMViaRule* EMAnalyzer::getViaRule(const std::string& via_name)
       return &iter->second;
     }
   }
+  // A known physical cut layer must not fall back to another layer by prefix.
+  if (!allow_name_fallback) return nullptr;
   std::size_t separator_pos = normalized_via_name.find('_');
   if (separator_pos != std::string::npos) {
     std::string base_via_name = normalized_via_name.substr(0, separator_pos);

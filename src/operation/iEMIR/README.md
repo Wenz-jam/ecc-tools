@@ -254,6 +254,11 @@ Recorded local results and limitations: [validation report](../../../docs/ir-acc
 ## Static EM evaluation and diagnostics
 
 EM uses solved DC branch currents (`abs(V1-V2)/R`) and scalar wire/via rules.
+When a via has a physical cut-layer name, that layer selects its EM rule; a
+missing layer rule is reported as `NO_RULE`. Via-master name fallback is used
+only when cut-layer metadata is unavailable. For `PowerNet` API inputs marked
+with `has_explicit_parasitics`, supplied via resistance is preserved; internally
+extracted vias use technology resistance per cut divided by the cut count.
 Finite positive resistance and current limits are accepted even below `1e-6`;
 invalid node references, electrical values, geometry and limits have distinct
 error statuses. A via requires a positive cut count. Nonphysical connectors
@@ -269,7 +274,7 @@ reports. They must not be interpreted as passing EM. `emir_reporter/` also conta
 - `em_summary.csv`: applicable/evaluated/no-rule/invalid/excluded counts,
   violations and evaluated/applicable coverage (N/A for an empty denominator).
 
-Rule names are resolved once per unique wire-layer/via name on each analysis;
+Rule names are resolved once per unique wire-layer, cut-layer or legacy via name on each analysis;
 repeated analyses rebuild bindings so rule replacement is reflected. The three
 text EM outputs share one constructed row list. Logs expose rule-resolution,
 edge-evaluation, report-build and report-write/sort times; no full-flow speedup

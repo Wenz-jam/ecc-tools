@@ -663,7 +663,8 @@ void GraphBuilder::buildViaEdgeList(PowerGraph& power_graph, PowerNet& power_net
         = getPowerNode(power_graph, power_via.get_top_layer_idx(), power_via.get_top_x(), power_via.get_top_y(), PowerNodeType::kVia);
     auto rule_iter = via_rules.find(power_via.get_cut_layer_name());
     double resistance = power_via.get_resistance();
-    if (rule_iter != via_rules.end() && rule_iter->second.get_resistance_per_cut() > 0.0 && power_via.get_cut_num() > 0) {
+    if (!power_net.get_has_explicit_parasitics() && rule_iter != via_rules.end()
+        && rule_iter->second.get_resistance_per_cut() > 0.0 && power_via.get_cut_num() > 0) {
       resistance = rule_iter->second.get_resistance_per_cut() / power_via.get_cut_num();
     }
     if (!power_net.get_has_explicit_parasitics()
@@ -679,6 +680,7 @@ void GraphBuilder::buildViaEdgeList(PowerGraph& power_graph, PowerNet& power_net
     if (power_edge != nullptr) {
       power_edge->set_layer_name(power_via.get_bottom_layer_name());
       power_edge->set_via_name(power_via.get_via_name());
+      power_edge->set_cut_layer_name(power_via.get_cut_layer_name());
       power_edge->set_cut_num(power_via.get_cut_num());
       power_edge->set_cut_area_um2(power_via.get_cut_area_um2());
       power_edge->set_cut_low_x(power_via.get_cut_low_x());
