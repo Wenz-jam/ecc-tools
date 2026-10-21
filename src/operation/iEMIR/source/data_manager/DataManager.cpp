@@ -95,9 +95,9 @@ bool parseDouble(const std::string& text, double& value)
 }
 
 void addMetalRule(iemir::EMTech& em_tech, const std::string& name, double em_limit_ma_per_um, double em_adjust_um,
-                  double resistance_per_square = 0.0, double tnom_c = 25.0, double coeff_rt1 = 0.0, double coeff_rt2 = 0.0)
+                  double resistance_per_square = 0.0, double tnom_c = 25.0, double coeff_rt1 = 0.0, double coeff_rt2 = 0.0, bool has_em_rule = true)
 {
-  if (name.empty() || (em_limit_ma_per_um <= 0.0 && resistance_per_square <= 0.0)) {
+  if (name.empty() || (!has_em_rule && resistance_per_square <= 0.0)) {
     return;
   }
   for (const std::string& alias : getRuleAliases(name)) {
@@ -107,7 +107,7 @@ void addMetalRule(iemir::EMTech& em_tech, const std::string& name, double em_lim
       rule = existing->second;
     }
     rule.set_name(alias);
-    if (em_limit_ma_per_um > 0.0) {
+    if (has_em_rule) {
       rule.set_em_limit_ma_per_um(em_limit_ma_per_um);
       rule.set_em_adjust_um(em_adjust_um);
     }
@@ -122,9 +122,9 @@ void addMetalRule(iemir::EMTech& em_tech, const std::string& name, double em_lim
 }
 
 void addViaRule(iemir::EMTech& em_tech, const std::string& name, double em_limit_ma, double reference_area_um2,
-                double resistance_per_cut = 0.0, const std::string& lower_layer = "", const std::string& upper_layer = "")
+                double resistance_per_cut = 0.0, const std::string& lower_layer = "", const std::string& upper_layer = "", bool has_em_rule = true)
 {
-  if (name.empty() || (em_limit_ma <= 0.0 && resistance_per_cut <= 0.0)) {
+  if (name.empty() || (!has_em_rule && resistance_per_cut <= 0.0)) {
     return;
   }
   for (const std::string& alias : getRuleAliases(name)) {
@@ -134,7 +134,7 @@ void addViaRule(iemir::EMTech& em_tech, const std::string& name, double em_limit
       rule = existing->second;
     }
     rule.set_name(alias);
-    if (em_limit_ma > 0.0) {
+    if (has_em_rule) {
       rule.set_em_limit_ma(em_limit_ma);
       rule.set_reference_area_um2(reference_area_um2);
     }
@@ -406,6 +406,7 @@ void DataManager::readTechnologyFile(const std::string& technology_file_path)
     std::size_t cursor = token_idx + 3;
     int32_t depth = 1;
     double em_limit = 0.0;
+    bool has_em_rule = false;
     double em_adjust = 0.0;
     double area = 0.0;
     double resistance = 0.0;
@@ -426,6 +427,7 @@ void DataManager::readTechnologyFile(const std::string& technology_file_path)
              || key == "COEFF_RT2")
             && parseDouble(tokens[cursor + 1], value)) {
           if (key == "EM") {
+            has_em_rule = true;
             em_limit = value;
           } else if (key == "EM_ADJUST") {
             em_adjust = value;
@@ -453,9 +455,9 @@ void DataManager::readTechnologyFile(const std::string& technology_file_path)
       cursor++;
     }
     if (block_type == "METAL") {
-      addMetalRule(em_tech, rule_name, em_limit, em_adjust, resistance, tnom, coeff_rt1, coeff_rt2);
+      addMetalRule(em_tech, rule_name, em_limit, em_adjust, resistance, tnom, coeff_rt1, coeff_rt2, has_em_rule);
     } else {
-      addViaRule(em_tech, rule_name, em_limit, area, resistance, lower_layer, upper_layer);
+      addViaRule(em_tech, rule_name, em_limit, area, resistance, lower_layer, upper_layer, has_em_rule);
     }
     if (cursor > 0) {
       token_idx = cursor - 1;
@@ -485,8 +487,10 @@ void DataManager::readEMLimitFile(const std::string& em_limit_file_path)
     std::string name;
     double em_limit = 0.0;
     double em_adjust = 0.0;
-    iss >> name >> em_limit;
-    if (name.empty() || em_limit <= 0.0) {
+    iss >> name;
+    std::string limit_text;
+    iss >> limit_text;
+    if (name.empty() || !parseDouble(limit_text, em_limit)) {
       continue;
     }
     iss >> em_adjust;

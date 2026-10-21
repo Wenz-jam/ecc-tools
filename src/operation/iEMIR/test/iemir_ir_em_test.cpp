@@ -248,14 +248,21 @@ bool checkShiftedViaGraph(const std::filesystem::path& directory)
 bool checkInstancePowerReader(const std::filesystem::path& directory)
 {
   std::filesystem::path file_path = directory / "instance_power.tsv";
-  std::ofstream output(file_path);
-  output << "# iEMIR_INSTANCE_POWER_V1\n";
-  output << "instance_name\tvoltage_v\tinternal_power_w\tswitching_power_w\tleakage_power_w\ttotal_power_w\taverage_current_a\n";
-  output << "U1\t1.2\t1e-6\t2e-6\t3e-6\t6e-6\t5e-6\n";
-  output.close();
-  std::vector<iemir::InstancePowerRecord> records = iemir::InstancePowerReader::read(file_path.string());
-  return records.size() == 1 && records.front().instance_name == "U1" && std::abs(records.front().total_power - 6.0e-6) <= 1.0e-18
-         && std::abs(records.front().average_current - 5.0e-6) <= 1.0e-18;
+  for (const std::string& comments : {std::string(), std::string("# iEMIR_INSTANCE_POWER_V1\n"),
+                                      std::string("\n  # instance power exported by another producer\n")}) {
+    std::ofstream output(file_path);
+    output << comments;
+    output << "instance_name\tvoltage_v\tinternal_power_w\tswitching_power_w\tleakage_power_w\ttotal_power_w\taverage_current_a\n";
+    output << "  # comment between header and data\n";
+    output << "U1\t1.2\t1e-6\t2e-6\t3e-6\t6e-6\t5e-6\n";
+    output.close();
+    std::vector<iemir::InstancePowerRecord> records = iemir::InstancePowerReader::read(file_path.string());
+    if (records.size() != 1 || records.front().instance_name != "U1" || std::abs(records.front().total_power - 6.0e-6) > 1.0e-18
+        || std::abs(records.front().average_current - 5.0e-6) > 1.0e-18) {
+      return false;
+    }
+  }
+  return true;
 }
 
 bool checkTechnologyResistanceFormula()
@@ -461,6 +468,133 @@ bool checkViaUsesConnectedResistorJunction()
 
 }  // namespace
 
+bool checkTinyEMValues()
+{
+  auto& database = EMIRDM.getDatabase();
+  database.set_micron_dbu(1000);
+  database.get_em_tech().clear();
+  database.get_power_graph_map().clear();
+  auto graph = buildPowerGraph("VDD", iemir::PowerNetType::kPower);
+  graph.get_node_list()[0].set_voltage(std::ldexp(1.0, -60));
+  graph.get_node_list()[1].set_voltage(0.0);
+  graph.get_edge_list()[0].set_resistance(std::ldexp(1.0, -30));
+  iemir::EMMetalRule rule;
+  rule.set_name("MET1");
+  rule.set_em_limit_ma_per_um(1000.0 * std::ldexp(1.0, -30));
+  database.get_em_tech().get_metal_rule_map()["MET1"] = rule;
+  database.get_power_graph_map()["VDD"] = graph;
+  iemir::EMAnalyzer::initInst();
+  EMIREA.analyze();
+  auto& edge = database.get_power_graph_map()["VDD"].get_edge_list()[0];
+  bool ok = edge.get_has_em_limit() && std::abs(edge.get_em_ratio_percent() - 100.0) < 1e-10
+            && !edge.get_is_violation();
+  iemir::EMAnalyzer::destroyInst();
+  database.get_power_graph_map().clear();
+  database.get_em_tech().clear();
+  return ok;
+}
+
+bool checkEMStatesAndReports(const std::filesystem::path& directory)
+{
+  using Status = iemir::EMEvalStatus;
+  auto& db = EMIRDM.getDatabase();
+  db.get_power_graph_map().clear();
+  db.get_em_tech().clear();
+  db.set_micron_dbu(1000);
+  db.set_design_name("em_states");
+  auto graph = buildPowerGraph("VSS", iemir::PowerNetType::kGround);
+  graph.get_node_list()[0].set_voltage(0.001);
+  graph.get_node_list()[1].set_voltage(0.0);
+  auto base = graph.get_edge_list()[0];
+  auto add = [&](const std::string& name, double resistance, int width) {
+    auto edge = base;
+    edge.set_edge_id(graph.get_edge_list().size());
+    edge.set_layer_name(name);
+    edge.set_resistance(resistance);
+    edge.set_width(width);
+    graph.get_edge_list().push_back(edge);
+  };
+  add("UNKNOWN", 1.0, 1000);
+  add("MET1", 0.0, 1000);
+  add("MET1", -1.0, 1000);
+  add("MET1", std::numeric_limits<double>::quiet_NaN(), 1000);
+  add("MET1", std::numeric_limits<double>::infinity(), 1000);
+  add("MET1", 1.0, 0);
+  add("ZERO", 1.0, 1000);
+  add("NAN", 1.0, 1000);
+  add("INF", 1.0, 1000);
+  add("NEG", 1.0, 1000);
+  add("m-e-t1", 1.0, 1000);
+  add("M1", 1.0, 1000);
+  add("MET1", 2.0, 1000);
+  add("MET1", 0.5, 1000);
+  for (auto [name, limit] : std::vector<std::pair<std::string, double>>{
+      {"MET1",1.0}, {"ZERO",0.0}, {"NAN",std::numeric_limits<double>::quiet_NaN()},
+      {"INF",std::numeric_limits<double>::infinity()}, {"NEG",-1.0}}) {
+    iemir::EMMetalRule rule;
+    rule.set_name(name);
+    rule.set_em_limit_ma_per_um(limit);
+    db.get_em_tech().get_metal_rule_map()[name] = rule;
+  }
+  auto via = base;
+  via.set_type(iemir::PowerEdgeType::kVia);
+  via.set_via_name("VIA1_ARRAY");
+  via.set_cut_num(2);
+  graph.get_edge_list().push_back(via);
+  via.set_cut_num(0);
+  graph.get_edge_list().push_back(via);
+  iemir::EMViaRule via_rule;
+  via_rule.set_name("VIA1");
+  via_rule.set_em_limit_ma(1.0);
+  db.get_em_tech().get_via_rule_map()["VIA1"] = via_rule;
+  auto excluded = base;
+  excluded.set_is_em_checkable(false);
+  excluded.set_resistance(0.0);
+  graph.get_edge_list().push_back(excluded);
+  auto invalid_node = base;
+  invalid_node.set_second_node_id(999);
+  graph.get_edge_list().push_back(invalid_node);
+  db.get_power_graph_map()["VSS"] = graph;
+  iemir::EMAnalyzer::initInst();
+  EMIREA.analyze();
+  auto& edges = db.get_power_graph_map()["VSS"].get_edge_list();
+  const std::vector<Status> expected = {Status::kEvaluated, Status::kNoRule,
+    Status::kInvalidResistance, Status::kInvalidResistance, Status::kInvalidResistance, Status::kInvalidResistance,
+    Status::kInvalidGeometry, Status::kInvalidLimit, Status::kInvalidLimit, Status::kInvalidLimit, Status::kInvalidLimit,
+    Status::kEvaluated, Status::kEvaluated, Status::kEvaluated, Status::kEvaluated, Status::kEvaluated,
+    Status::kInvalidGeometry, Status::kExcluded, Status::kInvalidNode};
+  bool ok = true;
+  for (std::size_t i = 0; i < expected.size(); ++i) {
+    if (edges[i].get_em_evaluation().status != expected[i]) {
+      std::cerr << "EM status mismatch at " << i << "\n"; ok = false;
+    }
+  }
+  ok = ok && !edges[0].get_is_violation() && edges[13].get_em_ratio_percent() == 50.0
+       && edges[14].get_is_violation() && edges[15].get_em_ratio_percent() == 50.0
+       && edges[11].get_em_evaluation().match == iemir::EMRuleMatch::kNormalized
+       && edges[12].get_em_evaluation().match == iemir::EMRuleMatch::kAlias
+       && edges[15].get_em_evaluation().match == iemir::EMRuleMatch::kFallback;
+  EMIRDM.getConfig().er_temp_directory_path = directory.string() + "/";
+  iemir::EMIRReporter::initInst();
+  EMIRER.report();
+  iemir::EMIRReporter::destroyInst();
+  ok = ok && checkReport((directory / "em.rpt").string(), "N/A")
+       && checkReport((directory / "em_evaluation.csv").string(), "NO_RULE,NOT_EVALUATED")
+       && checkReport((directory / "em_summary.csv").string(), "18,6,1,11,1,1,33.333")
+       && checkReport((directory / "em_states.res_network").string(), "N/A");
+  // Rule replacement must be reflected even when the analyzer singleton is reused.
+  db.get_em_tech().get_metal_rule_map()["MET1"].set_em_limit_ma_per_um(2.0);
+  EMIREA.analyze();
+  ok = ok && edges[0].get_em_ratio_percent() == 50.0;
+  db.get_power_graph_map()["VSS"].get_node_list()[0].set_voltage(std::numeric_limits<double>::infinity());
+  EMIREA.analyze();
+  ok = ok && edges[0].get_em_evaluation().status == Status::kNonFiniteInput;
+  iemir::EMAnalyzer::destroyInst();
+  db.get_power_graph_map().clear();
+  db.get_em_tech().clear();
+  return ok;
+}
+
 int main(int argc, char* argv[])
 {
   if (argc > 1) {
@@ -484,7 +618,7 @@ int main(int argc, char* argv[])
   EMIRDM.getConfig().ia_temp_directory_path = report_directory_path.string() + "/";
   EMIRDM.getConfig().gb_temp_directory_path = report_directory_path.string() + "/";
 
-  bool is_pass = checkInstancePowerReader(report_directory_path) && checkTechnologyResistanceFormula()
+  bool is_pass = checkTinyEMValues() && checkEMStatesAndReports(report_directory_path) && checkInstancePowerReader(report_directory_path) && checkTechnologyResistanceFormula()
                  && checkResistanceNetworkReader(report_directory_path)
                  && checkShiftedViaGraph(report_directory_path) && checkPointSourceDoesNotShortNearbySegment() && checkImportedPinAreaInjection()
                  && checkViaUsesConnectedResistorJunction() && checkSubMicroampLoad() && checkRepeatedIRLoads(report_directory_path);

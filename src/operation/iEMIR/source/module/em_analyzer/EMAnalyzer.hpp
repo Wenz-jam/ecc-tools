@@ -45,6 +45,14 @@ class EMAnalyzer
   ~EMAnalyzer() = default;
   EMAnalyzer& operator=(const EMAnalyzer& other) = delete;
   EMAnalyzer& operator=(EMAnalyzer&& other) = delete;
+  template <typename Rule> struct ResolvedRule {
+    Rule* rule = nullptr;
+    EMRuleMatch match = EMRuleMatch::kNone;
+  };
+  std::unordered_map<std::string, ResolvedRule<EMMetalRule>> _metal_rules;
+  std::unordered_map<std::string, ResolvedRule<EMViaRule>> _via_rules;
+  // Rebuilt on each analyze(): no pointers survive a rule reload.
+  void prepareRules();
   // function
   void analyzePowerGraphList();
   void analyzePowerGraph(PowerGraph& power_graph);

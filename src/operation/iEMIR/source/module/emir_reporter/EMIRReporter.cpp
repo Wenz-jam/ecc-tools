@@ -42,25 +42,6 @@ struct IRReportRow
   std::string layer_name;
 };
 
-struct EMReportRow
-{
-  bool is_via = false;
-  std::size_t order = 0;
-  std::string object_name;
-  double first_x = 0.0;
-  double first_y = 0.0;
-  double second_x = 0.0;
-  double second_y = 0.0;
-  double em_ratio_percent = 0.0;
-  double em_limit = 0.0;
-  bool has_em_limit = false;
-  double current = 0.0;
-  std::string net_name;
-  double width = 0.0;
-  std::string cut_box;
-  std::string direction;
-  double blech_length = 0.0;
-};
 
 std::string formatFixed(double value, int32_t precision)
 {
@@ -92,6 +73,7 @@ std::string formatCompactFixed(double value, int32_t precision)
 
 std::string formatScientific(double value, int32_t precision)
 {
+  if (!std::isfinite(value)) return "N/A";
   std::ostringstream oss;
   oss << std::scientific << std::setprecision(precision) << std::abs(value);
   return oss.str();
@@ -345,16 +327,23 @@ double EMIRReporter::getPercentageDrop(PowerGraph& power_graph)
 
 void EMIRReporter::outputEMReport(ERModel& er_model)
 {
-  outputEMReportFile(er_model.get_em_report_file_path(), false);
-  outputEMReportFile(buildDesignReportFilePath(".em"), false);
-  outputEMReportFile(buildDesignReportFilePath(".em.worst"), true);
+  const auto started = std::chrono::steady_clock::now();
+  auto rows = buildEMReportRows();
+  const auto built = std::chrono::steady_clock::now();
+  outputEMReportFile(er_model.get_em_report_file_path(), false, rows);
+  outputEMReportFile(buildDesignReportFilePath(".em"), false, rows);
+  outputEMReportFile(buildDesignReportFilePath(".em.worst"), true, rows);
+  outputEMEvaluation();
+  EMIRLOG.info(Loc::current(), "EM report timing: rows=", rows.size(), ", build_seconds=",
+      std::chrono::duration<double>(built - started).count(), ", write_and_sort_seconds=",
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - built).count());
 }
 
-void EMIRReporter::outputEMReportFile(const std::string& report_file_path, bool worst_only)
+void EMIRReporter::outputEMReportFile(const std::string& report_file_path, bool worst_only, std::vector<EMReportRow>& rows)
 {
   std::ofstream* em_report_file = EMIRUTIL.getOutputFileStream(report_file_path);
   outputEMReportHeader(em_report_file, worst_only);
-  outputEMReportRows(em_report_file, worst_only);
+  outputEMReportRows(em_report_file, worst_only, rows);
   EMIRUTIL.closeFileStream(em_report_file);
 }
 
@@ -376,7 +365,7 @@ void EMIRReporter::outputEMReportHeader(std::ofstream* em_report_file, bool wors
   }
 }
 
-void EMIRReporter::outputEMReportRows(std::ofstream* em_report_file, bool worst_only)
+std::vector<EMReportRow> EMIRReporter::buildEMReportRows()
 {
   std::vector<EMReportRow> em_report_row_list;
   std::size_t order = 0;
@@ -418,14 +407,19 @@ void EMIRReporter::outputEMReportRows(std::ofstream* em_report_file, bool worst_
       em_report_row_list.push_back(em_report_row);
     }
   }
+  return em_report_row_list;
+}
+
+void EMIRReporter::outputEMReportRows(std::ofstream* em_report_file, bool worst_only, std::vector<EMReportRow>& em_report_row_list)
+{
   if (worst_only) {
     std::sort(em_report_row_list.begin(), em_report_row_list.end(), [](const EMReportRow& lhs, const EMReportRow& rhs) {
-      if (std::abs(lhs.em_ratio_percent - rhs.em_ratio_percent) > 1e-15) {
+      if (lhs.has_em_limit != rhs.has_em_limit) return lhs.has_em_limit;
+      if (lhs.has_em_limit && lhs.em_ratio_percent != rhs.em_ratio_percent)
         return lhs.em_ratio_percent > rhs.em_ratio_percent;
-      }
-      if (std::abs(lhs.current - rhs.current) > 1e-18) {
-        return lhs.current > rhs.current;
-      }
+      const bool lhs_finite = std::isfinite(lhs.current), rhs_finite = std::isfinite(rhs.current);
+      if (lhs_finite != rhs_finite) return lhs_finite;
+      if (lhs_finite && lhs.current != rhs.current) return lhs.current > rhs.current;
       return lhs.order < rhs.order;
     });
   }
@@ -434,14 +428,14 @@ void EMIRReporter::outputEMReportRows(std::ofstream* em_report_file, bool worst_
       double x = em_report_row.first_x;
       double y = em_report_row.first_y;
       (*em_report_file) << "via " << em_report_row.object_name << "  (" << formatFixed(x, 3) << "," << formatFixed(y, 3) << ")\t"
-                        << formatPercent(em_report_row.em_ratio_percent) << " " << formatScientific(em_report_row.current, 6) << " "
+                        << (em_report_row.has_em_limit ? formatPercent(em_report_row.em_ratio_percent) : "N/A") << " " << formatScientific(em_report_row.current, 6) << " "
                         << em_report_row.net_name << "  " << em_report_row.cut_box << " " << em_report_row.direction << "  "
                         << formatFixed(em_report_row.blech_length, 3) << "\n";
       continue;
     }
     (*em_report_file) << em_report_row.object_name << "  (" << formatFixed(em_report_row.first_x, 3) << "," << formatFixed(em_report_row.first_y, 3)
                       << " " << formatFixed(em_report_row.second_x, 3) << "," << formatFixed(em_report_row.second_y, 3) << ")\t"
-                      << formatPercent(em_report_row.em_ratio_percent);
+                      << (em_report_row.has_em_limit ? formatPercent(em_report_row.em_ratio_percent) : "N/A");
     if (worst_only) {
       (*em_report_file) << "  " << em_report_row.net_name << "  " << formatCompactFixed(em_report_row.width, 6) << "  "
                         << formatFixed(em_report_row.blech_length, 3) << "  " << formatScientific(em_report_row.current, 6) << "\n";
@@ -450,6 +444,58 @@ void EMIRReporter::outputEMReportRows(std::ofstream* em_report_file, bool worst_
                         << formatCompactFixed(em_report_row.width, 6) << "  " << formatFixed(em_report_row.blech_length, 3) << "\n";
     }
   }
+}
+
+void EMIRReporter::outputEMEvaluation()
+{
+  auto csvText = [](const std::string& value) {
+    std::string escaped = "\"";
+    for (char c : value) { if (c == '\"') escaped += '\"'; escaped += c; }
+    return escaped + "\"";
+  };
+  const std::string directory = EMIRDM.getConfig().er_temp_directory_path;
+  std::ofstream* detail = EMIRUTIL.getOutputFileStream(EMIRUTIL.getString(directory, "em_evaluation.csv"));
+  *detail << "net,edge_id,kind,object,mode,status,result,rule,match,resistance_ohm,voltage_delta_v,current_a,limit_a,ratio_percent,drawn_width_um,effective_width_um,cut_count\n";
+  *detail << std::setprecision(17);
+  std::size_t applicable = 0, evaluated = 0, missing = 0, invalid = 0, excluded = 0, violations = 0;
+  for (auto& [net, graph] : EMIRDM.getDatabase().get_power_graph_map()) {
+    for (auto& edge : graph.get_edge_list()) {
+      const auto& evaluation = edge.get_em_evaluation();
+      const bool checked = evaluation.status == EMEvalStatus::kEvaluated;
+      if (!edge.get_is_em_checkable()) ++excluded;
+      else {
+        ++applicable;
+        if (checked) { ++evaluated; if (edge.get_is_violation()) ++violations; }
+        else if (evaluation.status == EMEvalStatus::kNoRule) ++missing;
+        else ++invalid;
+      }
+      const char* result = checked ? (edge.get_is_violation() ? "FAIL" : "PASS")
+          : (evaluation.status == EMEvalStatus::kNoRule || evaluation.status == EMEvalStatus::kExcluded
+             || evaluation.status == EMEvalStatus::kNotEvaluated ? "NOT_EVALUATED" : "ERROR");
+      *detail << csvText(net) << ',' << edge.get_edge_id() << ','
+              << (edge.get_type() == PowerEdgeType::kVia ? "via" : "wire") << ','
+              << csvText(edge.get_type() == PowerEdgeType::kVia ? edge.get_via_name() : edge.get_layer_name())
+              << ",AVG," << emStatusName(evaluation.status) << ',' << result << ',' << csvText(edge.get_em_rule_name())
+              << ',' << emMatchName(evaluation.match) << ',';
+      auto number = [&](double value) { if (std::isfinite(value)) *detail << value; else *detail << "N/A"; };
+      number(edge.get_resistance()); *detail << ',';
+      number(evaluation.voltage_delta_v); *detail << ',';
+      number(edge.get_current()); *detail << ',';
+      if (checked) number(edge.get_em_limit()); else *detail << "N/A";
+      *detail << ',';
+      if (checked) number(edge.get_em_ratio_percent()); else *detail << "N/A";
+      *detail << ','; number(getMicronValue(edge.get_width())); *detail << ',';
+      number(evaluation.effective_width_um); *detail << ',' << edge.get_cut_num() << '\n';
+    }
+  }
+  EMIRUTIL.closeFileStream(detail);
+  auto* summary = EMIRUTIL.getOutputFileStream(EMIRUTIL.getString(directory, "em_summary.csv"));
+  *summary << "applicable,evaluated,no_rule,invalid_input,excluded,violations,coverage_percent,threshold_percent\n"
+           << applicable << ',' << evaluated << ',' << missing << ',' << invalid << ',' << excluded << ',' << violations << ',';
+  if (applicable) *summary << std::setprecision(17) << 100.0 * evaluated / applicable;
+  else *summary << "N/A";
+  *summary << ',' << EMIRDM.getConfig().em_violation_threshold_percent << '\n';
+  EMIRUTIL.closeFileStream(summary);
 }
 
 void EMIRReporter::outputResNetworkReport()
@@ -497,8 +543,8 @@ void EMIRReporter::outputResNetworkReportRows(std::ofstream* res_network_report_
             << power_edge.get_edge_id() << " " << layer_name << " " << power_graph.get_net_name() << " (" << formatFixed(getMicronValue(first_power_node.get_x()), 3)
             << " " << formatFixed(getMicronValue(first_power_node.get_y()), 3) << ") (" << formatFixed(getMicronValue(second_power_node.get_x()), 3)
             << " " << formatFixed(getMicronValue(second_power_node.get_y()), 3) << ") " << getWireDirection(power_graph, power_edge) << " "
-            << formatScientific(power_edge.get_current(), 6) << " " << formatScientific(power_edge.get_em_limit(), 6) << " "
-            << formatCompactFixed(power_edge.get_em_ratio_percent(), 6) << " " << formatScientific(power_edge.get_resistance(), 6) << " "
+            << formatScientific(power_edge.get_current(), 6) << " " << (power_edge.get_has_em_limit() ? formatScientific(power_edge.get_em_limit(), 6) : "N/A") << " "
+            << (power_edge.get_has_em_limit() ? formatCompactFixed(power_edge.get_em_ratio_percent(), 6) : "N/A") << " " << formatScientific(power_edge.get_resistance(), 6) << " "
             << formatCompactFixed(getMicronValue(power_edge.get_width()), 6) << " "
             << (power_edge.get_em_rule_name().empty() ? "NA" : power_edge.get_em_rule_name()) << "\n";
       } else if (power_edge.get_type() == PowerEdgeType::kVia) {
@@ -514,8 +560,8 @@ void EMIRReporter::outputResNetworkReportRows(std::ofstream* res_network_report_
             << power_edge.get_edge_id() << " " << via_rule_name << " " << getViaName(power_graph, power_edge) << " " << power_graph.get_net_name()
             << " (" << formatFixed(x, 3) << " " << formatFixed(y, 3) << ") " << power_edge.get_cut_num() << " "
             << formatCompactFixed(power_edge.get_cut_area_um2(), 9) << " " << formatScientific(power_edge.get_resistance(), 6) << " "
-            << direction << " " << formatScientific(power_edge.get_current(), 6) << " " << formatScientific(power_edge.get_em_limit(), 6) << " "
-            << formatCompactFixed(power_edge.get_em_ratio_percent(), 6) << " " << via_rule_name << "\n";
+            << direction << " " << formatScientific(power_edge.get_current(), 6) << " " << (power_edge.get_has_em_limit() ? formatScientific(power_edge.get_em_limit(), 6) : "N/A") << " "
+            << (power_edge.get_has_em_limit() ? formatCompactFixed(power_edge.get_em_ratio_percent(), 6) : "N/A") << " " << via_rule_name << "\n";
       }
     }
   }

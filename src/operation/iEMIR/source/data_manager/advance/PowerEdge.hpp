@@ -17,6 +17,7 @@
 #pragma once
 
 #include "EMIRHeader.hpp"
+#include "EMEvaluation.hpp"
 #include "PowerEdgeType.hpp"
 
 namespace iemir {
@@ -51,6 +52,7 @@ class PowerEdge
   bool get_has_em_limit() { return _has_em_limit; }
   bool get_is_violation() { return _is_violation; }
   bool get_is_em_checkable() { return _is_em_checkable; }
+  EMEvaluation& get_em_evaluation() { return _em_evaluation; }
   // setter
   void set_edge_id(std::size_t edge_id) { _edge_id = edge_id; }
   void set_type(PowerEdgeType type) { _type = type; }
@@ -79,6 +81,7 @@ class PowerEdge
   // function
 
  private:
+  EMEvaluation _em_evaluation;
   std::size_t _edge_id = 0;
   PowerEdgeType _type = PowerEdgeType::kNone;
   std::size_t _first_node_id = 0;
