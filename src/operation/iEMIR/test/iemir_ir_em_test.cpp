@@ -582,6 +582,26 @@ bool checkEMStatesAndReports(const std::filesystem::path& directory)
        && checkReport((directory / "em_evaluation.csv").string(), "NO_RULE,NOT_EVALUATED")
        && checkReport((directory / "em_summary.csv").string(), "18,6,1,11,1,1,33.333")
        && checkReport((directory / "em_states.res_network").string(), "N/A");
+  // The duplicate normal reports must stay byte-identical, including N/A rows.
+  auto read_text = [&](const std::string& filename) {
+    std::ifstream file(directory / filename);
+    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+  };
+  const auto normal_report = read_text("em.rpt");
+  const auto worst_report = read_text("em_states.em.worst");
+  ok = ok && !normal_report.empty() && normal_report == read_text("em_states.em");
+  const std::string expected_first_row = "MET1  (0.000,0.000 0.000,0.000)\t200%  VSS  1  0.000  2.000000e-03\n";
+  std::istringstream worst_lines(worst_report);
+  std::string line;
+  while (std::getline(worst_lines, line)) {
+    if (!line.empty() && line.front() != '#' && line.rfind("Design : ", 0) != 0) break;
+  }
+  ok = ok && line + "\n" == expected_first_row;
+  // Via columns have the same order in both formats.
+  std::istringstream normal_lines(normal_report);
+  while (std::getline(normal_lines, line)) {
+    if (line.rfind("via ", 0) == 0) ok = ok && worst_report.find(line + "\n") != std::string::npos;
+  }
   // Rule replacement must be reflected even when the analyzer singleton is reused.
   db.get_em_tech().get_metal_rule_map()["MET1"].set_em_limit_ma_per_um(2.0);
   EMIREA.analyze();

@@ -81,11 +81,9 @@ class EMIRReporter
   double getAverageIRDrop(PowerGraph& power_graph);
   double getPercentageDrop(PowerGraph& power_graph);
   void outputEMReport(ERModel& er_model);
-  void outputEMReportFile(const std::string& report_file_path, bool worst_only, std::vector<EMReportRow>& rows);
   std::vector<EMReportRow> buildEMReportRows();
   void outputEMEvaluation();
   void outputEMReportHeader(std::ofstream* em_report_file, bool worst_only);
-  void outputEMReportRows(std::ofstream* em_report_file, bool worst_only, std::vector<EMReportRow>& em_report_row_list);
   void outputResNetworkReport();
   void outputResNetworkReportFile(const std::string& report_file_path);
   void outputResNetworkReportHeader(std::ofstream* res_network_report_file);

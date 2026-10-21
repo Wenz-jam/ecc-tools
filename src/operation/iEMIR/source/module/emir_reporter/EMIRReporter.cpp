@@ -328,23 +328,63 @@ double EMIRReporter::getPercentageDrop(PowerGraph& power_graph)
 void EMIRReporter::outputEMReport(ERModel& er_model)
 {
   const auto started = std::chrono::steady_clock::now();
-  auto rows = buildEMReportRows();
+  const auto rows = buildEMReportRows();
   const auto built = std::chrono::steady_clock::now();
-  outputEMReportFile(er_model.get_em_report_file_path(), false, rows);
-  outputEMReportFile(buildDesignReportFilePath(".em"), false, rows);
-  outputEMReportFile(buildDesignReportFilePath(".em.worst"), true, rows);
+  // Format each numeric field once, sharing the normal row between both reports.
+  auto* normal = EMIRUTIL.getOutputFileStream(er_model.get_em_report_file_path());
+  auto* design = EMIRUTIL.getOutputFileStream(buildDesignReportFilePath(".em"));
+  outputEMReportHeader(normal, false);
+  outputEMReportHeader(design, false);
+  std::vector<std::string> worst_rows;
+  worst_rows.reserve(rows.size());
+  for (const auto& row : rows) {
+    std::string prefix = (row.is_via ? "via " : "") + row.object_name + "  ("
+                         + formatFixed(row.first_x, 3) + "," + formatFixed(row.first_y, 3);
+    if (!row.is_via) {
+      prefix += " " + formatFixed(row.second_x, 3) + "," + formatFixed(row.second_y, 3);
+    }
+    prefix += ")\t" + (row.has_em_limit ? formatPercent(row.em_ratio_percent) : "N/A");
+    const auto current = formatScientific(row.current, 6);
+    const auto length = formatFixed(row.blech_length, 3);
+    std::string normal_row;
+    if (row.is_via) {
+      normal_row = prefix + " " + current + " " + row.net_name + "  " + row.cut_box + " " + row.direction + "  " + length + "\n";
+      worst_rows.push_back(normal_row);
+    } else {
+      const auto dimensions = row.net_name + "  " + formatCompactFixed(row.width, 6) + "  " + length;
+      normal_row = prefix + "\t" + current + "  " + dimensions + "\n";
+      worst_rows.push_back(prefix + "  " + dimensions + "  " + current + "\n");
+    }
+    normal->write(normal_row.data(), normal_row.size());
+    design->write(normal_row.data(), normal_row.size());
+  }
+  EMIRUTIL.closeFileStream(normal);
+  EMIRUTIL.closeFileStream(design);
+  std::vector<std::size_t> order;
+  order.reserve(rows.size());
+  for (std::size_t i = 0; i < rows.size(); ++i) order.push_back(i);
+  std::sort(order.begin(), order.end(), [&rows](std::size_t left, std::size_t right) {
+    const auto& lhs = rows[left];
+    const auto& rhs = rows[right];
+    if (lhs.has_em_limit != rhs.has_em_limit) return lhs.has_em_limit;
+    if (lhs.has_em_limit && lhs.em_ratio_percent != rhs.em_ratio_percent)
+      return lhs.em_ratio_percent > rhs.em_ratio_percent;
+    const bool lhs_finite = std::isfinite(lhs.current), rhs_finite = std::isfinite(rhs.current);
+    if (lhs_finite != rhs_finite) return lhs_finite;
+    if (lhs_finite && lhs.current != rhs.current) return lhs.current > rhs.current;
+    return lhs.order < rhs.order;
+  });
+  auto* worst = EMIRUTIL.getOutputFileStream(buildDesignReportFilePath(".em.worst"));
+  outputEMReportHeader(worst, true);
+  for (const auto index : order) {
+    const auto& text = worst_rows[index];
+    worst->write(text.data(), text.size());
+  }
+  EMIRUTIL.closeFileStream(worst);
   outputEMEvaluation();
   EMIRLOG.info(Loc::current(), "EM report timing: rows=", rows.size(), ", build_seconds=",
       std::chrono::duration<double>(built - started).count(), ", write_and_sort_seconds=",
       std::chrono::duration<double>(std::chrono::steady_clock::now() - built).count());
-}
-
-void EMIRReporter::outputEMReportFile(const std::string& report_file_path, bool worst_only, std::vector<EMReportRow>& rows)
-{
-  std::ofstream* em_report_file = EMIRUTIL.getOutputFileStream(report_file_path);
-  outputEMReportHeader(em_report_file, worst_only);
-  outputEMReportRows(em_report_file, worst_only, rows);
-  EMIRUTIL.closeFileStream(em_report_file);
 }
 
 void EMIRReporter::outputEMReportHeader(std::ofstream* em_report_file, bool worst_only)
@@ -368,6 +408,11 @@ void EMIRReporter::outputEMReportHeader(std::ofstream* em_report_file, bool wors
 std::vector<EMReportRow> EMIRReporter::buildEMReportRows()
 {
   std::vector<EMReportRow> em_report_row_list;
+  std::size_t edge_count = 0;
+  for (auto& entry : EMIRDM.getDatabase().get_power_graph_map()) {
+    edge_count += entry.second.get_edge_list().size();
+  }
+  em_report_row_list.reserve(edge_count);
   std::size_t order = 0;
   for (std::pair<const std::string, PowerGraph>& power_graph_pair : EMIRDM.getDatabase().get_power_graph_map()) {
     PowerGraph& power_graph = power_graph_pair.second;
@@ -402,48 +447,14 @@ std::vector<EMReportRow> EMIRReporter::buildEMReportRows()
       em_report_row.current = std::abs(power_edge.get_current());
       em_report_row.net_name = power_graph.get_net_name();
       em_report_row.width = getMicronValue(power_edge.get_width());
-      em_report_row.cut_box = getViaCutBox(power_graph, power_edge);
-      em_report_row.direction = getViaDirection(power_graph, power_edge);
-      em_report_row_list.push_back(em_report_row);
+      if (em_report_row.is_via) {
+        em_report_row.cut_box = getViaCutBox(power_graph, power_edge);
+        em_report_row.direction = getViaDirection(power_graph, power_edge);
+      }
+      em_report_row_list.push_back(std::move(em_report_row));
     }
   }
   return em_report_row_list;
-}
-
-void EMIRReporter::outputEMReportRows(std::ofstream* em_report_file, bool worst_only, std::vector<EMReportRow>& em_report_row_list)
-{
-  if (worst_only) {
-    std::sort(em_report_row_list.begin(), em_report_row_list.end(), [](const EMReportRow& lhs, const EMReportRow& rhs) {
-      if (lhs.has_em_limit != rhs.has_em_limit) return lhs.has_em_limit;
-      if (lhs.has_em_limit && lhs.em_ratio_percent != rhs.em_ratio_percent)
-        return lhs.em_ratio_percent > rhs.em_ratio_percent;
-      const bool lhs_finite = std::isfinite(lhs.current), rhs_finite = std::isfinite(rhs.current);
-      if (lhs_finite != rhs_finite) return lhs_finite;
-      if (lhs_finite && lhs.current != rhs.current) return lhs.current > rhs.current;
-      return lhs.order < rhs.order;
-    });
-  }
-  for (EMReportRow& em_report_row : em_report_row_list) {
-    if (em_report_row.is_via) {
-      double x = em_report_row.first_x;
-      double y = em_report_row.first_y;
-      (*em_report_file) << "via " << em_report_row.object_name << "  (" << formatFixed(x, 3) << "," << formatFixed(y, 3) << ")\t"
-                        << (em_report_row.has_em_limit ? formatPercent(em_report_row.em_ratio_percent) : "N/A") << " " << formatScientific(em_report_row.current, 6) << " "
-                        << em_report_row.net_name << "  " << em_report_row.cut_box << " " << em_report_row.direction << "  "
-                        << formatFixed(em_report_row.blech_length, 3) << "\n";
-      continue;
-    }
-    (*em_report_file) << em_report_row.object_name << "  (" << formatFixed(em_report_row.first_x, 3) << "," << formatFixed(em_report_row.first_y, 3)
-                      << " " << formatFixed(em_report_row.second_x, 3) << "," << formatFixed(em_report_row.second_y, 3) << ")\t"
-                      << (em_report_row.has_em_limit ? formatPercent(em_report_row.em_ratio_percent) : "N/A");
-    if (worst_only) {
-      (*em_report_file) << "  " << em_report_row.net_name << "  " << formatCompactFixed(em_report_row.width, 6) << "  "
-                        << formatFixed(em_report_row.blech_length, 3) << "  " << formatScientific(em_report_row.current, 6) << "\n";
-    } else {
-      (*em_report_file) << "\t" << formatScientific(em_report_row.current, 6) << "  " << em_report_row.net_name << "  "
-                        << formatCompactFixed(em_report_row.width, 6) << "  " << formatFixed(em_report_row.blech_length, 3) << "\n";
-    }
-  }
 }
 
 void EMIRReporter::outputEMEvaluation()
