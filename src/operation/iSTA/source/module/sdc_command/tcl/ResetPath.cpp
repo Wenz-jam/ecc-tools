@@ -16,6 +16,7 @@
 // ***************************************************************************************
 #include "DataManager.hpp"
 #include "exception/PathExceptionCommand.hpp"
+#include "tcl/ToolCommands.hpp"
 
 namespace ista::sdc {
 
