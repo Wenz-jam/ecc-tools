@@ -16,6 +16,9 @@
 // ***************************************************************************************
 #pragma once
 
+#include <map>
+#include <tuple>
+
 #include "Database.hpp"
 #include "ERModel.hpp"
 #include "PowerGraph.hpp"
@@ -65,6 +68,9 @@ class EMIRReporter
   EMIRReporter& operator=(const EMIRReporter& other) = delete;
   EMIRReporter& operator=(EMIRReporter&& other) = delete;
   // function
+  using ViaGeometryKey = std::tuple<int32_t, int32_t, int32_t, int32_t, int32_t, int32_t>;
+  std::map<std::string, std::map<ViaGeometryKey, PowerVia*>> _via_geometry_index;
+  void buildViaGeometryIndex();
   ERModel initERModel();
   void buildIRReportFilePath(ERModel& er_model);
   void buildEMReportFilePath(ERModel& er_model);

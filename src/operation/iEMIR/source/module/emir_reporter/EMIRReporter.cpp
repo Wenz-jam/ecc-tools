@@ -123,10 +123,12 @@ void EMIRReporter::report()
   Monitor monitor;
   EMIRLOG.info(Loc::current(), "Starting...");
 
+  buildViaGeometryIndex();
   ERModel er_model = initERModel();
   outputIRReport(er_model);
   outputEMReport(er_model);
   outputResNetworkReport();
+  _via_geometry_index.clear();
 
   EMIRLOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
 }
@@ -604,15 +606,28 @@ std::string EMIRReporter::buildDesignReportFilePath(const std::string& suffix)
   return EMIRUTIL.getString(EMIRDM.getConfig().er_temp_directory_path, EMIRDM.getDatabase().get_design_name(), suffix);
 }
 
+void EMIRReporter::buildViaGeometryIndex()
+{
+  // Physical via pointers are valid only for this report invocation. Rebuild
+  // after database changes, preserving the linear lookup's first-match policy.
+  _via_geometry_index.clear();
+  for (auto& [net_name, power_net] : EMIRDM.getDatabase().get_power_net_map()) {
+    auto& index = _via_geometry_index[net_name];
+    for (auto& via : power_net.get_via_list()) {
+      index.emplace(ViaGeometryKey{via.get_bottom_layer_idx(), via.get_top_layer_idx(),
+                    via.get_bottom_x(), via.get_bottom_y(), via.get_top_x(), via.get_top_y()}, &via);
+    }
+  }
+}
+
 PowerVia* EMIRReporter::getPowerVia(PowerGraph& power_graph, PowerEdge& power_edge)
 {
   if (power_edge.get_type() != PowerEdgeType::kVia || power_edge.get_first_node_id() >= power_graph.get_node_list().size()
       || power_edge.get_second_node_id() >= power_graph.get_node_list().size()) {
     return nullptr;
   }
-  Database& database = EMIRDM.getDatabase();
-  auto power_net_iter = database.get_power_net_map().find(power_graph.get_net_name());
-  if (power_net_iter == database.get_power_net_map().end()) {
+  const auto net_index = _via_geometry_index.find(power_graph.get_net_name());
+  if (net_index == _via_geometry_index.end()) {
     return nullptr;
   }
   PowerNode& first_power_node = power_graph.get_node_list()[power_edge.get_first_node_id()];
@@ -621,14 +636,9 @@ PowerVia* EMIRReporter::getPowerVia(PowerGraph& power_graph, PowerEdge& power_ed
   int32_t top_layer_idx = std::max(first_power_node.get_layer_idx(), second_power_node.get_layer_idx());
   PowerNode& bottom_power_node = first_power_node.get_layer_idx() == bottom_layer_idx ? first_power_node : second_power_node;
   PowerNode& top_power_node = first_power_node.get_layer_idx() == top_layer_idx ? first_power_node : second_power_node;
-  for (PowerVia& power_via : power_net_iter->second.get_via_list()) {
-    if (power_via.get_bottom_layer_idx() == bottom_layer_idx && power_via.get_top_layer_idx() == top_layer_idx
-        && power_via.get_bottom_x() == bottom_power_node.get_x() && power_via.get_bottom_y() == bottom_power_node.get_y()
-        && power_via.get_top_x() == top_power_node.get_x() && power_via.get_top_y() == top_power_node.get_y()) {
-      return &power_via;
-    }
-  }
-  return nullptr;
+  const auto via = net_index->second.find(ViaGeometryKey{bottom_layer_idx, top_layer_idx,
+      bottom_power_node.get_x(), bottom_power_node.get_y(), top_power_node.get_x(), top_power_node.get_y()});
+  return via == net_index->second.end() ? nullptr : via->second;
 }
 
 std::pair<double, double> EMIRReporter::getViaLocation(PowerGraph& power_graph, PowerEdge& power_edge)

@@ -232,14 +232,33 @@ bool checkShiftedViaGraph(const std::filesystem::path& directory)
       edge.set_current(1.0e-6);
     }
   }
+  // Duplicate landing geometry retains the first physical via's location.
+  auto duplicate = power_via;
+  duplicate.set_x(99);
+  duplicate.set_bottom_x(10);
+  duplicate.set_top_x(20);
+  auto& physical_vias = EMIRDM.getDatabase().get_power_net_map().at(power_net.get_net_name()).get_via_list();
+  physical_vias.push_back(duplicate);
   iemir::EMIRReporter::initInst();
   EMIRER.report();
-  iemir::EMIRReporter::destroyInst();
   is_pass = is_pass && checkReport((directory / "shifted_via.em.worst").string(), "via VIA_SHIFTED  (0.012,0.000)")
             && checkReport((directory / "em.rpt").string(), "via VIA_SHIFTED  (0.012,0.000)")
             && checkReport((directory / "shifted_via.res_network").string(), "VIA_SHIFTED SHIFTED_VIA (0.012 0.000)")
             && checkReport((directory / "shifted_via.em.worst").string(), "1.000000e-06") && coordinate_node_map.count(std::make_tuple(1, 12, 0)) == 0
             && coordinate_node_map.count(std::make_tuple(2, 12, 0)) == 0;
+  // Reusing the reporter after replacing physical data must rebuild its lookup.
+  physical_vias.erase(physical_vias.begin());
+  for (auto& edge : power_graph.get_edge_list()) {
+    if (edge.get_type() == iemir::PowerEdgeType::kVia) {
+      const auto first = edge.get_first_node_id();
+      edge.set_first_node_id(edge.get_second_node_id());
+      edge.set_second_node_id(first);
+    }
+  }
+  EMIRER.report();
+  is_pass = is_pass && checkReport((directory / "em.rpt").string(), "via VIA_SHIFTED  (0.099,0.000)")
+            && checkReport((directory / "shifted_via.res_network").string(), "VIA_SHIFTED SHIFTED_VIA (0.099 0.000)");
+  iemir::EMIRReporter::destroyInst();
   EMIRDM.getDatabase().get_power_net_map().clear();
   EMIRDM.getDatabase().get_power_graph_map().clear();
   return is_pass;
