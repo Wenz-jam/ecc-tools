@@ -16,6 +16,8 @@
 // ***************************************************************************************
 #include "DataManager.hpp"
 
+#include <cerrno>
+
 #include "EMIRInterface.hpp"
 #include "EMTech.hpp"
 #include "Logger.hpp"
@@ -89,9 +91,13 @@ std::vector<std::string> getRuleAliases(const std::string& name)
 
 bool parseDouble(const std::string& text, double& value)
 {
+  errno = 0;
   char* end = nullptr;
   value = std::strtod(text.c_str(), &end);
-  return end != text.c_str();
+  while (end != nullptr && std::isspace(static_cast<unsigned char>(*end))) {
+    end++;
+  }
+  return end != text.c_str() && end != nullptr && *end == '\0' && errno != ERANGE && std::isfinite(value);
 }
 
 void addMetalRule(iemir::EMTech& em_tech, const std::string& name, double em_limit_ma_per_um, double em_adjust_um,
@@ -106,7 +112,7 @@ void addMetalRule(iemir::EMTech& em_tech, const std::string& name, double em_lim
     if (existing != em_tech.get_metal_rule_map().end()) {
       rule = existing->second;
     }
-    rule.set_name(alias);
+    rule.set_name(name);
     if (has_em_rule) {
       rule.set_em_limit_ma_per_um(em_limit_ma_per_um);
       rule.set_em_adjust_um(em_adjust_um);
@@ -133,7 +139,7 @@ void addViaRule(iemir::EMTech& em_tech, const std::string& name, double em_limit
     if (existing != em_tech.get_via_rule_map().end()) {
       rule = existing->second;
     }
-    rule.set_name(alias);
+    rule.set_name(name);
     if (has_em_rule) {
       rule.set_em_limit_ma(em_limit_ma);
       rule.set_reference_area_um2(reference_area_um2);

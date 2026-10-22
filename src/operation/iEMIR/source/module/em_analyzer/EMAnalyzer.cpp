@@ -200,7 +200,8 @@ void EMAnalyzer::analyzePowerEdge(PowerGraph& power_graph, PowerEdge& power_edge
         && std::isfinite(power_edge.get_resistance()) && power_edge.get_resistance() > 0.0) {
       evaluation.voltage_delta_v = power_graph.get_node_list()[power_edge.get_first_node_id()].get_voltage()
           - power_graph.get_node_list()[power_edge.get_second_node_id()].get_voltage();
-      double current = std::abs(evaluation.voltage_delta_v) / power_edge.get_resistance();
+      evaluation.signed_current_a = evaluation.voltage_delta_v / power_edge.get_resistance();
+      double current = std::abs(evaluation.signed_current_a);
       if (std::isfinite(current)) power_edge.set_current(current);
     }
     return;
@@ -217,8 +218,9 @@ void EMAnalyzer::analyzePowerEdge(PowerGraph& power_graph, PowerEdge& power_edge
   double delta = power_graph.get_node_list()[power_edge.get_first_node_id()].get_voltage()
                  - power_graph.get_node_list()[power_edge.get_second_node_id()].get_voltage();
   evaluation.voltage_delta_v = delta;
-  double current = std::abs(delta) / resistance;
-  if (!std::isfinite(delta) || !std::isfinite(current)) {
+  evaluation.signed_current_a = delta / resistance;
+  double current = std::abs(evaluation.signed_current_a);
+  if (!std::isfinite(delta) || !std::isfinite(evaluation.signed_current_a) || !std::isfinite(current)) {
     evaluation.status = EMEvalStatus::kNonFiniteInput;
     return;
   }

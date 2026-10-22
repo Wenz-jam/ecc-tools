@@ -468,7 +468,7 @@ void EMIRReporter::outputEMEvaluation()
   };
   const std::string directory = EMIRDM.getConfig().er_temp_directory_path;
   std::ofstream* detail = EMIRUTIL.getOutputFileStream(EMIRUTIL.getString(directory, "em_evaluation.csv"));
-  *detail << "net,edge_id,kind,object,mode,status,result,rule,match,resistance_ohm,voltage_delta_v,current_a,limit_a,ratio_percent,drawn_width_um,effective_width_um,cut_count\n";
+  *detail << "net,edge_id,kind,object,mode,status,result,rule,match,resistance_ohm,voltage_delta_v,signed_current_a,current_a,limit_a,ratio_percent,drawn_width_um,effective_width_um,cut_count\n";
   *detail << std::setprecision(17);
   std::size_t applicable = 0, evaluated = 0, missing = 0, invalid = 0, excluded = 0, violations = 0;
   for (auto& [net, graph] : EMIRDM.getDatabase().get_power_graph_map()) {
@@ -493,6 +493,7 @@ void EMIRReporter::outputEMEvaluation()
       auto number = [&](double value) { if (std::isfinite(value)) *detail << value; else *detail << "N/A"; };
       number(edge.get_resistance()); *detail << ',';
       number(evaluation.voltage_delta_v); *detail << ',';
+      number(evaluation.signed_current_a); *detail << ',';
       number(edge.get_current()); *detail << ',';
       if (checked) number(edge.get_em_limit()); else *detail << "N/A";
       *detail << ',';

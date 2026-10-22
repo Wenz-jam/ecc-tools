@@ -294,8 +294,14 @@ bool checkShiftedViaGraph(const std::filesystem::path& directory)
   power_via.set_bottom_y(0);
   power_via.set_top_x(20);
   power_via.set_top_y(0);
-  power_via.set_resistance(2.0);
+  power_via.set_cut_layer_name("VIA_EXPLICIT");
+  power_via.set_cut_num(2);
+  power_via.set_resistance(0.5);
   power_net.get_via_list().push_back(power_via);
+
+  iemir::EMViaRule via_rule;
+  via_rule.set_resistance_per_cut(4.0);
+  EMIRDM.getDatabase().get_em_tech().get_via_rule_map()["VIA_EXPLICIT"] = via_rule;
 
   iemir::PowerPin source_pin;
   source_pin.set_layer_idx(1);
@@ -315,6 +321,11 @@ bool checkShiftedViaGraph(const std::filesystem::path& directory)
   bool is_pass = power_graph.get_is_connected() && power_graph.get_node_list().size() == 4 && power_graph.get_edge_list().size() == 3
                  && coordinate_node_map.count(std::make_tuple(1, 10, 0)) == 1 && coordinate_node_map.count(std::make_tuple(2, 20, 0)) == 1
                  && coordinate_node_map.count(std::make_tuple(1, 15, 0)) == 0 && coordinate_node_map.count(std::make_tuple(2, 15, 0)) == 0;
+  for (auto& edge : power_graph.get_edge_list()) {
+    if (edge.get_type() == iemir::PowerEdgeType::kVia) {
+      is_pass = is_pass && edge.get_resistance() == 0.5;
+    }
+  }
   EMIRDM.getDatabase().set_design_name("shifted_via");
   EMIRDM.getDatabase().set_micron_dbu(1000);
   EMIRDM.getConfig().er_temp_directory_path = directory.string() + "/";
@@ -352,7 +363,83 @@ bool checkShiftedViaGraph(const std::filesystem::path& directory)
   iemir::EMIRReporter::destroyInst();
   EMIRDM.getDatabase().get_power_net_map().clear();
   EMIRDM.getDatabase().get_power_graph_map().clear();
+  EMIRDM.getDatabase().get_em_tech().get_via_rule_map().erase("VIA_EXPLICIT");
   return is_pass;
+}
+
+bool checkParallelViaPreservation()
+{
+  auto& database = EMIRDM.getDatabase();
+  database.get_power_net_map().clear();
+  database.get_power_graph_map().clear();
+  database.get_em_tech().clear();
+
+  iemir::EMViaRule rule;
+  rule.set_resistance_per_cut(3.0);
+  database.get_em_tech().get_via_rule_map()["CUT_PARALLEL"] = rule;
+  iemir::EMMetalRule metal_rule;
+  metal_rule.set_resistance_per_square(1.0);
+  database.get_em_tech().get_metal_rule_map()["MET1"] = metal_rule;
+
+  iemir::PowerNet power_net;
+  power_net.set_net_name("PARALLEL_VIAS");
+  power_net.set_type(iemir::PowerNetType::kPower);
+
+  iemir::PowerWireSegment wire;
+  wire.set_layer_idx(1);
+  wire.set_layer_name("MET1");
+  wire.set_first_x(0);
+  wire.set_first_y(20);
+  wire.set_second_x(10);
+  wire.set_second_y(20);
+  wire.set_width(10);
+  power_net.get_wire_segment_list().push_back(wire);
+
+  auto add_via = [&](const std::string& name, int cut_count) {
+    iemir::PowerVia via;
+    via.set_via_name(name);
+    via.set_cut_layer_name("CUT_PARALLEL");
+    via.set_bottom_layer_idx(1);
+    via.set_top_layer_idx(2);
+    via.set_x(10);
+    via.set_y(20);
+    via.set_cut_num(cut_count);
+    power_net.get_via_list().push_back(via);
+  };
+  add_via("VIA_ONE_CUT", 1);
+  add_via("VIA_TWO_CUT", 2);
+
+  iemir::PowerPin source_pin;
+  source_pin.set_layer_idx(1);
+  source_pin.set_x(0);
+  source_pin.set_y(20);
+  source_pin.set_low_x(-1);
+  source_pin.set_low_y(19);
+  source_pin.set_high_x(1);
+  source_pin.set_high_y(21);
+  source_pin.set_is_source(true);
+  power_net.get_pin_list().push_back(source_pin);
+  database.get_power_net_map()[power_net.get_net_name()] = power_net;
+
+  iemir::GraphBuilder::initInst();
+  EMIRGB.build();
+  iemir::GraphBuilder::destroyInst();
+
+  auto& graph = database.get_power_graph_map().at(power_net.get_net_name());
+  double conductance = 0.0;
+  std::map<std::string, std::pair<int32_t, double>> via_data;
+  for (auto& edge : graph.get_edge_list()) {
+    if (edge.get_type() != iemir::PowerEdgeType::kVia) continue;
+    conductance += 1.0 / edge.get_resistance();
+    via_data[edge.get_via_name()] = {edge.get_cut_num(), edge.get_resistance()};
+  }
+  bool passed = graph.get_is_connected() && graph.get_node_list().size() == 3 && graph.get_edge_list().size() == 3
+                && via_data.size() == 2 && via_data["VIA_ONE_CUT"] == std::make_pair(1, 3.0)
+                && via_data["VIA_TWO_CUT"] == std::make_pair(2, 1.5) && std::abs(conductance - 1.0) < 1e-12;
+  database.get_power_net_map().clear();
+  database.get_power_graph_map().clear();
+  database.get_em_tech().clear();
+  return passed;
 }
 
 bool checkInstancePowerReader(const std::filesystem::path& directory)
@@ -748,9 +835,11 @@ int main(int argc, char* argv[])
   EMIRDM.getConfig().ia_temp_directory_path = report_directory_path.string() + "/";
   EMIRDM.getConfig().gb_temp_directory_path = report_directory_path.string() + "/";
 
-  bool is_pass = checkViaElectricalAndEMRules() && checkTinyEMValues() && checkEMStatesAndReports(report_directory_path) && checkInstancePowerReader(report_directory_path) && checkTechnologyResistanceFormula()
+  bool is_pass = checkViaElectricalAndEMRules() && checkTinyEMValues() && checkEMStatesAndReports(report_directory_path) && checkInstancePowerReader(report_directory_path)
+                 && checkTechnologyResistanceFormula()
                  && checkResistanceNetworkReader(report_directory_path)
-                 && checkShiftedViaGraph(report_directory_path) && checkPointSourceDoesNotShortNearbySegment() && checkImportedPinAreaInjection()
+                 && checkShiftedViaGraph(report_directory_path) && checkParallelViaPreservation()
+                 && checkPointSourceDoesNotShortNearbySegment() && checkImportedPinAreaInjection()
                  && checkViaUsesConnectedResistorJunction() && checkSubMicroampLoad() && checkRepeatedIRLoads(report_directory_path);
   EMIRDM.getDatabase().set_design_name("test_design");
   EMIRDM.getDatabase().set_micron_dbu(1000);

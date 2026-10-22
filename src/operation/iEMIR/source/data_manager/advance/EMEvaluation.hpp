@@ -46,6 +46,7 @@ struct EMEvaluation
   EMEvalStatus status = EMEvalStatus::kNotEvaluated;
   EMRuleMatch match = EMRuleMatch::kNone;
   double voltage_delta_v = std::numeric_limits<double>::quiet_NaN();
+  double signed_current_a = std::numeric_limits<double>::quiet_NaN();
   double effective_width_um = std::numeric_limits<double>::quiet_NaN();
 };
 
