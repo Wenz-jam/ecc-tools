@@ -16,6 +16,8 @@
 // ***************************************************************************************
 #include "SdcCommand.hpp"
 
+#include <algorithm>
+
 #ifndef _WIN32
 #include <dlfcn.h>
 #endif
@@ -189,6 +191,27 @@ int SdcCommand::evalScript(const std::string& script)
 
     if (parse.numWords > 0) {
       Tcl_SetErrorLine(_interp, static_cast<int>(command_line));
+      if (_ignore_unknown_commands && parse.numWords > 0 && parse.tokenPtr != nullptr) {
+        const std::string command_name(parse.tokenPtr[0].start, static_cast<std::size_t>(parse.tokenPtr[0].size));
+        const bool registered = Tcl_FindCommand(_interp, command_name.c_str(), nullptr, 0) != nullptr;
+        const bool clock_command = command_name == "create_clock" || command_name == "create_generated_clock" || command_name == "set_propagated_clock"
+                                   || command_name == "set_clock_transition" || command_name == "set_case_analysis";
+        if (!registered || !clock_command) {
+          if (registered) {
+            Tcl_SetErrorLine(_interp, static_cast<int>(command_line));
+            if (Tcl_EvalEx(_interp, parse.commandStart, parse.commandSize, TCL_EVAL_GLOBAL) != TCL_OK) {
+              Tcl_ResetResult(_interp);
+            }
+          }
+          if (std::ranges::find(_ignored_commands, command_name) == _ignored_commands.end()) {
+            _ignored_commands.push_back(command_name);
+          }
+          line_number += static_cast<unsigned>(std::count(command_start, command_start + consumed, '\n'));
+          offset += consumed;
+          Tcl_FreeParse(&parse);
+          continue;
+        }
+      }
       const int command_result = Tcl_EvalEx(_interp, parse.commandStart, parse.commandSize, TCL_EVAL_GLOBAL);
       if (command_result != TCL_OK) {
         addError(command_line, Tcl_GetStringResult(_interp));

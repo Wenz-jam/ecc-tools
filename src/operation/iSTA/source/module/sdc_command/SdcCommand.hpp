@@ -64,6 +64,10 @@ class SdcCommand
 
   const std::vector<SdcError>& getErrors() const { return _errors; }
   void clearErrors() { _errors.clear(); }
+  // A consumer that owns only part of SDC, such as CTS clock extraction, can
+  // record commands outside its registered command set without rejecting the file.
+  void setIgnoreUnknownCommands(bool ignore) { _ignore_unknown_commands = ignore; }
+  const std::vector<std::string>& getIgnoredCommands() const { return _ignored_commands; }
 
  private:
   SdcCommand(const SdcCommand&) = delete;
@@ -73,7 +77,9 @@ class SdcCommand
   void addError(unsigned line_number, std::string message);
 
   Tcl_Interp* _interp = nullptr;
+  bool _ignore_unknown_commands = false;
   std::vector<SdcError> _errors;
+  std::vector<std::string> _ignored_commands;
 };
 
 namespace sdc {

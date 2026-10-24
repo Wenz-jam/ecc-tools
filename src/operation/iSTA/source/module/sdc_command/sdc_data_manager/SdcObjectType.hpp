@@ -7,6 +7,7 @@ enum class SdcObjectType
 {
   kNone,
   kPort,
+  kPin,
   kNet
 };
 

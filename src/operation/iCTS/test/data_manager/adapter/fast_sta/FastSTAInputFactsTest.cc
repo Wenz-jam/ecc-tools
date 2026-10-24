@@ -25,25 +25,34 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <optional>
+#include <ranges>
 #include <string>
+#include <system_error>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
 #include "FastSTA.hh"
 #include "FastSTAConstraints.hh"
-#include "FastSTAEvents.hh"
 #include "FastSTAPower.hh"
+#include "IdbCellMaster.h"
 #include "IdbLayout.h"
+#include "IdbUnits.h"
 #include "SDCClockReader.hh"
+#include "TimingConstraints.hh"
 #include "clock_state/FastSTAClockState.hh"
+#include "dm_config.h"
 #include "idm.h"
 #include "io/Wrapper.hh"
 #include "liberty/FastSTALiberty.hh"
+#include "liberty/FastSTALibertyModel.hh"
 #include "liberty/Lib.hh"
 
 namespace icts_test {
@@ -132,8 +141,20 @@ TEST_F(FastSTAInputFactsTestInterface, SourceToSequentialPinsUsesTheirLibraryWit
   context.wrapper = &_wrapper;
   context.clock_period_ns = 10.0;
   context.clock_timing_valid = true;
-  context.nodes = {{.kind = icts::FastStaNodeKind::kSource, .name = "clk"}, {.kind = icts::FastStaNodeKind::kSink, .name = "ff/CLK", .cell_master = "SEQ"}};
-  context.nets = {{.name = "clk", .driver_node_id = 0U, .load_node_ids = {1U}, .load_cap_pf = 0.01}};
+  icts::FastStaNode clock_source;
+  clock_source.kind = icts::FastStaNodeKind::kSource;
+  clock_source.name = "clk";
+  icts::FastStaNode clock_sink;
+  clock_sink.kind = icts::FastStaNodeKind::kSink;
+  clock_sink.name = "ff/CLK";
+  clock_sink.cell_master = "SEQ";
+  context.nodes = {std::move(clock_source), std::move(clock_sink)};
+  icts::FastStaNet clock_net;
+  clock_net.name = "clk";
+  clock_net.driver_node_id = 0U;
+  clock_net.load_node_ids = {1U};
+  clock_net.load_cap_pf = 0.01;
+  context.nets = {std::move(clock_net)};
   ASSERT_TRUE(context.liberty_cell_by_master.empty());
 
   // Loading order must not select a different supply for the same clock net.

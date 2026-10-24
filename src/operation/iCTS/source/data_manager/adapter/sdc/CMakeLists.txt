@@ -28,6 +28,10 @@ target_include_directories(
   ${HOME_DATABASE}/data/design/db_design
   ${HOME_DATABASE}/data/design/db_layout
   ${HOME_DATABASE}/manager/builder
+  ${HOME_OPERATION}/iSTA/source/module/sdc_command
+  ${HOME_OPERATION}/iSTA/source
+  ${HOME_OPERATION}/iSTA/source/data_manager
+  ${HOME_OPERATION}/iSTA/source/data_manager/advance
 )
 
 target_link_libraries(
@@ -39,6 +43,8 @@ target_link_libraries(
   icts_source_data_manager_config
   icts_source_toolkit_logger
   liberty
+  ista_sdc_command
+  ista_data_manager
 )
 
 if(DEBUG_ICTS_SOURCE_DATA_MANAGER_ADAPTER_SDC)

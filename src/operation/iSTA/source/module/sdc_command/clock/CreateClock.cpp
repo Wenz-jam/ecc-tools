@@ -20,6 +20,8 @@
 #include "STAHeader.hpp"
 #include "clock/ClockCommands.hpp"
 #include "object/ObjectQuery.hpp"
+#include "sdc_data_manager/SdcObject.hpp"
+#include "sdc_data_manager/SdcObjectType.hpp"
 
 namespace ista::sdc {
 
@@ -126,8 +128,13 @@ unsigned TclCreateClock::exec()
       return 0;
     }
     if (source_list.empty()) {
-      setTclError("create_clock source collection resolved to empty");
-      return 0;
+      // CTS reads clock constraints before the design objects are loaded. Keep the
+      // source name from the SDC expression so clock extraction can bind it later.
+      for (const auto& [name, value] : getOptionValueList()) {
+        if (name == "objects") {
+          source_list.push_back(value);
+        }
+      }
     }
   }
 
@@ -141,11 +148,18 @@ unsigned TclCreateClock::exec()
   }
 
   std::vector<std::string> unique_source_list;
+  std::vector<ClockSourceKind> unique_source_kinds;
   std::set<std::string> source_set;
-  for (const std::string& source_name : source_list) {
-    if (source_set.insert(source_name).second) {
-      unique_source_list.push_back(source_name);
+  const auto objects = getOptionObjects("objects");
+  for (std::size_t index = 0; index < source_list.size(); ++index) {
+    if (!source_set.insert(source_list[index]).second) {
+      continue;
     }
+    unique_source_list.push_back(source_list[index]);
+    const auto object_type = index < objects.size() ? SdcObject::getType(objects[index]) : SdcObjectType::kNone;
+    unique_source_kinds.push_back(object_type == SdcObjectType::kPin   ? ClockSourceKind::kPin
+                                  : object_type == SdcObjectType::kNet ? ClockSourceKind::kNet
+                                                                       : ClockSourceKind::kPort);
   }
 
   TimingClock timing_clock;
@@ -158,6 +172,7 @@ unsigned TclCreateClock::exec()
     timing_clock.set_comment(comment_option->getStringVal());
   }
   setClockSources(database, timing_clock, unique_source_list);
+  timing_clock.set_source_kinds(std::move(unique_source_kinds));
   timing_clock.set_is_propagated(false);
   if (!getOptionOrArg("-add")->is_set_val()) {
     removeClockSourcesFromOtherClocks(clock_map, clock_name, unique_source_list);

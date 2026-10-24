@@ -33,7 +33,11 @@ unsigned TclGetPorts::exec()
   if (const auto error = getObjectQueryError(options, objects->is_set_val())) return setTclError("get_ports " + *error), 0;
   const std::string patterns = objects->is_set_val() ? objects->getStringVal() : "*";
   std::vector<std::string> result = findObjects(STADM.getDatabase(), parseObjectPatterns(patterns, options.regexp), QueryObjectType::kPort, options);
-  if (result.empty() && !getOptionOrArg("-quiet")->is_set_val()) {
+  if (result.empty() && !options.regexp && patterns.find_first_of("*?") == std::string::npos) {
+    // A clock reader can query ports before the design database is loaded.
+    // Preserve a literal port name so the caller can bind it after design input.
+    result = parseObjectPatterns(patterns, false);
+  } else if (result.empty() && !getOptionOrArg("-quiet")->is_set_val()) {
     warn("no ports matched: " + patterns);
   }
   setResult(std::move(result), SdcObjectType::kPort);

@@ -18,6 +18,8 @@
 #include "HierarchyConstraints.hpp"
 #include "clock/ClockCommands.hpp"
 #include "object/ObjectQuery.hpp"
+#include "sdc_data_manager/SdcObject.hpp"
+#include "sdc_data_manager/SdcObjectType.hpp"
 
 namespace ista::sdc {
 
@@ -55,6 +57,12 @@ unsigned TclCreateGeneratedClock::exec()
   } catch (const std::exception& error) {
     setTclError(error.what());
     return 0;
+  }
+  if (sources.empty()) {
+    sources = getOptionObjectNames("-source");
+  }
+  if (targets.empty()) {
+    targets = getOptionObjectNames("objects");
   }
   if (sources.size() != 1 || targets.empty()) {
     setTclError("invalid generated clock source or targets");
@@ -210,7 +218,20 @@ unsigned TclCreateGeneratedClock::exec()
   GeneratedClockDefinition definition;
   definition.master_clock = master_name;
   definition.master_source = sources.front();
+  const auto source_objects = getOptionObjects("-source");
+  const auto source_type = source_objects.empty() ? SdcObjectType::kNone : SdcObject::getType(source_objects.front());
+  definition.master_source_kind = source_type == SdcObjectType::kPin   ? ClockSourceKind::kPin
+                                  : source_type == SdcObjectType::kNet ? ClockSourceKind::kNet
+                                                                       : ClockSourceKind::kPort;
   definition.targets = targets;
+  const auto target_objects = getOptionObjects("objects");
+  definition.target_kinds.reserve(targets.size());
+  for (std::size_t index = 0; index < targets.size(); ++index) {
+    const auto target_type = index < target_objects.size() ? SdcObject::getType(target_objects[index]) : SdcObjectType::kNone;
+    definition.target_kinds.push_back(target_type == SdcObjectType::kPin   ? ClockSourceKind::kPin
+                                      : target_type == SdcObjectType::kNet ? ClockSourceKind::kNet
+                                                                           : ClockSourceKind::kPort);
+  }
   if (getOptionOrArg("-divide_by")->is_set_val())
     definition.divide_by = getOptionOrArg("-divide_by")->getDoubleVal();
   if (getOptionOrArg("-multiply_by")->is_set_val())
