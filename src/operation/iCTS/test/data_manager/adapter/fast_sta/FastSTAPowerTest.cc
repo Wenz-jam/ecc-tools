@@ -17,12 +17,22 @@
 
 #include <gtest/gtest.h>
 
+#include <cstddef>
+#include <initializer_list>
 #include <limits>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
+#include "FastSTA.hh"
+#include "FastSTAClockSizingEdit.hh"
 #include "FastSTAIncremental.hh"
 #include "FastSTAPower.hh"
 #include "FastSTATiming.hh"
+#include "clock_state/FastSTAClockState.hh"
 #include "fixture/FastSTATestModel.hh"
+#include "liberty/FastSTALibertyModel.hh"
 
 namespace icts_test {
 namespace {

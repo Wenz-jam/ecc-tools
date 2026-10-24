@@ -46,6 +46,19 @@
 namespace icts {
 namespace {
 
+auto ToSdcObjectKind(ista::ClockSourceKind kind) -> SdcObjectKind
+{
+  switch (kind) {
+    case ista::ClockSourceKind::kPin:
+      return SdcObjectKind::kPin;
+    case ista::ClockSourceKind::kNet:
+      return SdcObjectKind::kNet;
+    case ista::ClockSourceKind::kPort:
+      return SdcObjectKind::kPort;
+  }
+  return SdcObjectKind::kUnknown;
+}
+
 auto configuredSdcPath() -> std::string
 {
   return dmInst->get_config().get_sdc_path();
@@ -114,18 +127,17 @@ auto SdcClockReader::readClockData() const -> SdcClockData
       }
       decl.invert = generated->invert;
       if (!generated->master_source.empty()) {
-        const auto source_kind = generated->master_source_is_pin ? SdcObjectKind::kPin : SdcObjectKind::kPort;
-        decl.generated_sources.push_back(SdcObjectRef{.kind = source_kind, .pattern = generated->master_source});
+        decl.generated_sources.push_back(SdcObjectRef{.kind = ToSdcObjectKind(generated->master_source_kind), .pattern = generated->master_source});
       }
     }
     decl.waveform_ns = clock.get_waveform();
     decl.waveform_explicit = !decl.waveform_ns.empty();
     decl.waveform_resolved = decl.waveform_explicit;
     const auto& generated_definition = clock.get_generated_clock_definition();
-    const auto& source_is_pin = generated_definition.has_value() ? generated_definition->target_is_pin : clock.get_source_is_pin();
+    const auto& source_kinds = generated_definition.has_value() ? generated_definition->target_kinds : clock.get_source_kinds();
     const auto& sources = clock.get_source_objects();
     for (std::size_t index = 0; index < sources.size(); ++index) {
-      const auto kind = index < source_is_pin.size() && source_is_pin[index] ? SdcObjectKind::kPin : SdcObjectKind::kPort;
+      const auto kind = index < source_kinds.size() ? ToSdcObjectKind(source_kinds[index]) : SdcObjectKind::kPort;
       decl.targets.push_back(SdcObjectRef{.kind = kind, .pattern = sources[index]});
     }
     data.clocks.push_back(std::move(decl));

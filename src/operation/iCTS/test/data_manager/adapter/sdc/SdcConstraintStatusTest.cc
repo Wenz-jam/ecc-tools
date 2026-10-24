@@ -32,8 +32,10 @@
 #include <cstdio>
 #include <fstream>
 #include <string>
+#include <vector>
 
 #include "SDCClockReader.hh"
+#include "TimingConstraints.hh"
 
 namespace icts_test {
 namespace {
