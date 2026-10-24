@@ -17,6 +17,7 @@
 #include "DataManager.hpp"
 #include "object/ObjectQuery.hpp"
 #include "object/ObjectCommands.hpp"
+#include "sdc_data_manager/SdcObjectType.hpp"
 
 namespace ista::sdc {
 
@@ -38,10 +39,12 @@ unsigned TclGetPins::exec()
     const auto& pins = STADM.getDatabase().get_pin_map();
     std::erase_if(result, [&](const std::string& name) { return !pins.contains(name) || pins.at(name).get_is_port(); });
   }
-  if (result.empty() && !getOptionOrArg("-quiet")->is_set_val()) {
+  if (result.empty() && !options.regexp && patterns.find_first_of("*?") == std::string::npos) {
+    result = parseObjectPatterns(patterns, false);
+  } else if (result.empty() && !getOptionOrArg("-quiet")->is_set_val()) {
     warn("no pins matched: " + patterns);
   }
-  setResult(std::move(result));
+  setResult(std::move(result), SdcObjectType::kPin);
   return 1;
 }
 

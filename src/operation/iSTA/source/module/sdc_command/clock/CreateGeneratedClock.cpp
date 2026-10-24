@@ -18,6 +18,8 @@
 #include "HierarchyConstraints.hpp"
 #include "clock/ClockCommands.hpp"
 #include "object/ObjectQuery.hpp"
+#include "sdc_data_manager/SdcObject.hpp"
+#include "sdc_data_manager/SdcObjectType.hpp"
 
 namespace ista::sdc {
 
@@ -55,6 +57,12 @@ unsigned TclCreateGeneratedClock::exec()
   } catch (const std::exception& error) {
     setTclError(error.what());
     return 0;
+  }
+  if (sources.empty()) {
+    sources = getOptionObjectNames("-source");
+  }
+  if (targets.empty()) {
+    targets = getOptionObjectNames("objects");
   }
   if (sources.size() != 1 || targets.empty()) {
     setTclError("invalid generated clock source or targets");
@@ -210,7 +218,14 @@ unsigned TclCreateGeneratedClock::exec()
   GeneratedClockDefinition definition;
   definition.master_clock = master_name;
   definition.master_source = sources.front();
+  const auto source_objects = getOptionObjects("-source");
+  definition.master_source_is_pin = !source_objects.empty() && SdcObject::getType(source_objects.front()) == SdcObjectType::kPin;
   definition.targets = targets;
+  const auto target_objects = getOptionObjects("objects");
+  definition.target_is_pin.reserve(targets.size());
+  for (std::size_t index = 0; index < targets.size(); ++index) {
+    definition.target_is_pin.push_back(index < target_objects.size() && SdcObject::getType(target_objects[index]) == SdcObjectType::kPin);
+  }
   if (getOptionOrArg("-divide_by")->is_set_val())
     definition.divide_by = getOptionOrArg("-divide_by")->getDoubleVal();
   if (getOptionOrArg("-multiply_by")->is_set_val())

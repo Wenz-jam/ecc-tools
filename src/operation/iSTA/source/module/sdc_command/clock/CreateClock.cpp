@@ -20,6 +20,8 @@
 #include "STAHeader.hpp"
 #include "clock/ClockCommands.hpp"
 #include "object/ObjectQuery.hpp"
+#include "sdc_data_manager/SdcObject.hpp"
+#include "sdc_data_manager/SdcObjectType.hpp"
 
 namespace ista::sdc {
 
@@ -146,11 +148,16 @@ unsigned TclCreateClock::exec()
   }
 
   std::vector<std::string> unique_source_list;
+  std::vector<bool> unique_source_is_pin;
   std::set<std::string> source_set;
-  for (const std::string& source_name : source_list) {
-    if (source_set.insert(source_name).second) {
-      unique_source_list.push_back(source_name);
+  const auto objects = getOptionObjects("objects");
+  for (std::size_t index = 0; index < source_list.size(); ++index) {
+    if (!source_set.insert(source_list[index]).second) {
+      continue;
     }
+    unique_source_list.push_back(source_list[index]);
+    const bool is_pin = index < objects.size() && SdcObject::getType(objects[index]) == SdcObjectType::kPin;
+    unique_source_is_pin.push_back(is_pin);
   }
 
   TimingClock timing_clock;
@@ -163,6 +170,7 @@ unsigned TclCreateClock::exec()
     timing_clock.set_comment(comment_option->getStringVal());
   }
   setClockSources(database, timing_clock, unique_source_list);
+  timing_clock.set_source_is_pin(std::move(unique_source_is_pin));
   timing_clock.set_is_propagated(false);
   if (!getOptionOrArg("-add")->is_set_val()) {
     removeClockSourcesFromOtherClocks(clock_map, clock_name, unique_source_list);
