@@ -148,7 +148,7 @@ unsigned TclCreateClock::exec()
   }
 
   std::vector<std::string> unique_source_list;
-  std::vector<bool> unique_source_is_pin;
+  std::vector<ClockSourceKind> unique_source_kinds;
   std::set<std::string> source_set;
   const auto objects = getOptionObjects("objects");
   for (std::size_t index = 0; index < source_list.size(); ++index) {
@@ -156,8 +156,10 @@ unsigned TclCreateClock::exec()
       continue;
     }
     unique_source_list.push_back(source_list[index]);
-    const bool is_pin = index < objects.size() && SdcObject::getType(objects[index]) == SdcObjectType::kPin;
-    unique_source_is_pin.push_back(is_pin);
+    const auto object_type = index < objects.size() ? SdcObject::getType(objects[index]) : SdcObjectType::kNone;
+    unique_source_kinds.push_back(object_type == SdcObjectType::kPin   ? ClockSourceKind::kPin
+                                  : object_type == SdcObjectType::kNet ? ClockSourceKind::kNet
+                                                                       : ClockSourceKind::kPort);
   }
 
   TimingClock timing_clock;
@@ -170,7 +172,7 @@ unsigned TclCreateClock::exec()
     timing_clock.set_comment(comment_option->getStringVal());
   }
   setClockSources(database, timing_clock, unique_source_list);
-  timing_clock.set_source_is_pin(std::move(unique_source_is_pin));
+  timing_clock.set_source_kinds(std::move(unique_source_kinds));
   timing_clock.set_is_propagated(false);
   if (!getOptionOrArg("-add")->is_set_val()) {
     removeClockSourcesFromOtherClocks(clock_map, clock_name, unique_source_list);

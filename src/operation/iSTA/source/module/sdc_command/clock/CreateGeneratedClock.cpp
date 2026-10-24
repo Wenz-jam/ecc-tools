@@ -219,12 +219,18 @@ unsigned TclCreateGeneratedClock::exec()
   definition.master_clock = master_name;
   definition.master_source = sources.front();
   const auto source_objects = getOptionObjects("-source");
-  definition.master_source_is_pin = !source_objects.empty() && SdcObject::getType(source_objects.front()) == SdcObjectType::kPin;
+  const auto source_type = source_objects.empty() ? SdcObjectType::kNone : SdcObject::getType(source_objects.front());
+  definition.master_source_kind = source_type == SdcObjectType::kPin   ? ClockSourceKind::kPin
+                                  : source_type == SdcObjectType::kNet ? ClockSourceKind::kNet
+                                                                       : ClockSourceKind::kPort;
   definition.targets = targets;
   const auto target_objects = getOptionObjects("objects");
-  definition.target_is_pin.reserve(targets.size());
+  definition.target_kinds.reserve(targets.size());
   for (std::size_t index = 0; index < targets.size(); ++index) {
-    definition.target_is_pin.push_back(index < target_objects.size() && SdcObject::getType(target_objects[index]) == SdcObjectType::kPin);
+    const auto target_type = index < target_objects.size() ? SdcObject::getType(target_objects[index]) : SdcObjectType::kNone;
+    definition.target_kinds.push_back(target_type == SdcObjectType::kPin   ? ClockSourceKind::kPin
+                                      : target_type == SdcObjectType::kNet ? ClockSourceKind::kNet
+                                                                           : ClockSourceKind::kPort);
   }
   if (getOptionOrArg("-divide_by")->is_set_val())
     definition.divide_by = getOptionOrArg("-divide_by")->getDoubleVal();

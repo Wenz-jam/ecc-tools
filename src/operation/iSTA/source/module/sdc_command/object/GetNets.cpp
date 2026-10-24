@@ -15,8 +15,8 @@
 // See the Mulan PSL v2 for more details.
 // ***************************************************************************************
 #include "DataManager.hpp"
-#include "object/ObjectQuery.hpp"
 #include "object/ObjectCommands.hpp"
+#include "object/ObjectQuery.hpp"
 
 namespace ista::sdc {
 
@@ -33,7 +33,8 @@ unsigned TclGetNets::exec()
 {
   ecc::TclOption* objects = getOptionOrArg("nets");
   const ObjectQueryOptions options = getObjectQueryOptions(*this);
-  if (const auto error = getObjectQueryError(options, objects->is_set_val())) return setTclError("get_nets " + *error), 0;
+  if (const auto error = getObjectQueryError(options, objects->is_set_val()))
+    return setTclError("get_nets " + *error), 0;
   for (const char* option : {"-top_net_of_hierarchical_group", "-segments", "-boundary_type"}) {
     if (getOptionOrArg(option)->is_set_val()) {
       return setTclError(std::string("get_nets ") + option + " requires hierarchical net-segment support"), 0;
@@ -41,7 +42,11 @@ unsigned TclGetNets::exec()
   }
   const std::string patterns = objects->is_set_val() ? objects->getStringVal() : "*";
   std::vector<std::string> result = findObjects(STADM.getDatabase(), parseObjectPatterns(patterns, options.regexp), QueryObjectType::kNet, options);
-  if (result.empty() && !getOptionOrArg("-quiet")->is_set_val()) {
+  if (result.empty() && !options.regexp && patterns.find_first_of("*?") == std::string::npos) {
+    // A clock reader can query nets before the design database is loaded.
+    // Preserve a literal net name so the caller can bind it after design input.
+    result = parseObjectPatterns(patterns, false);
+  } else if (result.empty() && !getOptionOrArg("-quiet")->is_set_val()) {
     warn("no nets matched: " + patterns);
   }
   setResult(std::move(result), SdcObjectType::kNet);

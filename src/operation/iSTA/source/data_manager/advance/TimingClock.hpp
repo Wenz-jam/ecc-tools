@@ -22,11 +22,20 @@
 
 namespace ista {
 
+// How a clock source or target was queried in the SDC, so a consumer that
+// reads constraints before the design database exists can bind it later.
+enum class ClockSourceKind
+{
+  kPort,
+  kPin,
+  kNet,
+};
+
 struct GeneratedClockDefinition
 {
   std::string master_clock;
   std::string master_source;
-  bool master_source_is_pin = false;
+  ClockSourceKind master_source_kind = ClockSourceKind::kPort;
   std::vector<std::string> targets;
   std::optional<double> divide_by;
   std::optional<double> multiply_by;
@@ -36,7 +45,7 @@ struct GeneratedClockDefinition
   bool invert = false;
   bool preinvert = false;
   bool combinational = false;
-  std::vector<bool> target_is_pin;
+  std::vector<ClockSourceKind> target_kinds;
   bool add = false;
 };
 
@@ -55,7 +64,7 @@ class TimingClock
   std::string& get_clock_name() { return _clock_name; }
   std::vector<std::string>& get_source_list() { return _source_list; }
   const std::vector<std::string>& get_source_list() const { return _source_list; }
-  const std::vector<bool>& get_source_is_pin() const { return _source_is_pin; }
+  const std::vector<ClockSourceKind>& get_source_kinds() const { return _source_kinds; }
   double get_period() const { return _period; }
   double get_rise_edge() const { return _rise_edge; }
   double get_fall_edge() const { return _fall_edge; }
@@ -90,7 +99,7 @@ class TimingClock
   // setter
   void set_clock_name(const std::string& clock_name) { _clock_name = clock_name; }
   void set_source_list(const std::vector<std::string>& source_list) { _source_list = source_list; }
-  void set_source_is_pin(std::vector<bool> value) { _source_is_pin = std::move(value); }
+  void set_source_kinds(std::vector<ClockSourceKind> value) { _source_kinds = std::move(value); }
   void set_period(const double period) { _period = period; }
   void set_rise_edge(const double rise_edge) { _rise_edge = rise_edge; }
   void set_fall_edge(const double fall_edge) { _fall_edge = fall_edge; }
@@ -116,7 +125,7 @@ class TimingClock
   std::optional<GeneratedClockDefinition> _generated_clock_definition;
   std::string _clock_name;
   std::vector<std::string> _source_list;
-  std::vector<bool> _source_is_pin;
+  std::vector<ClockSourceKind> _source_kinds;
   double _period = 0.0;
   double _rise_edge = 0.0;
   double _fall_edge = 0.0;
