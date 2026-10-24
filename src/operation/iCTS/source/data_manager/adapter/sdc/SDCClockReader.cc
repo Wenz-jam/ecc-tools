@@ -32,8 +32,12 @@
 #include <vector>
 
 #include "Logger.hh"
+#include "SdcCommand.hpp"
+#include "TimingClock.hpp"
+#include "TimingConstraint.hpp"
 #include "clock_parser/SDCClockParser.hh"
 #include "clock_trace/ClockTraceResolver.hh"
+#include "data_manager/DataManager.hpp"
 #include "dm_config.h"
 #include "idm.h"
 
@@ -73,7 +77,53 @@ auto SdcClockReader::readClockData() const -> SdcClockData
     return data;
   }
 
-  data = sdc_reader::SdcSubsetEvaluator(_units).readFile(_sdc_path);
+  ista::DataManager::initInst();
+  ista::SdcCommand interpreter;
+  ista::sdc::registerSdcCommands(interpreter);
+  interpreter.setIgnoreUnknownCommands(true);
+  if (interpreter.evalScriptFile(_sdc_path) != TCL_OK) {
+    data.status = SdcConstraintStatusCode::kFileError;
+    const auto& errors = interpreter.getErrors();
+    const std::string detail = errors.empty() ? "ista_sdc_parse_failed" : errors.front().message;
+    data.issues.push_back({data.status, "read_sdc", detail});
+    data.diagnostics.emplace_back("read_sdc:" + detail);
+    CTSLOG.warn(Loc::current(), "SdcClockReader: iSTA rejected SDC: ", detail);
+    ista::DataManager::destroyInst();
+    return data;
+  }
+  for (const auto& command : interpreter.getIgnoredCommands()) {
+    data.ignored.push_back(command + ":unsupported_sdc_command");
+  }
+  auto& clocks = ista::DataManager::getInst().getDatabase().get_timing_constraint().get_clock_map();
+  for (auto& [name, clock] : clocks) {
+    SdcClockDecl decl;
+    decl.clock_name = name;
+    decl.period_ns = clock.get_period();
+    decl.period_resolved = decl.period_ns > 0.0;
+    decl.is_virtual = clock.get_source_objects().empty();
+    decl.kind = clock.get_is_generated() ? SdcClockDecl::Kind::kGenerated : SdcClockDecl::Kind::kPrimary;
+    decl.master_clock_name = clock.get_master_clock_name();
+    if (const auto& generated = clock.get_generated_clock_definition(); generated.has_value()) {
+      if (generated->divide_by.has_value()) {
+        decl.divide_by = static_cast<int>(*generated->divide_by);
+      }
+      if (generated->multiply_by.has_value()) {
+        decl.multiply_by = static_cast<int>(*generated->multiply_by);
+      }
+      decl.invert = generated->invert;
+    }
+    decl.waveform_ns = clock.get_waveform();
+    decl.waveform_explicit = !decl.waveform_ns.empty();
+    decl.waveform_resolved = decl.waveform_explicit;
+    for (const auto& source : clock.get_source_objects()) {
+      decl.targets.push_back(SdcObjectRef{.kind = SdcObjectKind::kPort, .pattern = source});
+    }
+    data.clocks.push_back(std::move(decl));
+    if (clock.get_is_propagated()) {
+      data.propagated_clocks.push_back(SdcObjectRef{.kind = SdcObjectKind::kClock, .pattern = name});
+    }
+  }
+  ista::DataManager::destroyInst();
   for (const auto& diagnostic : data.diagnostics) {
     CTSLOG.warn(Loc::current(), "SdcClockReader: ", diagnostic);
   }

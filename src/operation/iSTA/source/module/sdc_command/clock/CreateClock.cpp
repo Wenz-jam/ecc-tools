@@ -126,8 +126,13 @@ unsigned TclCreateClock::exec()
       return 0;
     }
     if (source_list.empty()) {
-      setTclError("create_clock source collection resolved to empty");
-      return 0;
+      // CTS reads clock constraints before the design objects are loaded. Keep the
+      // source name from the SDC expression so clock extraction can bind it later.
+      for (const auto& [name, value] : getOptionValueList()) {
+        if (name == "objects") {
+          source_list.push_back(value);
+        }
+      }
     }
   }
 
