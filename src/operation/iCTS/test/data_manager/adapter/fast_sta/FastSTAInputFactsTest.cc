@@ -237,7 +237,10 @@ TEST_F(FastSTAInputFactsTestInterface, ExplicitSdcUnitsCannotSupplyMissingLibert
   EXPECT_DOUBLE_EQ(constraints.clocks.front().period_ns, 10.0);
   EXPECT_FALSE(loadModel(ReplaceInput(_library, "time_unit : \"1ns\";", "")).has_value());
   EXPECT_FALSE(loadModel(ReplaceInput(_library, "capacitive_load_unit(1, pf);", "")).has_value());
-  EXPECT_FALSE(loadModel(ReplaceInput(_library, "capacitive_load_unit(1, pf);", "capacitive_load_unit(1.5, pf);")).has_value());
+  // Unsupported multipliers are rejected by the shared parser before model extraction.
+  const ScopedTimingInput unsupported_units(ReplaceInput(_library, "capacitive_load_unit(1, pf);", "capacitive_load_unit(1.5, pf);"));
+  ASSERT_TRUE(unsupported_units.ready());
+  EXPECT_FALSE(dmInst->readLib({unsupported_units.path()}));
   EXPECT_TRUE(loadModel(_library).has_value());
 }
 

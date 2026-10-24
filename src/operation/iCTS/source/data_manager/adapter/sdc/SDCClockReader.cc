@@ -31,17 +31,17 @@
 #include <variant>
 #include <vector>
 
-#include "AnalysisType.hpp"
 #include "Logger.hh"
 #include "SdcCommand.hpp"
-#include "TimingClock.hpp"
-#include "TimingConstraint.hpp"
-#include "TransType.hpp"
 #include "clock_parser/SDCClockParser.hh"
 #include "clock_trace/ClockTraceResolver.hh"
+#include "common/AnalysisType.hpp"
+#include "common/TransType.hpp"
 #include "data_manager/DataManager.hpp"
 #include "dm_config.h"
 #include "idm.h"
+#include "sdc/Sdc.hpp"
+#include "sdc/TimingClock.hpp"
 
 namespace icts {
 namespace {
@@ -109,7 +109,7 @@ auto SdcClockReader::readClockData() const -> SdcClockData
   for (const auto& command : interpreter.getIgnoredCommands()) {
     data.ignored.push_back(command + ":unsupported_sdc_command");
   }
-  auto& clocks = ista::DataManager::getInst().getDatabase().get_timing_constraint().get_clock_map();
+  auto& clocks = ista::DataManager::getInst().getDatabase().sdc().get_clock_map();
   for (auto& [name, clock] : clocks) {
     SdcClockDecl decl;
     decl.clock_name = name;
