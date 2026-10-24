@@ -387,7 +387,7 @@ auto CheckSplitChildrenElectrical(const Point<int>& anchor, const std::vector<Si
   }
 
   check.root_cap_pf = CalcSplitChildrenCapPf(anchor, children, input);
-// The star sum double-counts a shared stem. It is a sufficient proof of
+  // The star sum double-counts a shared stem. It is a sufficient proof of
   // legality; only an over-budget star is replaced by the Steiner RC used for
   // direct sink groups.
   if (input.has_max_cap && check.root_cap_pf > input.max_cap_pf) {
@@ -827,6 +827,8 @@ auto SplitSinkLoadRegionGroup(const std::vector<Pin*>& loads, std::size_t max_fa
   return plan;
 }
 
+namespace {
+
 auto EvaluateSplitNodeDownstreamLegal(const SinkLoadRegionSplitNode& child, const Point<int>& candidate_center, const ClusterConfig& electrical_config,
                                       const SinkLoadRegionLegalityInput& input) -> bool
 {
@@ -836,7 +838,7 @@ auto EvaluateSplitNodeDownstreamLegal(const SinkLoadRegionSplitNode& child, cons
   return CheckSplitChildrenElectrical(candidate_center, child.children, input, "split_internal").legal;
 }
 
-auto ResolveSplitChildOrigin(const SinkLoadRegionSplitNode& child, const Point<int>& driver_pos) -> Point<int>
+auto ResolveSplitChildOrigin(const SinkLoadRegionSplitNode& child) -> Point<int>
 {
   if (!child.children.empty() || child.loads.empty()) {
     return child.center;
@@ -847,7 +849,7 @@ auto ResolveSplitChildOrigin(const SinkLoadRegionSplitNode& child, const Point<i
 auto PullSplitChildTowardDriver(SinkLoadRegionSplitNode& child, const Point<int>& driver_pos, const ClusterConfig& electrical_config,
                                 const SinkLoadRegionLegalityInput& input) -> void
 {
-  const auto origin = ResolveSplitChildOrigin(child, driver_pos);
+  const auto origin = ResolveSplitChildOrigin(child);
   const auto total_dist = geometry::Manhattan(origin, driver_pos);
   if (total_dist <= 0) {
     return;
@@ -922,7 +924,7 @@ auto RecoverSplitChildrenCapacitance(std::vector<SinkLoadRegionSplitNode>& child
 
   if (children.size() > 1U && budget.buffer_count < input.max_split_buffer_count && budget.depth < input.max_split_depth) {
     const auto branch_center = CalcSplitChildrenCenter(children);
-    if (!(branch_center.get_x() == driver_pos.get_x() && branch_center.get_y() == driver_pos.get_y())
+    if ((branch_center.get_x() != driver_pos.get_x() || branch_center.get_y() != driver_pos.get_y())
         && CheckSplitChildrenElectrical(branch_center, children, input, "split_internal").legal) {
       SinkLoadRegionSplitNode consolidated{
           .loads = {},
@@ -967,6 +969,8 @@ auto RecoverSplitChildrenCapacitance(std::vector<SinkLoadRegionSplitNode>& child
   }
   return CheckSplitChildrenElectrical(driver_pos, children, input, scope).legal;
 }
+
+}  // namespace
 
 auto RecoverSinkLoadRegionGroup(const std::vector<Pin*>& loads, const Point<int>& anchor, const SinkLoadRegionLegalityInput& input) -> SinkLoadRegionSplitPlan
 {

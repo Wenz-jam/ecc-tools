@@ -644,7 +644,9 @@ auto DataManager::synchronizeTimingContexts(const Design& design, const ClockLay
     }
     return result;
   };
-  for (const auto& [identity, id] : _timing_contexts.clocks) {
+  for (const auto& clock_context : _timing_contexts.clocks) {
+    const auto& identity = clock_context.first;
+    const auto id = clock_context.second;
     const Clock* owner = nullptr;
     for (const auto* clock : design.get_clocks()) {
       if (identity == std::pair{clock->get_clock_name(), clock->get_clock_net_name()}) {
@@ -714,7 +716,9 @@ auto DataManager::timingContextsMatchDesign(const TimingContextSet& contexts, co
       return false;
     }
   }
-  for (const auto& [identity, id] : contexts.clocks) {
+  for (const auto& clock_context : contexts.clocks) {
+    const auto& identity = clock_context.first;
+    const auto id = clock_context.second;
     const Clock* owner = nullptr;
     for (const auto* clock : design.get_clocks()) {
       if (identity == std::pair{clock->get_clock_name(), clock->get_clock_net_name()}) {

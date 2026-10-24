@@ -31,10 +31,12 @@
 #include <variant>
 #include <vector>
 
+#include "AnalysisType.hpp"
 #include "Logger.hh"
 #include "SdcCommand.hpp"
 #include "TimingClock.hpp"
 #include "TimingConstraint.hpp"
+#include "TransType.hpp"
 #include "clock_parser/SDCClockParser.hh"
 #include "clock_trace/ClockTraceResolver.hh"
 #include "data_manager/DataManager.hpp"
@@ -111,16 +113,35 @@ auto SdcClockReader::readClockData() const -> SdcClockData
         decl.multiply_by = static_cast<int>(*generated->multiply_by);
       }
       decl.invert = generated->invert;
+      if (!generated->master_source.empty()) {
+        const auto source_kind = generated->master_source_is_pin ? SdcObjectKind::kPin : SdcObjectKind::kPort;
+        decl.generated_sources.push_back(SdcObjectRef{.kind = source_kind, .pattern = generated->master_source});
+      }
     }
     decl.waveform_ns = clock.get_waveform();
     decl.waveform_explicit = !decl.waveform_ns.empty();
     decl.waveform_resolved = decl.waveform_explicit;
-    for (const auto& source : clock.get_source_objects()) {
-      decl.targets.push_back(SdcObjectRef{.kind = SdcObjectKind::kPort, .pattern = source});
+    const auto& generated_definition = clock.get_generated_clock_definition();
+    const auto& source_is_pin = generated_definition.has_value() ? generated_definition->target_is_pin : clock.get_source_is_pin();
+    const auto& sources = clock.get_source_objects();
+    for (std::size_t index = 0; index < sources.size(); ++index) {
+      const auto kind = index < source_is_pin.size() && source_is_pin[index] ? SdcObjectKind::kPin : SdcObjectKind::kPort;
+      decl.targets.push_back(SdcObjectRef{.kind = kind, .pattern = sources[index]});
     }
     data.clocks.push_back(std::move(decl));
     if (clock.get_is_propagated()) {
       data.propagated_clocks.push_back(SdcObjectRef{.kind = SdcObjectKind::kClock, .pattern = name});
+    }
+    for (const auto& [analysis, transitions] : clock.get_transition_map()) {
+      for (const auto& [transition, value] : transitions) {
+        SdcClockTransition constraint;
+        constraint.clocks.push_back(SdcObjectRef{.kind = SdcObjectKind::kClock, .pattern = name});
+        constraint.value_ns = value;
+        constraint.transition = transition == ista::TransType::kRise ? SdcTransition::kRise : SdcTransition::kFall;
+        constraint.min = analysis == ista::AnalysisType::kMin;
+        constraint.max = analysis == ista::AnalysisType::kMax;
+        data.clock_transitions.push_back(std::move(constraint));
+      }
     }
   }
   ista::DataManager::destroyInst();

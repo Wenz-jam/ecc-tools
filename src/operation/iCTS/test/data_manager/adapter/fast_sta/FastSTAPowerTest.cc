@@ -60,6 +60,9 @@ TEST(FastSTAPowerTest, EachNetUsesItsDriverVoltageAndIncrementalMatchesFullUpdat
 
   const auto region = icts::FastStaIncremental::changeBufferMasterIncremental(context, 3U, "BUF_X2");
   ASSERT_TRUE(region.has_value());
+  if (!region.has_value()) {
+    return;
+  }
   ASSERT_TRUE(icts::FastStaTiming::updateRegion(context, *region));
   ASSERT_TRUE(context.power_valid);
   ASSERT_TRUE(icts::FastStaPower::updateRegion(context, *region));
@@ -79,7 +82,10 @@ TEST(FastSTAPowerTest, InvalidConnectedVoltageInvalidatesFullAndIncrementalPower
     ASSERT_TRUE(icts::FastStaPower::update(context));
     context.liberty_cell_by_master.at("BUF_X1").voltage_v = voltage;
     auto full = context;
-    const icts::FastStaDirtyRegion region{.valid = true, .node_ids = {1U, 2U}, .net_ids = {0U, 1U}};
+    icts::FastStaDirtyRegion region;
+    region.valid = true;
+    region.node_ids = {1U, 2U};
+    region.net_ids = {0U, 1U};
     EXPECT_FALSE(icts::FastStaPower::updateRegion(context, region));
     EXPECT_FALSE(context.power_valid);
     EXPECT_DOUBLE_EQ(context.power.total_power_w, 0.0);
