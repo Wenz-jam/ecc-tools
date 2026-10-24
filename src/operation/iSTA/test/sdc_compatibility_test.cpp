@@ -131,6 +131,83 @@ void testOutputSdc()
   std::filesystem::remove(path);
 }
 
+void testGeneratedDefaultSdc()
+{
+  Database& database = STADM.getDatabase();
+  for (bool virtual_clock : {false, true}) {
+    database.get_timing_constraint() = TimingConstraint{};
+    eval(R"TCL(
+      set sdc_version 2.1
+      set_units -time ns -resistance kOhm -capacitance pF -voltage V -current mA
+      set clk_freq_mhz 100
+      set clk_period [expr {1000.0 / $clk_freq_mhz}]
+    )TCL");
+    if (virtual_clock) {
+      eval(R"TCL(
+        set clk_name __VIRTUAL_CLK__
+        create_clock -name $clk_name -period $clk_period
+        set data_inputs [all_inputs]
+      )TCL");
+    } else {
+      eval(R"TCL(
+        set clk_name clk
+        set clk_port_name clk
+        set clk_port [get_ports $clk_port_name]
+        create_clock -name $clk_name -period $clk_period $clk_port
+        set_propagated_clock [all_clocks]
+        set data_inputs [remove_from_collection [all_inputs] $clk_port]
+      )TCL");
+    }
+    eval(R"TCL(
+      set_clock_latency -source 0.5 [get_clocks $clk_name]
+      set_input_delay -max 3.0 -clock [get_clocks $clk_name] $data_inputs
+      set_input_delay -min 1.0 -clock [get_clocks $clk_name] $data_inputs
+      set_output_delay -max 1.0 -clock [get_clocks $clk_name] [all_outputs]
+      set_load 0.2 [all_outputs]
+      set_clock_uncertainty -setup 0.20 [all_clocks]
+      set_clock_uncertainty -hold 0.25 [get_clocks $clk_name]
+      set_clock_transition 0.15 [get_clocks $clk_name]
+      set_input_transition 0.20 $data_inputs
+      set_max_fanout 32 [current_design]
+    )TCL");
+
+    std::ostringstream before;
+    sdc::writeSdc(database, before);
+    eval(R"TCL(
+      set_max_transition [expr {$clk_period * 0.17}] -clock_path [get_clocks $clk_name]
+      set_max_transition [expr {$clk_period * 0.34}] -data_path [get_clocks $clk_name]
+      set_max_capacitance 0.15 [current_design]
+      set_timing_derate -early 0.95 -clock -delay_corner [all_delay_corners]
+      set_timing_derate -late 1.10 -clock -delay_corner [all_delay_corners]
+      set_timing_derate -late 1.10 -data -delay_corner [all_delay_corners]
+      set corners [all_delay_corners]
+      if {[llength $corners] != 0} {error "syntax-only query invented delay corners"}
+      set_timing_derate -late 1.10 -data -delay_corner $corners
+      set_max_transition -rise 0.5 [current_design]
+      set_max_transition -fall 0.5 [get_ports in]
+    )TCL");
+    std::ostringstream after;
+    sdc::writeSdc(database, after);
+    require(before.str() == after.str(), "syntax-only commands changed effective constraints");
+    require(database.get_arc_list().empty(), "syntax-only commands built an analysis graph");
+    TimingConstraint& constraints = database.get_timing_constraint();
+    require(constraints.get_clock_map().size() == 1, "default SDC clock count changed");
+    TimingClock& clock = constraints.get_clock_map().begin()->second;
+    require(clock.get_period() == 10.0 && clock.get_source_latency(AnalysisType::kMax, TransType::kRise) == 0.5, "default SDC clock values changed");
+    require(
+        constraints.get_port_constraint_map()["in"].get_input_delay_min() == 1.0 && constraints.get_port_constraint_map()["in"].get_input_delay_max() == 3.0,
+        "default SDC min/max input delay changed");
+    require(constraints.get_port_constraint_map()["out"].get_load(AnalysisType::kMax, TransType::kRise) == 0.2, "default SDC output load changed");
+  }
+  for (std::string script :
+       {"set_max_transition", "set_max_transition 0.5", "set_max_transition bad [current_design]", "set_max_transition Inf [current_design]",
+        "set_max_capacitance", "set_max_capacitance 0.15", "set_max_capacitance bad [current_design]", "set_timing_derate -early",
+        "set_timing_derate -late bad", "set_timing_derate -late 1.1 -delay_corner", "set_timing_derate -unknown 1.1", "all_delay_corners unexpected",
+        "unsupported_sdc_command"}) {
+    require(SdcCommand::getInst().evalString(script) == TCL_ERROR, "invalid syntax accepted: " + script);
+  }
+}
+
 int main()
 {
   Logger::initInst();
@@ -145,6 +222,7 @@ int main()
     testCdcException();
     testLoadObjectIdentity();
     testOutputSdc();
+    testGeneratedDefaultSdc();
     STALOG.info(Loc::current(), "SDC compatibility tests passed");
   } catch (const std::exception& error) {
     STALOG.warn(Loc::current(), error.what());

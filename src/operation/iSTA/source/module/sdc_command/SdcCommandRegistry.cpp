@@ -23,6 +23,7 @@
 #include "frontend/SetUnits.hpp"
 #include "logic/LogicCommands.hpp"
 #include "object/ObjectCommands.hpp"
+#include "operating_condition/SetTimingDerate.hpp"
 #include "tcl/CollectionCommands.hpp"
 #include "tcl/GetFan.hpp"
 #include "tcl/GetName.hpp"
@@ -65,6 +66,8 @@ void registerObjectQueryCommands(SdcCommand& interpreter)
   registerCommand<TclAllInputs>(interpreter, "all_inputs");
   registerCommand<TclAllOutputs>(interpreter, "all_outputs");
   registerCommand<TclAllClocks>(interpreter, "all_clocks");
+  // Syntax compatibility only until named delay corners are implemented.
+  registerCommand<TclAllDelayCorners>(interpreter, "all_delay_corners");
   registerCommand<TclGetClocks>(interpreter, "get_clock");
   registerCommand<TclGetClocks>(interpreter, "get_clocks");
   registerCommand<TclGetLibs>(interpreter, "get_lib");
@@ -105,6 +108,9 @@ void registerDelayConstraintCommands(SdcCommand& interpreter)
 void registerDesignRuleConstraintCommands(SdcCommand& interpreter)
 {
   registerCommand<TclSetMaxFanout>(interpreter, "set_max_fanout");
+  // These two commands parse arguments but do not yet apply design-rule constraints.
+  registerCommand<TclSetMaxTransition>(interpreter, "set_max_transition");
+  registerCommand<TclSetMaxCapacitance>(interpreter, "set_max_capacitance");
 }
 
 void registerLogicConstraintCommands(SdcCommand& interpreter)
@@ -130,6 +136,8 @@ void registerSdcCommands(SdcCommand& interpreter)
   registerClockConstraintCommands(interpreter);
   registerDelayConstraintCommands(interpreter);
   registerDesignRuleConstraintCommands(interpreter);
+  // Syntax compatibility only; OCV calculations are not implemented by this command.
+  registerCommand<TclSetTimingDerate>(interpreter, "set_timing_derate");
   registerLogicConstraintCommands(interpreter);
   registerPathExceptionCommands(interpreter);
 }
