@@ -19,4 +19,20 @@ class TclSetMaxFanout : public SdcTclCmd
   unsigned exec() override;
 };
 
+class TclSetMaxTransition : public SdcTclCmd
+{
+ public:
+  TclSetMaxTransition(const char* cmd_name, ClientData client_data);
+  unsigned check() override { return 1; }
+  unsigned exec() override;
+};
+
+class TclSetMaxCapacitance : public SdcTclCmd
+{
+ public:
+  TclSetMaxCapacitance(const char* cmd_name, ClientData client_data);
+  unsigned check() override { return 1; }
+  unsigned exec() override;
+};
+
 }  // namespace ista::sdc

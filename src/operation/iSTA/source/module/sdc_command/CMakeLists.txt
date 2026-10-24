@@ -1,7 +1,6 @@
 add_library(ista_sdc_command
-    # Only implemented commands are compiled and registered.  The command
-    # inventory also contains source placeholders for future implementations;
-    # those files stay out of this list until their behavior is complete.
+    # Compile implemented commands and explicitly documented syntax-only adapters.
+    # Other command placeholders remain unregistered.
     ${ISTA_MODULE}/sdc_command/SdcCommand.cpp
     ${ISTA_MODULE}/sdc_command/SdcCommandRegistry.cpp
     ${ISTA_MODULE}/sdc_command/frontend/SdcTclCmd.cpp
@@ -10,6 +9,7 @@ add_library(ista_sdc_command
     ${ISTA_MODULE}/sdc_command/object/ObjectQuery.cpp
     ${ISTA_MODULE}/sdc_command/tcl/RemoveFromCollection.cpp
     ${ISTA_MODULE}/sdc_command/object/AllClocks.cpp
+    ${ISTA_MODULE}/sdc_command/object/AllDelayCorners.cpp
     ${ISTA_MODULE}/sdc_command/object/AllPorts.cpp
     ${ISTA_MODULE}/sdc_command/object/CurrentDesign.cpp
     ${ISTA_MODULE}/sdc_command/object/GetCells.cpp
@@ -39,6 +39,9 @@ add_library(ista_sdc_command
     ${ISTA_MODULE}/sdc_command/delay/SetLoad.cpp
     ${ISTA_MODULE}/sdc_command/delay/SetOutputDelay.cpp
     ${ISTA_MODULE}/sdc_command/design_rule/SetMaxFanout.cpp
+    ${ISTA_MODULE}/sdc_command/design_rule/SetMaxTransition.cpp
+    ${ISTA_MODULE}/sdc_command/design_rule/SetMaxCapacitance.cpp
+    ${ISTA_MODULE}/sdc_command/operating_condition/SetTimingDerate.cpp
     ${ISTA_MODULE}/sdc_command/exception/PathExceptionCommand.cpp
     ${ISTA_MODULE}/sdc_command/tcl/ResetPath.cpp
     ${ISTA_MODULE}/sdc_command/exception/SetFalsePath.cpp
