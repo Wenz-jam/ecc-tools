@@ -33,13 +33,14 @@ struct ArnoldiDelayResult
   std::vector<double> slews;
   double driver_ramp;
   ParasiticArnoldiPoleResidue waveform;
+  bool resistance_adjusted = false;
 };
 
 class ArnoldiDelayCalculator
 {
  public:
-  std::optional<ArnoldiDelayResult> calculate(TimingArc& timing_arc, TransType output_trans_type, double input_slew,
-                                              const ParasiticArnoldiModel& arnoldi_model) const;
+  std::optional<ArnoldiDelayResult> calculate(TimingArc& timing_arc, TransType output_trans_type, double input_slew, const ParasiticArnoldiModel& arnoldi_model,
+                                              bool adjust_drive_resistance = false) const;
 
  private:
   static double tableResistance(TimingArc& timing_arc, TransType output_trans_type, double input_slew, double total_capacitance, double voltage_log,

@@ -240,6 +240,10 @@ bool isTimeTableType(LibTable::TableType table_type)
     case LibTable::TableType::kCellFall:
     case LibTable::TableType::kRiseTransition:
     case LibTable::TableType::kFallTransition:
+    case LibTable::TableType::kRetainingRise:
+    case LibTable::TableType::kRetainingFall:
+    case LibTable::TableType::kRetainRiseSlew:
+    case LibTable::TableType::kRetainFallSlew:
     case LibTable::TableType::kRiseConstrain:
     case LibTable::TableType::kFallConstrain:
     case LibTable::TableType::kCellRiseSigma:
@@ -492,6 +496,12 @@ void writeDelayTableModel(FILE* stream, LibArc* lib_arc)
   if (auto* rise_transition_table = delay_model->getTable(int(LibTable::TableType::kRiseTransition))) {
     writeDelayTable(stream, lib, "rise_transition", rise_transition_table);
   }
+  for (const auto& [name, type] : LibTable::_str2TableType) {
+    if (type >= LibTable::TableType::kRetainingRise && type <= LibTable::TableType::kRetainFallSlew) {
+      if (auto* table = delay_model->retainingTable(type))
+        writeDelayTable(stream, lib, name.c_str(), table);
+    }
+  }
 
   fprintf(stream, "                }\n");
 }
@@ -737,6 +747,12 @@ nlohmann::json createTimingArcJson(LibArc* lib_arc)
   }
   if (auto* fall_transition_table = delay_model->getTable(int(LibTable::TableType::kFallTransition))) {
     append_table_json("fall_transition", fall_transition_table);
+  }
+  for (const auto& [name, type] : LibTable::_str2TableType) {
+    if (type >= LibTable::TableType::kRetainingRise && type <= LibTable::TableType::kRetainFallSlew) {
+      if (auto* table = delay_model->retainingTable(type))
+        append_table_json(name.c_str(), table);
+    }
   }
 
   return timing_arc;

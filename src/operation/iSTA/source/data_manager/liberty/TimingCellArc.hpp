@@ -40,6 +40,13 @@ class TimingCellArc
   bool get_is_clock_arc() const { return _is_clock_arc; }
   bool get_is_disable_arc() const { return _is_disable_arc; }
   bool get_is_clear_preset_arc() const { return _is_clear_preset_arc; }
+  bool isThreeStateArc() const
+  {
+    for (const auto& arc : _timing_arc_list)
+      if (arc.isThreeStateArc())
+        return true;
+    return false;
+  }
   // setter
   void set_source_port(const std::string& source_port) { _source_port = source_port; }
   void set_sink_port(const std::string& sink_port) { _sink_port = sink_port; }

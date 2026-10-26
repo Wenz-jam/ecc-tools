@@ -159,11 +159,7 @@ std::vector<int32_t> ExceptionMatcher::advanceState(const ExceptionThroughIndex&
   std::vector<int32_t> next_state_list = state_list;
   const std::vector<TimingException>& exceptions = _sdc.get_path_exception_list();
   const std::string* net = nullptr;
-  if (!source_pin.empty() && source_pin != pin_name) {
-    const auto sink = _network.pins().find(std::string(pin_name));
-    if (sink != _network.pins().end())
-      net = &sink->second.get_net_name();
-  }
+  bool net_checked = source_pin.empty() || source_pin == pin_name;
   for (std::size_t exception_index = 0; exception_index < exceptions.size() && exception_index < next_state_list.size(); ++exception_index) {
     int32_t& state = next_state_list[exception_index];
     if (state < 0) {
@@ -172,6 +168,14 @@ std::vector<int32_t> ExceptionMatcher::advanceState(const ExceptionThroughIndex&
     const std::vector<TimingExceptionThrough>& through_list = exceptions[exception_index].get_through_list();
     int previous_crossing = std::numeric_limits<int>::min();
     while (static_cast<std::size_t>(state) < through_list.size()) {
+      // Most propagated states have no pending through group. Resolve the
+      // hierarchy net only when a group actually needs matching, once per arc.
+      if (!net_checked) {
+        const auto sink = _network.pins().find(std::string(pin_name));
+        if (sink != _network.pins().end())
+          net = &sink->second.get_net_name();
+        net_checked = true;
+      }
       const TimingExceptionThrough& through = through_list[state];
       int crossing = matchesThroughObjects(through.get_objects(), pin_name) ? std::numeric_limits<int>::max() : std::numeric_limits<int>::min();
       if (net != nullptr) {

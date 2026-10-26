@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 #pragma once
 #include <any>
+#include <cstdint>
 #include <map>
 #include <string>
 
@@ -25,7 +26,7 @@ class STAInterface
   void writeSdc(const std::string& file_path);
   void destroySTA();
   bool isInitialized() const { return _initialized; }
-  bool isTimingReady() const { return _timing_ready; }
+  bool isTimingReady() const;
 
   // Requires a successful runSTA(); throws std::runtime_error if not ready.
   // The returned value owns its data and remains usable after destroySTA().
@@ -38,6 +39,7 @@ class STAInterface
 
   bool _initialized = false;
   bool _timing_ready = false;
+  std::uint64_t _analyzed_sdc_revision = 0;
 
   STAInterface() = default;
   STAInterface(const STAInterface& other) = delete;

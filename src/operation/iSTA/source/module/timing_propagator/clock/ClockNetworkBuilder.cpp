@@ -27,9 +27,10 @@
 #include "Logger.hpp"
 namespace ista {
 namespace {
-bool isDisableArc(const Arc& arc)
+bool isDisableArc(const Database& database, const Arc& arc)
 {
-  return arc.get_is_disable_arc() || arc.get_is_loop_disable();
+  const auto* cell_arc = arc.libertyArcId() ? database.liberty().findCellArc(*arc.libertyArcId()) : nullptr;
+  return arc.get_is_disable_arc() || arc.get_is_loop_disable() || (cell_arc && cell_arc->isThreeStateArc());
 }
 }  // namespace
 std::vector<ClockSource> ClockNetworkBuilder::build()
@@ -127,7 +128,7 @@ void ClockNetworkBuilder::markClock(ClockSource& clock)
     }
     for (const auto& arc_idx : vertex.get_outgoing_arc_list()) {
       Arc& arc = database.graph().arcs()[arc_idx];
-      if (isDisableArc(arc)
+      if (isDisableArc(database, arc)
           || (arc.get_type() == ArcType::kNet
               && !database.sdc().clockAllowsNetArc(database.network(), std::string(clock.get_clock_name()), arc.get_source_pin(), arc.get_sink_pin()))) {
         continue;

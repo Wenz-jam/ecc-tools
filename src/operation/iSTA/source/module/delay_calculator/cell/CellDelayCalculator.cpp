@@ -38,39 +38,40 @@ bool CellDelayCalculator::calculateDrivingCell(std::string& output_pin, TimingCe
   }
 
   const double output_load = _load.pinLoad(output_pin, analysis_type, output_trans_type);
-  bool has_result = false;
-  double selected_delay = 0.0;
-  double selected_slew = 0.0;
+  TimingArc* selected_arc = nullptr;
+  double selected_input_slew = 0.;
+  double selected_table_delay = 0.;
   for (TransType input_trans_type : {TransType::kRise, TransType::kFall}) {
     const double input_slew = input_trans_type == TransType::kRise ? input_transition_rise : input_transition_fall;
     for (TimingArc* timing_arc : _selection.cellCandidates(timing_cell_arc, input_trans_type, output_trans_type, output_pin)) {
-      const bool has_delay_table = timing_arc->get_delay_table_map().contains(output_trans_type);
-      const bool has_slew_table = timing_arc->get_slew_table_map().contains(output_trans_type);
-      if (!has_delay_table && !has_slew_table) {
+      if (!timing_arc->get_delay_table_map().contains(output_trans_type) && !timing_arc->get_slew_table_map().contains(output_trans_type))
         continue;
-      }
-
-      double load_delay = 0.0;
-      if (has_delay_table) {
-        const double loaded_delay = calcTimingArcDelay(output_pin, *timing_arc, analysis_type, output_trans_type, input_slew, output_load);
-        const double intrinsic_delay = calcTimingArcDelayByLoad(*timing_arc, output_trans_type, input_slew, 0.0);
-        load_delay = loaded_delay - intrinsic_delay;
-      }
-      const double output_slew
-          = has_slew_table ? calcTimingArcSlew(output_pin, *timing_arc, analysis_type, output_trans_type, input_slew, output_load) : input_slew;
-      if (!has_result || (analysis_type == AnalysisType::kMin && load_delay < selected_delay)
-          || (analysis_type == AnalysisType::kMax && load_delay > selected_delay)) {
-        selected_delay = load_delay;
-        selected_slew = output_slew;
-        has_result = true;
+      // Choose the external drive condition from its library load delay.
+      // A fitted waveform has a small delay residual, which can reverse the
+      // ordering of weak/strong conditional arcs after intrinsic subtraction.
+      const double load_delay = calcTimingArcDelayByLoad(*timing_arc, output_trans_type, input_slew, output_load)
+                                - calcTimingArcDelayByLoad(*timing_arc, output_trans_type, input_slew, 0.);
+      if (!selected_arc || (analysis_type == AnalysisType::kMin && load_delay < selected_table_delay)
+          || (analysis_type == AnalysisType::kMax && load_delay > selected_table_delay)) {
+        selected_arc = timing_arc;
+        selected_input_slew = input_slew;
+        selected_table_delay = load_delay;
       }
     }
   }
-  if (!has_result) {
+  if (!selected_arc)
     return false;
+  double load_delay = 0.;
+  if (selected_arc->get_delay_table_map().contains(output_trans_type)) {
+    const double loaded_delay = calcTimingArcDelay(output_pin, *selected_arc, analysis_type, output_trans_type, selected_input_slew, output_load);
+    const double intrinsic_delay = calcTimingArcDelayByLoad(*selected_arc, output_trans_type, selected_input_slew, 0.);
+    load_delay = loaded_delay - intrinsic_delay;
   }
-  timing_result.set_delay(selected_delay);
-  timing_result.set_slew(selected_slew);
+  timing_result.set_delay(load_delay);
+  const double output_slew = selected_arc->get_slew_table_map().contains(output_trans_type)
+                                 ? calcTimingArcSlew(output_pin, *selected_arc, analysis_type, output_trans_type, selected_input_slew, output_load)
+                                 : selected_input_slew;
+  timing_result.set_slew(output_slew);
   return true;
 }
 

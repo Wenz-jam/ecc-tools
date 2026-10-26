@@ -61,6 +61,9 @@ class TimingStateQuery
                       std::optional<TransType> source = std::nullopt);
   bool clockPathHasVariation(const std::string& pin_name, std::string_view clock_name, TransType transition,
                              std::optional<TransType> source = std::nullopt) const;
+  double clockPathBound(const std::string& pin_name, std::string_view clock_name, TransType transition, std::optional<TransType> source = std::nullopt) const;
+  bool canPrunePathStates() const;
+  bool prunePathStates(TimingPoint& point, std::size_t remaining_arcs) const;
   double roundTime(double time);
   std::vector<TransType> getOutputTransTypeList(Arc& arc, AnalysisType analysis_type, TransType input_trans_type);
   double getArcDelay(Arc& arc, AnalysisType analysis_type, TransType input_trans_type);

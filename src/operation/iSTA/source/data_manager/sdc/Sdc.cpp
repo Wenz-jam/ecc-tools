@@ -20,7 +20,9 @@ namespace ista {
 void Sdc::clearConstraints()
 {
   auto path = std::move(_sdc_file_path);
+  const auto next_revision = _revision + 1;
   *this = Sdc{};
+  _revision = next_revision;
   _sdc_file_path = std::move(path);
 }
 void Sdc::setClockSources(const Network& network, TimingClock& clock, const std::vector<std::string>& objects) const

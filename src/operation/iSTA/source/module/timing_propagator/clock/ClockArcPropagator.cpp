@@ -32,7 +32,8 @@
 namespace ista {
 bool ClockArcPropagator::isDisableArc(Arc& arc)
 {
-  return arc.get_is_disable_arc() || arc.get_is_loop_disable();
+  const auto* cell_arc = arc.libertyArcId() ? _database.liberty().findCellArc(*arc.libertyArcId()) : nullptr;
+  return arc.get_is_disable_arc() || arc.get_is_loop_disable() || (cell_arc && cell_arc->isThreeStateArc());
 }
 
 void ClockArcPropagator::propagateArrival(ClockSource& clock, std::size_t arc_idx, AnalysisType analysis_type, bool respect_boundaries)

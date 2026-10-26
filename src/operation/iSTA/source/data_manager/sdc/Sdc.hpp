@@ -16,6 +16,7 @@
 // ***************************************************************************************
 #pragma once
 
+#include <cstdint>
 #include <limits>
 #include <map>
 #include <optional>
@@ -172,6 +173,10 @@ class Sdc
   std::map<std::string, std::map<std::string, ClockPinConstraint>>& clockPinConstraints() { return _clock_pin_constraints; }
   const std::map<std::string, std::map<std::string, ClockPinConstraint>>& clockPinConstraints() const { return _clock_pin_constraints; }
   void clearConstraints();
+  // Registered Tcl mutators advance this before execution, including failures
+  // that may have partially edited constraints. Direct C++ edits must do likewise.
+  std::uint64_t revision() const { return _revision; }
+  void markChanged() { ++_revision; }
   void defineClock(const Network& network, TimingClock clock, const std::vector<std::string>& sources, bool add);
   TimingClock makeGeneratedClock(const std::string& name, GeneratedClockDefinition definition, const std::string& comment) const;
   void resetPathExceptions(const TimingException& filter);
@@ -185,6 +190,7 @@ class Sdc
 
  private:
   void removeClockReferences(const std::string& name);
+  std::uint64_t _revision = 0;
   ElectricalLimits _electrical_limits;
   TimingDerates _timing_derates;
   std::vector<TimingException> _path_exception_list;

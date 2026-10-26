@@ -41,6 +41,7 @@ class ArnoldiResponseCalculator
 
   TimingResultKey timingKey(std::string& output_pin, TimingArc& timing_arc, AnalysisType analysis_type, TransType output_trans_type, double input_slew);
   DriverResponse calculate(std::string& output_pin, TimingArc& timing_arc, AnalysisType analysis_type, TransType output_trans_type, double input_slew);
+  std::optional<DriverResponse> smallNetResponse(TimingArc& timing_arc, TransType edge, double slew, const ParasiticArnoldiModel& model);
   void cacheDriverResponse(std::string& output_pin, AnalysisType analysis_type, TransType output_trans_type, double driver_slew, DriverResponse& timing_result);
   DriverResultKey driverKey(std::string& output_pin, AnalysisType analysis_type, TransType output_trans_type, double driver_slew);
   Database& _database;
@@ -50,6 +51,5 @@ class ArnoldiResponseCalculator
   ReceiverThresholdCalculator& _threshold;
   std::map<TimingResultKey, DriverResponse> _responses;
   std::map<DriverResultKey, DriverResponse> _driver_responses;
-  static constexpr double kMinSlewResistanceThreshold = 0.45;
 };
 }  // namespace ista

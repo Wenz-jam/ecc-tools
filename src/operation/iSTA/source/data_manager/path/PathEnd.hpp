@@ -14,6 +14,7 @@ namespace ista {
 struct PathCheck
 {
   double required = 0.0;
+  double required_before_round = 0.0;
   TimingCheckType type = TimingCheckType::kNone;
   double check_time = 0.0;
   double uncertainty = 0.0;

@@ -16,6 +16,7 @@
 // ***************************************************************************************
 #include "DataArrivalPropagator.hpp"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -32,7 +33,34 @@ void DataArrivalPropagator::propagate()
 {
   Database& database = _database;
   _through_index.rebuild(database.sdc(), database.network());
+  bool prune = _path_query.canPrunePathStates();
+  auto& graph = database.graph();
+  std::vector<std::size_t> remaining_arcs(graph.vertices().size());
+  if (prune) {
+    std::vector<bool> visited(graph.vertices().size());
+    for (auto vertex = graph.vertexOrder().rbegin(); vertex != graph.vertexOrder().rend() && prune; ++vertex) {
+      for (auto index : graph.vertices()[*vertex].get_outgoing_arc_list()) {
+        auto& arc = graph.arcs()[index];
+        if (_path_query.isDisableArc(arc) || _path_query.shouldStopDataPropagation(arc))
+          continue;
+        const auto sink = arc.get_sink_vertex_idx();
+        if (sink < 0 || static_cast<std::size_t>(sink) >= visited.size() || !visited[sink]) {
+          // A partial/synthetic graph without a complete topological order
+          // cannot supply a safe bound on subsequent tolerance merges.
+          prune = false;
+          break;
+        }
+        remaining_arcs[*vertex] = std::max(remaining_arcs[*vertex], remaining_arcs[sink] + 1);
+      }
+      visited[*vertex] = true;
+    }
+  }
+  database.graph().setPathStatesPruned(false);
   for (int32_t vertex_idx : database.graph().vertexOrder()) {
+    // All fanin states are complete here; no downstream predecessor borrows
+    // them yet. Never erase a state after propagating its fanout.
+    if (prune && _path_query.prunePathStates(database.graph().vertices()[vertex_idx].get_timing_point(), remaining_arcs[vertex_idx]))
+      database.graph().setPathStatesPruned(true);
     for (std::size_t arc_idx : database.graph().vertices()[vertex_idx].get_outgoing_arc_list()) {
       if (_path_query.isDisableArc(database.graph().arcs()[arc_idx])) {
         continue;

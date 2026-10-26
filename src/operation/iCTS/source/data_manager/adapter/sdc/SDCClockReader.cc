@@ -92,7 +92,21 @@ auto SdcClockReader::readClockData() const -> SdcClockData
     return data;
   }
 
+  if (ista::DataManager::isInitialized()) {
+    data.status = SdcConstraintStatusCode::kFileError;
+    data.issues.push_back({data.status, "read_sdc", "ista_session_in_use"});
+    data.diagnostics.emplace_back("read_sdc:ista_session_in_use");
+    CTSLOG.warn(Loc::current(), "SdcClockReader: an existing STA session owns the shared database.");
+    return data;
+  }
   ista::DataManager::initInst();
+  // This declaration read owns the database. Destroy it after the interpreter,
+  // on success, parse failure, or exception; never release another tool's state.
+  struct OwnedStaDatabase
+  {
+    ~OwnedStaDatabase() { ista::DataManager::destroyInst(); }
+  } owned_database;
+
   ista::SdcCommand interpreter;
   ista::sdc::registerSdcCommands(interpreter);
   interpreter.setIgnoreUnknownCommands(true);
@@ -103,7 +117,6 @@ auto SdcClockReader::readClockData() const -> SdcClockData
     data.issues.push_back({data.status, "read_sdc", detail});
     data.diagnostics.emplace_back("read_sdc:" + detail);
     CTSLOG.warn(Loc::current(), "SdcClockReader: iSTA rejected SDC: ", detail);
-    ista::DataManager::destroyInst();
     return data;
   }
   for (const auto& command : interpreter.getIgnoredCommands()) {
@@ -156,7 +169,6 @@ auto SdcClockReader::readClockData() const -> SdcClockData
       }
     }
   }
-  ista::DataManager::destroyInst();
   for (const auto& diagnostic : data.diagnostics) {
     CTSLOG.warn(Loc::current(), "SdcClockReader: ", diagnostic);
   }

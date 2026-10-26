@@ -176,7 +176,8 @@ PathCheck PathChecker::evaluateRegister(const TimingPathState& path, TimingCheck
   result.network_delay = arrival - result.source_latency;
   result.capture_time = getEndPointCaptureTime(path, capture_clock, result.capture_transition, analysis_type, capture_index) + arrival + result.reconvergence;
   const double signed_check = analysis_type == AnalysisType::kMin ? result.check_time : -result.check_time;
-  result.required = _query.roundTime(result.capture_time + signed_check + (analysis_type == AnalysisType::kMin ? result.uncertainty : -result.uncertainty));
+  result.required_before_round = result.capture_time + signed_check + (analysis_type == AnalysisType::kMin ? result.uncertainty : -result.uncertainty);
+  result.required = _query.roundTime(result.required_before_round);
   return result;
 }
 
@@ -340,8 +341,9 @@ std::vector<PathCheck> PathChecker::evaluateOutput(const TimingPathState& path, 
         indexed.capture_time += indexed.source_latency;
         indexed.capture_time += indexed.network_delay;
         indexed.capture_time += indexed.reconvergence;
-        indexed.required = _query.roundTime(indexed.capture_time - *indexed.output_delay
-                                            + (analysis_type == AnalysisType::kMin ? indexed.uncertainty : -indexed.uncertainty));
+        indexed.required_before_round
+            = indexed.capture_time - *indexed.output_delay + (analysis_type == AnalysisType::kMin ? indexed.uncertainty : -indexed.uncertainty);
+        indexed.required = _query.roundTime(indexed.required_before_round);
         candidates.push_back(std::move(indexed));
       }
     }
@@ -429,7 +431,11 @@ double PathChecker::calcPathDelayRequiredTime(const std::string& end_point, cons
     endpoint_margin = 0.0;
 
   double anchor = end_path_state.get_launch_time();
-  if (!exception.get_ignore_clock_latency()) {
+  if (exception.get_ignore_clock_latency()) {
+    // A clock-independent path budget retains the endpoint's library check
+    // or output delay, but no clock uncertainty, latency or reconvergence.
+    endpoint_margin = check.output_delay ? -*check.output_delay : (analysis_type == AnalysisType::kMin ? check.check_time : -check.check_time);
+  } else {
     const auto clock = database.sdc().get_clock_map().find(end_path_state.get_clock_name());
     const double edge = clock == database.sdc().get_clock_map().end()
                             ? 0.0

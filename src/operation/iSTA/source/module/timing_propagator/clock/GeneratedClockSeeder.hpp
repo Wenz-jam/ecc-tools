@@ -27,13 +27,14 @@ namespace ista {
 class GeneratedClockSeeder
 {
  public:
-  explicit GeneratedClockSeeder(Database& database, DelayCalculator& delay) : _database(database), _clock_arc_propagator(database, delay) {}
+  explicit GeneratedClockSeeder(Database& database, DelayCalculator& delay) : _database(database), _delay(delay), _clock_arc_propagator(database, delay) {}
   void seed(ClockSource& clock);
 
  private:
   bool seedFromMaster(ClockSource& clock, const TimingClock& definition);
   bool hasPhysicalClockState(const TimingPoint& timing_point, std::string_view clock_name);
   Database& _database;
+  DelayCalculator& _delay;
   ClockArcPropagator _clock_arc_propagator;
 };
 }  // namespace ista

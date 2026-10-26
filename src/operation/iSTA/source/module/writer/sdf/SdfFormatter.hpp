@@ -20,7 +20,7 @@ class SdfFormatter
   std::string escapeName(std::string& name);
   std::string condition(TimingArc& timing_arc);
   std::string edgeName(TransType trans_type);
-  void delay(std::ostream& sdf_file, SdfDelay& sdf_delay);
+  void delay(std::ostream& sdf_file, SdfDelay& sdf_delay, bool explicit_edges = false);
   void triple(std::ostream& sdf_file, double min_delay, double max_delay);
   std::string number(double value);
 

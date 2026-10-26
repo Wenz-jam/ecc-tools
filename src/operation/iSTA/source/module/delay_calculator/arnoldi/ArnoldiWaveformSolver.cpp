@@ -358,6 +358,40 @@ void ArnoldiWaveformSolver::rampPoint(double pole_ramp, double voltage, double& 
   derivative = (1.0 - voltage) / (pole_time - (1.0 - voltage) * pole_ramp);
 }
 
+std::optional<double> ArnoldiWaveformSolver::crossingCapacitance(double driver_ramp, double drive_resistance, double total_capacitance, double crossing_time,
+                                                                 double voltage)
+{
+  if (!(driver_ramp > 0. && drive_resistance > 0. && total_capacitance > 0. && crossing_time > 0. && voltage > 0. && voltage < 1.)
+      || !std::isfinite(driver_ramp) || !std::isfinite(drive_resistance) || !std::isfinite(total_capacitance) || !std::isfinite(crossing_time))
+    return std::nullopt;
+  const double ideal_time = driver_ramp * (1. - voltage);
+  const double tolerance = 1e-10 * std::max(crossing_time, 1e-6);
+  if (crossing_time < ideal_time - tolerance)
+    return std::nullopt;
+  if (crossing_time >= rampTime(1. / (drive_resistance * total_capacitance), driver_ramp, voltage))
+    return total_capacitance;
+  double lower = 0., upper = total_capacitance;
+  double capacitance = std::clamp((crossing_time - ideal_time) / drive_resistance, total_capacitance * 1e-12, total_capacitance);
+  for (int iteration = 0; iteration < 40; ++iteration) {
+    const double tau = drive_resistance * capacitance;
+    const double ramp_ratio = driver_ramp / tau;
+    double normalized_time = 0., ramp_derivative = 0.;
+    rampPoint(ramp_ratio, voltage, normalized_time, ramp_derivative);
+    const double residual = tau * normalized_time - crossing_time;
+    if (std::abs(residual) <= tolerance)
+      return capacitance;
+    if (residual < 0.)
+      lower = capacitance;
+    else
+      upper = capacitance;
+    // t = R*C*f(ramp/(R*C)); differentiate with respect to capacitance.
+    const double derivative = drive_resistance * (normalized_time - ramp_ratio * ramp_derivative);
+    const double candidate = derivative > 0. ? capacitance - residual / derivative : 0.;
+    capacitance = std::isfinite(candidate) && candidate > lower && candidate < upper ? candidate : lower + .5 * (upper - lower);
+  }
+  return std::nullopt;
+}
+
 double ArnoldiWaveformSolver::effectiveCapacitance(double driver_ramp, double drive_resistance, const ParasiticArnoldiPoleResidue& pole_residue,
                                                    double effective_capacitance_time)
 {

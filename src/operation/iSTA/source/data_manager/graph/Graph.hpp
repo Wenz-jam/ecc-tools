@@ -58,7 +58,8 @@ class Graph
         _startpoints(other._startpoints),
         _endpoints(other._endpoints),
         _timing_order(other._timing_order),
-        _points(other._points)
+        _points(other._points),
+        _path_states_pruned(other._path_states_pruned)
   {
     // Vertices borrow timing points from this graph, including distinct inout
     // driver points. Copying containers must not retain the source pointers.
@@ -121,9 +122,13 @@ class Graph
     return arc.get_type() == ArcType::kCell ? driverPoint(arc.get_sink_pin()) : _points.at(arc.get_sink_pin());
   }
 
+  bool pathStatesPruned() const { return _path_states_pruned; }
+  void setPathStatesPruned(bool value) { _path_states_pruned = value; }
+
   // Clear propagated timing at both receiving and driving vertices.
   void clearTiming()
   {
+    _path_states_pruned = false;
     for (GraphVertex& vertex : _vertices) {
       TimingPoint& point = vertex.get_timing_point();
       point.set_arrival(-std::numeric_limits<double>::infinity());
@@ -152,6 +157,7 @@ class Graph
   std::vector<std::string> _endpoints;
   std::vector<std::string> _timing_order;
   std::map<std::string, TimingPoint> _points;
+  bool _path_states_pruned = false;
 };
 
 }  // namespace ista

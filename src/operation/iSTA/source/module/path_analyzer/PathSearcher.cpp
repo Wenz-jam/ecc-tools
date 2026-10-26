@@ -35,7 +35,10 @@ std::vector<TimingPath> PathSearcher::findPathEnds(const std::string& end_point)
   if (!_query.isConstrainedEndPoint(end_point)) {
     return timing_path_list;
   }
-  buildPathDiversionList(end_point);
+  // Complete DAG propagation already retained every non-dominated launch.
+  // Diversion repair must not reinsert candidates removed by proven bounds.
+  if (!_database.graph().pathStatesPruned())
+    buildPathDiversionList(end_point);
   for (AnalysisType analysis : {AnalysisType::kMax, AnalysisType::kMin}) {
     for (PathSourceType source : {PathSourceType::kInput, PathSourceType::kRegister}) {
       if (auto path_end = findWorstPathEnd(end_point, analysis, source)) {

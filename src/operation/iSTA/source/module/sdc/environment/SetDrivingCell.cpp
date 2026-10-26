@@ -110,6 +110,8 @@ unsigned TclSetDrivingCell::exec()
   }
   std::string from_pin;
   for (TimingCellArc& timing_cell_arc : timing_cell.get_cell_arc_list()) {
+    if (timing_cell_arc.isThreeStateArc() || timing_cell_arc.get_is_clear_preset_arc())
+      continue;
     if (timing_cell_arc.get_sink_port() != to_pin || (!requested_from_pin.empty() && timing_cell_arc.get_source_port() != requested_from_pin)) {
       continue;
     }

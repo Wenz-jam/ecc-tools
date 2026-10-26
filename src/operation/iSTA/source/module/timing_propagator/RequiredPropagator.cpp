@@ -17,8 +17,19 @@
 #include "RequiredPropagator.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
+#include <deque>
+#include <map>
 #include <string>
+#include <string_view>
+#include <tuple>
+#include <unordered_set>
+#include <vector>
+
+#include "ClockReconvergenceCalculator.hpp"
+#include "TimingTolerance.hpp"
+#include "data/TransitionFilter.hpp"
 
 namespace ista {
 
@@ -30,6 +41,11 @@ void RequiredPropagator::propagate()
   _through_index.rebuild(database.sdc(), database.network());
   const double required_time = resolveRequiredTime();
 
+  if (database.graph().pathStatesPruned()) {
+    propagateCaptureRequired(required_time);
+    updateSlack();
+    return;
+  }
   seedEndPointRequired(required_time);
 
   for (auto iter = database.graph().vertexOrder().rbegin(); iter != database.graph().vertexOrder().rend(); ++iter) {
@@ -45,6 +61,150 @@ void RequiredPropagator::propagate()
   }
 
   updateSlack();
+}
+
+void RequiredPropagator::propagateCaptureRequired(double required_time)
+{
+  struct CaptureRequired
+  {
+    const PathCheck* check;
+    double required = 0.;  // Required without CPPR, less the downstream data delay.
+    double bound = 0.;
+    double downstream_delay = 0.;
+  };
+  using Candidates = std::vector<CaptureRequired>;
+  using Groups = std::map<TimingPathState::Group, Candidates>;
+  using Edges = std::map<TransType, Groups>;
+  using Sources = std::map<PathSourceType, Edges>;
+  // Capture metadata is invariant along the data cone. Own each endpoint
+  // check once; deque insertion keeps references stable for the whole pass.
+  std::deque<PathCheck> checks;
+  std::unordered_map<TimingPoint*, Sources> frontiers;
+  std::unordered_set<const TimingPoint*> endpoints;
+  // Clock waveforms are fixed during this setup-required pass. Many data
+  // points share the same launch/capture pair; retracing its clock paths at
+  // each point only repeats the same correction. Key views refer to immutable
+  // graph path states and the checks owned above, both outliving this cache.
+  // Keep it local so another propagate() observes updated clocks/constraints.
+  using ClockPair = std::tuple<std::string_view, TransType, std::string_view, TransType, std::string_view, TransType, std::string_view, TransType>;
+  std::map<ClockPair, double> corrections;
+  ClockReconvergenceCalculator reconvergence(_database);
+  auto identity = [](const CaptureRequired& item) {
+    return std::tie(item.check->capture_pin, item.check->capture_clock, item.check->capture_pin_transition, item.check->capture_transition);
+  };
+  auto insert = [&](Candidates& candidates, CaptureRequired candidate) {
+    for (const auto& current : candidates) {
+      if ((identity(current) == identity(candidate) && current.required <= candidate.required)
+          || current.required + current.bound < candidate.required - 4. * kTimingTolerance)
+        return;
+    }
+    std::erase_if(candidates, [&](const auto& current) {
+      return (identity(current) == identity(candidate) && candidate.required < current.required)
+             || candidate.required + candidate.bound < current.required - 4. * kTimingTolerance;
+    });
+    candidates.push_back(std::move(candidate));
+  };
+  // The eligibility check guarantees a single admissible capture per endpoint
+  // and launch group. Exceptions/multiple captures use the exhaustive path.
+  for (const auto& endpoint : _database.graph().endpoints()) {
+    auto& point = _database.graph().points().at(endpoint);
+    endpoints.insert(&point);
+    const auto mode = point.get_path_state_map().find(AnalysisType::kMax);
+    if (mode == point.get_path_state_map().end()) {
+      point.set_required(required_time);
+      continue;
+    }
+    for (const auto& [source, edges] : mode->second)
+      for (const auto& [edge, states] : edges) {
+        auto& groups = frontiers[&point][source][edge];
+        for (const auto& [tag, state] : states) {
+          if (groups.contains(state.group()))
+            continue;
+          auto without_launch = state;
+          without_launch.set_crpr_clock_pin("");
+          without_launch.set_start_point("");
+          auto& candidates = groups[state.group()];
+          if (const auto end = _check.checkPath(without_launch, endpoint, AnalysisType::kMax)) {
+            const auto& check = end->check();
+            const double bound = _query.clockPathBound(check.capture_pin, check.capture_clock, check.capture_pin_transition, check.capture_transition);
+            checks.push_back(check);
+            candidates.push_back({&checks.back(), end->required(), bound});
+          } else if (!_query.isConstrainedEndPoint(endpoint)) {
+            PathCheck check;
+            check.required_before_round = required_time;
+            checks.push_back(std::move(check));
+            candidates.push_back({&checks.back(), required_time, 0.});
+          }
+        }
+      }
+  }
+  for (auto vertex = _database.graph().vertexOrder().rbegin(); vertex != _database.graph().vertexOrder().rend(); ++vertex) {
+    auto& point = _database.graph().vertices()[*vertex].get_timing_point();
+    auto& target = frontiers[&point];
+    for (auto index : _database.graph().vertices()[*vertex].get_outgoing_arc_list()) {
+      auto& arc = _database.graph().arcs()[index];
+      if (_query.isDisableArc(arc) || _query.shouldStopDataPropagation(arc))
+        continue;
+      auto found = frontiers.find(&_database.graph().sinkPoint(arc));
+      if (found == frontiers.end())
+        continue;
+      for (auto input : {TransType::kRise, TransType::kFall}) {
+        if (!allowsTransition(_database.network(), _database.graph().simValues(), arc.get_source_pin(), input, arc.get_type() == ArcType::kNet))
+          continue;
+        for (auto output : _query.getOutputTransTypeList(arc, AnalysisType::kMax, input)) {
+          if (!allowsTransition(_database.network(), _database.graph().simValues(), arc.get_sink_pin(), output, arc.get_type() == ArcType::kCell))
+            continue;
+          const double delay = _query.getDataArcDelay(arc, AnalysisType::kMax, input, output);
+          for (const auto& [source, edges] : found->second) {
+            const auto edge = edges.find(output);
+            if (edge == edges.end())
+              continue;
+            for (const auto& [group, candidates] : edge->second) {
+              if (std::get<2>(group) && arc.get_type() == ArcType::kNet
+                  && !_database.sdc().clockAllowsNetArc(_database.network(), std::get<0>(group), arc.get_source_pin(), arc.get_sink_pin()))
+                continue;
+              auto& values = target[source][input][group];
+              for (auto candidate : candidates) {
+                candidate.required -= delay;
+                candidate.downstream_delay += delay;
+                insert(values, std::move(candidate));
+              }
+            }
+          }
+        }
+      }
+    }
+    const auto mode = point.get_path_state_map().find(AnalysisType::kMax);
+    if (mode == point.get_path_state_map().end())
+      continue;
+    for (auto& [source, edges] : mode->second)
+      for (auto& [edge, states] : edges)
+        for (auto& [tag, state] : states) {
+          const auto group = target[source][edge].find(state.group());
+          if (group == target[source][edge].end())
+            continue;
+          for (const auto& candidate : group->second) {
+            const auto& check = *candidate.check;
+            ClockPair pair{state.get_crpr_clock_pin(), state.get_crpr_clock_trans_type(), state.get_clock_name(), state.get_launch_clock_trans_type(),
+                           check.capture_pin,          check.capture_pin_transition,      check.capture_clock,    check.capture_transition};
+            auto [correction, inserted] = corrections.try_emplace(std::move(pair), 0.);
+            if (inserted) {
+              std::string common;
+              correction->second = reconvergence.correction(state.get_crpr_clock_pin(), state.get_crpr_clock_trans_type(), state.get_clock_name(),
+                                                            check.capture_pin, check.capture_pin_transition, check.capture_clock, AnalysisType::kMax, common,
+                                                            state.get_launch_clock_trans_type(), check.capture_transition);
+            }
+            const double cppr = correction->second;
+            const double required = _query.roundTime(check.required_before_round + cppr) - candidate.downstream_delay;
+            const auto previous = _required.find(&state);
+            if (previous == _required.end() || required < previous->second) {
+              _required[&state] = required;
+              if (endpoints.contains(&point))
+                _setup_checks[&state] = check.type == TimingCheckType::kSetup ? check.check_time : 0.;
+            }
+          }
+        }
+  }
 }
 
 double RequiredPropagator::resolveRequiredTime()

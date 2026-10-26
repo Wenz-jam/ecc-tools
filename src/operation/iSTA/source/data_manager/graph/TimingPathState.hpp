@@ -22,6 +22,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "common/TransType.hpp"
@@ -36,6 +37,11 @@ class TimingPathState
   // Arrival dominance must retain the launch path when CPPR can differ.
   std::string_view crprPathTag() const { return _preserve_crpr_path ? std::string_view(_crpr_clock_pin) : std::string_view{}; }
   void set_preserve_crpr_path(bool value) { _preserve_crpr_path = value; }
+  // Bound the correction by every common prefix, not just the leaf delta.
+  double clockPathBound() const { return _clock_path_bound; }
+  void setClockPathBound(double value) { _clock_path_bound = value; }
+  using Group = std::tuple<std::string, TransType, bool, std::optional<std::size_t>>;
+  Group group() const { return {_clock_name, _launch_clock_trans_type, _is_clock_source_path, _launch_clock_edge_index}; }
   // getter
   bool get_is_clock_source_path() const { return _is_clock_source_path; }
   void set_is_clock_source_path(bool value) { _is_clock_source_path = value; }
@@ -84,6 +90,7 @@ class TimingPathState
   std::optional<std::size_t> _launch_clock_edge_index;
   bool _is_clock_source_path = false;
   bool _preserve_crpr_path = false;
+  double _clock_path_bound = std::numeric_limits<double>::infinity();
   double _arrival = -std::numeric_limits<double>::infinity();
   double _slew = 0.0;
   double _launch_time = 0.0;

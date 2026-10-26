@@ -89,9 +89,9 @@ void ReceiverThresholdCalculator::adjustSignalLevel(std::string& source, std::st
 
 bool ReceiverThresholdCalculator::compatible(TimingArc& timing_arc, std::string& load_pin, TransType trans_type)
 {
-  // The optional resistance-ratio approximation is limited to matching slew
-  // conventions. Preserve the receiver waveform when a library conversion is
-  // needed; converting the driver slew alone can discard significant RC slew.
+  // Equal voltage windows describe the same physical transition. Different
+  // slew derates only change its reported scale, which adjust() converts.
+  // Different windows still need a waveform crossing, not a scalar replacement.
   LibertyCell* load_timing_cell = getThresholdTimingCell(load_pin);
   if (load_timing_cell == nullptr) {
     return false;
@@ -104,7 +104,8 @@ bool ReceiverThresholdCalculator::compatible(TimingArc& timing_arc, std::string&
   double load_upper_threshold = getTimingCellSlewUpperThreshold(*load_timing_cell, trans_type);
   return std::abs(normalizedThreshold(driver_lower_threshold) - normalizedThreshold(load_lower_threshold)) < ista::kTimingTolerance
          && std::abs(normalizedThreshold(driver_upper_threshold) - normalizedThreshold(load_upper_threshold)) < ista::kTimingTolerance
-         && std::abs(timing_arc.get_slew_derate() - load_timing_cell->get_slew_derate_from_library()) < ista::kTimingTolerance;
+         && timing_arc.get_slew_derate() > 0. && std::isfinite(timing_arc.get_slew_derate()) && load_timing_cell->get_slew_derate_from_library() > 0.
+         && std::isfinite(load_timing_cell->get_slew_derate_from_library());
 }
 
 void ReceiverThresholdCalculator::adjust(TimingArc& timing_arc, std::string& load_pin, TransType trans_type, double& wire_delay, double& load_slew)

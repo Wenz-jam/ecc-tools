@@ -27,6 +27,7 @@
 #include <sstream>
 #include <string>
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -257,6 +258,55 @@ ParasiticArnoldiModel RcModelBuilder::buildParasiticArnoldiModel(ParasiticNet& p
   }
 
   updateParasiticArnoldiModel(arnoldi_model, parasitic_net, node_name_list, parent_idx_list, resistance_list, capacitance_list, term_point_idx_list);
+  // Summed resistance is a tree approximation. Parallel edges and loops must
+  // retain the conductance-aware model built above.
+  if (parasitic_net.get_resistor_list().size() + 1 != node_name_list.size())
+    return arnoldi_model;
+  const auto net = _database.network().nets().find(parasitic_net.get_net_name());
+  if (!arnoldi_model.get_is_valid() || net == _database.network().nets().end() || net->second.get_driver_pin_list().size() != 1
+      || net->second.get_driver_pin_list().front() != _rc.pinName(source_node_name))
+    return arnoldi_model;
+  const auto& loads = net->second.get_load_pin_list();
+  if (loads.empty() || loads.size() + 1 != arnoldi_model.get_term_pin_list().size())
+    return arnoldi_model;
+  for (const auto& pin : loads)
+    if (pin == _rc.pinName(source_node_name) || !arnoldi_model.get_term_index_map().contains(pin))
+      return arnoldi_model;
+  double wire_capacitance = 0.;
+  for (const auto& [name, node] : parasitic_net.get_node_map())
+    wire_capacitance += node.get_capacitance();
+  const double resistance = _rc.totalResistance(parasitic_net) * 1e-3;
+  const double count = static_cast<double>(loads.size());
+  const bool balanced = loads.size() <= 5;
+  PinCapacitanceCalculator pin_capacitance(_database);
+  std::array<double, 2> constants;
+  for (auto edge : {TransType::kRise, TransType::kFall}) {
+    double pin_load = pin_capacitance.driverCapacitance(_rc.pinName(source_node_name), analysis_type, edge);
+    for (auto pin : loads)
+      pin_load += pin_capacitance.pinCapacitance(pin, analysis_type, edge);
+    if (!std::isfinite(pin_load) || pin_load < 0.)
+      return arnoldi_model;
+    // The enhanced balanced range is limited to five receivers. Other
+    // networks use total RC for the ordinary low-RC cutoff and response.
+    // The enhancement also bounds the reduction to 10% of total RC.
+    const double total_load = wire_capacitance + pin_load;
+    const double reduced_load = balanced ? std::max(wire_capacitance / (count + 1.) + pin_load / count, .1 * total_load) : total_load;
+    constants[edge == TransType::kRise ? 0 : 1] = resistance * reduced_load;
+  }
+  // Both low-RC models use a 2 ps cutoff. Select both edges together;
+  // never replace a partially annotated
+  // or multi-driver network with this approximation.
+  if (std::isfinite(resistance) && resistance > 0. && constants[0] >= 0. && constants[1] >= 0. && std::max(constants[0], constants[1]) < .002) {
+    const std::unordered_set<std::string> connected(node_name_list.begin(), node_name_list.end());
+    for (const auto& [name, node] : parasitic_net.get_node_map())
+      if (!connected.contains(name) || !std::isfinite(node.get_capacitance()) || node.get_capacitance() < 0.)
+        return arnoldi_model;
+    for (auto& resistor : parasitic_net.get_resistor_list())
+      if (!connected.contains(resistor.get_source_node()) || !connected.contains(resistor.get_sink_node()) || !std::isfinite(resistor.get_resistance())
+          || resistor.get_resistance() < 0.)
+        return arnoldi_model;
+    arnoldi_model.setSmallNetTimeConstants(constants, balanced);
+  }
   return arnoldi_model;
 }
 
@@ -324,14 +374,6 @@ void RcModelBuilder::updateParasiticArnoldiModel(ParasiticArnoldiModel& arnoldi_
   }
 
   bool has_resistance_loop = network_resistance_num + 1 > node_num;
-  // The moment recurrence is valid for trees; loops retain waveform slew.
-  if (!has_resistance_loop && _config.min_slew_degradation == 0) {
-    ParasiticDmpModel pi_model;
-    buildParasiticDmpPiModel(pi_model, parent_idx_list, resistance_list, capacitance_list);
-    if (pi_model.get_is_valid()) {
-      arnoldi_model.set_pi_resistance(pi_model.get_pi_resistance());
-    }
-  }
   Eigen::SparseMatrix<double> conductance_matrix;
   Eigen::ConjugateGradient<Eigen::SparseMatrix<double>, Eigen::Lower | Eigen::Upper, Eigen::IncompleteCholesky<double>> conductance_solver;
   if (has_resistance_loop) {

@@ -39,6 +39,7 @@ class RequiredPropagator
   std::unordered_map<const TimingPathState*, double> _required;
   std::unordered_map<const TimingPathState*, double> _setup_checks;
 
+  void propagateCaptureRequired(double required_time);
   double resolveRequiredTime();
   void seedEndPointRequired(double required_time);
   void propagateRequiredArc(Arc& arc);

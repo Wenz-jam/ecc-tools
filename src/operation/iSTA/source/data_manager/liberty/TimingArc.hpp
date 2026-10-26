@@ -27,6 +27,15 @@
 
 namespace ista {
 
+// The table lane is still rise/fall: enable means Z->1/Z->0, disable
+// means 0->Z/1->Z. Keep the event separate from ordinary unateness.
+enum class ThreeStateEvent
+{
+  kNone,
+  kEnable,
+  kDisable
+};
+
 class TimingArc
 {
  public:
@@ -37,6 +46,11 @@ class TimingArc
   LogicExpression& get_when_expression() { return _when_expression; }
   const LogicExpression& get_when_expression() const { return _when_expression; }
   TimingArcSense get_sense() const { return _sense; }
+  ThreeStateEvent threeStateEvent() const { return _three_state_event; }
+  void setThreeStateEvent(ThreeStateEvent event) { _three_state_event = event; }
+  bool isThreeStateArc() const { return _three_state_event != ThreeStateEvent::kNone; }
+  bool isRetaining() const { return _is_retaining; }
+  void setRetaining(bool retaining) { _is_retaining = retaining; }
   int32_t get_arc_idx() const { return _arc_idx; }
   TransType get_trigger_trans_type() const { return _trigger_trans_type; }
   TransType get_check_trans_type() const { return _check_trans_type; }
@@ -55,6 +69,7 @@ class TimingArc
   double get_output_threshold_pct_fall() const { return _output_threshold_pct_fall; }
   std::map<TransType, TimingTable>& get_delay_table_map() { return _delay_table_map; }
   std::map<TransType, TimingTable>& get_slew_table_map() { return _slew_table_map; }
+  const std::map<TransType, TimingTable>& get_check_table_map() const { return _check_table_map; }
   std::map<TransType, TimingTable>& get_check_table_map() { return _check_table_map; }
   // setter
   void set_nom_voltage(double voltage) { _nom_voltage = voltage; }
@@ -84,6 +99,9 @@ class TimingArc
  private:
   LogicExpression _when_expression;
   TimingArcSense _sense = TimingArcSense::kNone;
+  ThreeStateEvent _three_state_event = ThreeStateEvent::kNone;
+  // Retain is a distinct candidate with its own table pair and cache identity.
+  bool _is_retaining = false;
   int32_t _arc_idx = -1;
   TransType _trigger_trans_type = TransType::kNone;
   TransType _check_trans_type = TransType::kNone;

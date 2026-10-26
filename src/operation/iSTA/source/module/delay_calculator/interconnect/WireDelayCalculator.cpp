@@ -38,6 +38,13 @@ void WireDelayCalculator::markFailed(Arc& arc, AnalysisType analysis, TransType 
 double WireDelayCalculator::calcNetArcSlew(Arc& arc, AnalysisType analysis_type, TransType trans_type, double input_slew)
 {
   Database& database = _database;
+  if (!database.parasitics().nets().contains(arc.get_owner_name())) {
+    const auto source = database.network().pins().find(arc.get_source_pin());
+    // Without a wire model, propagate the port waveform directly. A disabled
+    // bidirectional load does not supply a physical source voltage domain.
+    if (source != database.network().pins().end() && source->second.get_is_port())
+      return input_slew;
+  }
   if (_rc.hasDisabledDriver(arc.get_owner_name(), arc.get_source_pin())) {
     double unused_delay = 0., slew = input_slew;
     _threshold.adjustSignalLevel(arc.get_source_pin(), arc.get_sink_pin(), analysis_type, trans_type, unused_delay, slew);
@@ -108,6 +115,9 @@ double WireDelayCalculator::calcNetArcDelay(Arc& arc, AnalysisType analysis_type
   if (database.parasitics().nets().count(arc.get_owner_name()) > 0) {
     return calcParasiticDelay(arc, analysis_type, trans_type, input_slew);
   }
+  const auto source = database.network().pins().find(arc.get_source_pin());
+  if (source != database.network().pins().end() && source->second.get_is_port())
+    return 0.;
   if (_rc.hasDisabledDriver(arc.get_owner_name(), arc.get_source_pin())) {
     double delay = 0., slew = input_slew;
     _threshold.adjustSignalLevel(arc.get_source_pin(), arc.get_sink_pin(), analysis_type, trans_type, delay, slew);
