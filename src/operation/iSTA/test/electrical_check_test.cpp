@@ -201,8 +201,8 @@ void checkInoutCapacitance()
   require(receiver != forced.end() && receiver->limit == 2.0 && receiver->slack() > 0., "receiver force was overridden by inherited driver limit");
   db.sdc().electricalLimits() = ElectricalLimits{};
   // A second external driver must not duplicate the PAD row; select the worst
-  // complete driver evaluation. buf:Y sees 1.67 pF/.5; second:Y sees 1.47
-  // pF/.25 because its own .2 pF receiver load is excluded. The latter wins.
+  // complete driver evaluation. Both drivers see 1.67 pF, including the
+  // inout driver's own .2 pF receiver capacitance. Its .25 pF limit wins.
   db.network().instances()["second"].set_instance_name("second");
   db.network().instances()["second"].set_cell_name("strong");
   auto& second = db.liberty().get_cell_map()["strong"].get_port_map()["Y"];
@@ -230,16 +230,16 @@ void checkInoutCapacitance()
   const auto multi = ElectricalChecker(db, delay).check();
   receiver = std::find_if(multi.begin(), multi.end(), [](const auto& check) { return check.pin == "pad:PAD"; });
   require(multi.size() == 3 && receiver != multi.end(), "multiple drivers duplicated or lost the receiver check");
-  require(receiver->limit == .25 && std::abs(receiver->actual - 1.47) < 1e-12, "receiver did not keep worst driver load/limit pair");
+  require(receiver->limit == .25 && std::abs(receiver->actual - 1.67) < 1e-12, "receiver did not keep worst driver load/limit pair");
   const auto buffer_check = std::find_if(multi.begin(), multi.end(), [](const auto& check) { return check.pin == "buf:Y"; });
-  require(buffer_check != multi.end() && std::abs(buffer_check->actual - 1.67) < 1e-12, "multi-driver fixture lost distinct driver loads");
+  require(buffer_check != multi.end() && std::abs(buffer_check->actual - 1.67) < 1e-12, "multi-driver fixture lost shared receiver capacitance");
   second.set_capacitance(.3);
   delay.clear();
   delay.initialize(db.graph());
   const auto larger_load = ElectricalChecker(db, delay).check();
   receiver = std::find_if(larger_load.begin(), larger_load.end(), [](const auto& check) { return check.pin == "pad:PAD"; });
-  require(receiver != larger_load.end() && receiver->limit == .5 && std::abs(receiver->actual - 1.77) < 1e-12,
-          "receiver selected the smallest limit instead of the worst complete evaluation");
+  require(receiver != larger_load.end() && receiver->limit == .25 && std::abs(receiver->actual - 1.77) < 1e-12,
+          "receiver lost the increased inout capacitance or controlling limit");
 }
 }  // namespace
 int main(int argc, char** argv)
