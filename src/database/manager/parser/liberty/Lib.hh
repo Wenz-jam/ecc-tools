@@ -145,7 +145,11 @@ class LibTable : public LibObject
     kCellRiseSigma = 10,
     kCellFallSigma = 12,
     kRiseTransitionSigma = 14,
-    kFallTransitionSigma = 16
+    kFallTransitionSigma = 16,
+    kRetainingRise = 18,
+    kRetainingFall = 19,
+    kRetainRiseSlew = 20,
+    kRetainFallSlew = 21
   };
 
   enum class CornerType : int
@@ -393,6 +397,10 @@ class LibDelayTableModel final : public LibTableModel
   unsigned addTable(std::unique_ptr<LibTable>&& table)
   {
     auto table_type = table->get_table_type();
+    if (table_type >= LibTable::TableType::kRetainingRise && table_type <= LibTable::TableType::kRetainFallSlew) {
+      _retaining_tables.at(static_cast<int>(table_type) - static_cast<int>(LibTable::TableType::kRetainingRise)) = std::move(table);
+      return 1;
+    }
     int index = CAST_TYPE_TO_INDEX(table_type);
     int shift_index = calcShiftIndex(table->get_corner_type());
     index += shift_index;
@@ -403,6 +411,11 @@ class LibDelayTableModel final : public LibTableModel
 
   LibTable* getTable(int index) override { return _tables[index].get(); }
   auto& get_tables() { return _tables; }
+
+  LibTable* retainingTable(LibTable::TableType type)
+  {
+    return _retaining_tables.at(static_cast<int>(type) - static_cast<int>(LibTable::TableType::kRetainingRise)).get();
+  }
 
   unsigned addCurrentTable(std::unique_ptr<LibCCSTable>&& table)
   {
@@ -422,6 +435,7 @@ class LibDelayTableModel final : public LibTableModel
  private:
   std::array<std::unique_ptr<LibTable>, kTableNum> _tables;  // NLDM table,include cell rise/cell fall/rise transition/fall transition,
                                                              // and  eight sigma table(rise/fall, early/late, delay/slew ).
+  std::array<std::unique_ptr<LibTable>, 4> _retaining_tables;
   std::array<std::unique_ptr<LibCCSTable>,
              kCurrentTableNum>  // Output current rise/fall.
       _current_tables;

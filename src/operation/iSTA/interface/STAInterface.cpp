@@ -72,10 +72,11 @@ void STAInterface::destroyInst()
 
 void STAInterface::initSTA(std::map<std::string, std::any> config_map)
 {
-  if (config_map.contains("-min_slew_degradation")) {
-    int32_t value = std::any_cast<int32_t>(config_map.at("-min_slew_degradation"));
-    if (value != 0 && value != 1) {
-      throw std::invalid_argument("-min_slew_degradation must be 0 or 1");
+  for (const std::string key : {"-min_slew_degradation", "-adjust_driver_resistance"}) {
+    if (config_map.contains(key)) {
+      int32_t value = std::any_cast<int32_t>(config_map.at(key));
+      if (value != 0 && value != 1)
+        throw std::invalid_argument(key + " must be 0 or 1");
     }
   }
   // From this point initialization may mutate the shared design and constraints.
@@ -131,10 +132,12 @@ void STAInterface::runSTA()
 
   TimingReporter(STADM.getDatabase(), STADM.getConfig()).report();
 
+  STADC.completeCellArcDelays(STADM.getDatabase().graph());
   SdfWriter(STADM.getDatabase(), STADM.getConfig()).write();
 
   STADC.clear();
 
+  _analyzed_sdc_revision = STADM.getDatabase().sdc().revision();
   _timing_ready = true;
 
   STALOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
@@ -164,6 +167,7 @@ void STAInterface::extractLib()
   liberty_writer::writeLib(timing_model, STADM.getDatabase().liberty(), output_path);
 
   STADC.clear();
+  _analyzed_sdc_revision = STADM.getDatabase().sdc().revision();
   _timing_ready = true;
 
   STALOG.info(Loc::current(), "Completed", monitor.getStatsInfo());
@@ -208,6 +212,11 @@ void STAInterface::destroySTA()
   // the process RSS. Hand every freeable heap page back to the OS here.
   malloc_trim(0);
 #endif
+}
+
+bool STAInterface::isTimingReady() const
+{
+  return _initialized && _timing_ready && DataManager::isInitialized() && _analyzed_sdc_revision == STADM.getDatabase().sdc().revision();
 }
 
 TimingData STAInterface::exportTimingData()

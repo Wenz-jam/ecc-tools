@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MulanPSL-2.0
 #include "SdfValueExtractor.hpp"
 
+#include <algorithm>
 #include <map>
 #include <string>
 #include <utility>
@@ -11,6 +12,11 @@ namespace ista {
 namespace {
 std::vector<TransType> inputTransitions(TimingArc& timing_arc)
 {
+  const auto trigger = timing_arc.get_trigger_trans_type();
+  if (trigger != TransType::kNone)
+    return {trigger};
+  if (timing_arc.isThreeStateArc())
+    return {TransType::kRise, TransType::kFall};
   if (timing_arc.get_sense() == TimingArcSense::kNonUnate) {
     // Non-unate arcs require a distinct SDF IOPATH for each source edge.
     return {TransType::kRise, TransType::kFall};
@@ -40,15 +46,19 @@ SdfCellArcDelayMap SdfValueExtractor::graphCellArcDelays(Arc& arc)
 {
   SdfCellArcDelayMap values;
   auto* cell_arc = arc.libertyArcId() ? _database.liberty().findCellArc(*arc.libertyArcId()) : nullptr;
+  const bool separate_families
+      = cell_arc && std::any_of(cell_arc->get_timing_arc_list().begin(), cell_arc->get_timing_arc_list().end(), [&](TimingArc& timing) {
+          return timing.isRetaining() || timing.get_sdf_cond() != cell_arc->get_timing_arc_list().front().get_sdf_cond();
+        });
   if (cell_arc != nullptr) {
     for (TimingArc& timing_arc : cell_arc->get_timing_arc_list()) {
       for (TransType transition : inputTransitions(timing_arc)) {
-        auto delay = timingArcDelay(arc, timing_arc, transition);
+        auto delay = timingArcDelay(arc, timing_arc, transition, !separate_families);
         mergeCellArcDelay(values, timing_arc, transition, delay);
       }
     }
   }
-  if (values.empty())
+  if (values.empty() && !separate_families)
     values[{}] = arcDelay(arc);
   return values;
 }
@@ -92,7 +102,7 @@ void SdfValueExtractor::mergeCellArcDelay(SdfCellArcDelayMap& cell_arc_delay_map
     return;
   }
   TransType sdf_input_trans_type = input_trans_type == TransType::kNone ? timing_arc.get_trigger_trans_type() : input_trans_type;
-  SdfCellArcKey cell_arc_key{timing_arc.get_sdf_cond(), sdf_input_trans_type};
+  SdfCellArcKey cell_arc_key{timing_arc.get_sdf_cond(), sdf_input_trans_type, timing_arc.isRetaining()};
   mergeDelay(cell_arc_delay_map[cell_arc_key], sdf_delay);
 }
 
@@ -234,13 +244,13 @@ SdfDelay SdfValueExtractor::arcDelay(Arc& arc, TransType input_trans_type)
   return sdf_delay;
 }
 
-SdfDelay SdfValueExtractor::timingArcDelay(Arc& arc, TimingArc& timing_arc, TransType input_trans_type)
+SdfDelay SdfValueExtractor::timingArcDelay(Arc& arc, TimingArc& timing_arc, TransType input_trans_type, bool allow_aggregate)
 {
   SdfDelay sdf_delay;
   if (arc.get_timing_arc_delay_map().count(timing_arc.get_arc_idx()) > 0) {
     updateDelay(sdf_delay, arc.get_timing_arc_delay_map()[timing_arc.get_arc_idx()], input_trans_type);
   }
-  if (!hasDelay(sdf_delay)) {
+  if (!hasDelay(sdf_delay) && allow_aggregate) {
     sdf_delay = arcDelay(arc, input_trans_type);
   }
   return sdf_delay;

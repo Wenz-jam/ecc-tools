@@ -46,6 +46,13 @@ void ReadParasitics::readNet(spef::Net& spef_net)
   for (spef::ResCap& spef_cap : spef_net.caps) {
     readCapacitance(parasitic_net, spef_cap);
   }
+  // The default O-2018.06-SP1 model normalizes extracted nodes to at least 1 aF.
+  // Apply this in pF after duplicate CAP entries have been summed, including
+  // nodes present only in CONN/RES. Liberty pin capacitance is added later.
+  constexpr double minimum_node_capacitance = 1e-6;
+  for (auto& [name, node] : parasitic_net.get_node_map()) {
+    node.set_capacitance(std::max(node.get_capacitance(), minimum_node_capacitance));
+  }
   _parasitics.nets()[parasitic_net.get_net_name()] = parasitic_net;
 }
 

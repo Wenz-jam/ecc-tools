@@ -54,12 +54,14 @@ class CellDelayCalculator
   double calcTimingCellArcSlew(std::string& output_pin, TimingCellArc& timing_cell_arc, AnalysisType analysis_type, TransType input_trans_type,
                                TransType output_trans_type, double input_slew);
 
+  // Evaluate an explicit Liberty variant, including a condition inactive in STA.
+  double calcTimingArcDelay(std::string& output_pin, TimingArc& timing_arc, AnalysisType analysis_type, TransType output_trans_type, double input_slew,
+                            double output_load);
+
  private:
   void updateTimingArcDelay(Arc& arc, TimingArc& timing_arc, AnalysisType analysis_type, TransType input_trans_type, TransType output_trans_type, double delay,
                             bool is_initialization = false);
   double convertOutputLoad(TimingArc& timing_arc, double output_load);
-  double calcTimingArcDelay(std::string& output_pin, TimingArc& timing_arc, AnalysisType analysis_type, TransType output_trans_type, double input_slew,
-                            double output_load);
   double calcTimingArcSlew(std::string& output_pin, TimingArc& timing_arc, AnalysisType analysis_type, TransType output_trans_type, double input_slew,
                            double output_load);
   double calcTimingArcDelayByLoad(TimingArc& timing_arc, TransType output_trans_type, double input_slew, double output_load);

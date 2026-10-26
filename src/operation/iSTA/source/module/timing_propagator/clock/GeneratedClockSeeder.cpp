@@ -20,6 +20,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <queue>
 #include <ranges>
 #include <set>
@@ -60,10 +61,17 @@ void GeneratedClockSeeder::seed(ClockSource& clock)
     }
     TimingPoint& timing_point = database.graph().driverPoint(pin_name);
     ClockState& state = timing_point.get_clock_state(clock.get_clock_name());
+    const bool port = database.network().pins().at(pin_name).get_is_port();
+    const auto constraint = database.sdc().get_port_constraint_map().find(pin_name);
+    // A remaining explicit port transition selects a fixed source waveform in
+    // PT2018, even if a different lane retains a driving-cell annotation.
+    const bool fixed_transition = constraint != database.sdc().get_port_constraint_map().end() && constraint->second.get_has_input_transition();
     for (auto edge : {TransType::kRise, TransType::kFall})
       for (auto mode : {AnalysisType::kMin, AnalysisType::kMax}) {
-        state.waveforms[edge].physical_arrival_map[mode][edge] = 0.;
-        state.waveforms[edge].physical_slew_map[mode][edge] = 0.;
+        auto pin = pin_name;
+        const auto driver = port && !fixed_transition ? _delay.inputPortTiming(pin, mode, edge) : std::nullopt;
+        state.waveforms[edge].physical_arrival_map[mode][edge] = driver ? driver->get_delay() : 0.;
+        state.waveforms[edge].physical_slew_map[mode][edge] = driver ? driver->get_slew() : port ? _delay.inputPortSlew(pin, mode, edge) : 0.;
       }
     state.summarize();
   }

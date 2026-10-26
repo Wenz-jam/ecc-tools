@@ -184,6 +184,10 @@ const std::map<std::string, LibTable::TableType> LibTable::_str2TableType = {
     {"cell_fall", TableType::kCellFall},
     {"rise_transition", TableType::kRiseTransition},
     {"fall_transition", TableType::kFallTransition},
+    {"retaining_rise", TableType::kRetainingRise},
+    {"retaining_fall", TableType::kRetainingFall},
+    {"retain_rise_slew", TableType::kRetainRiseSlew},
+    {"retain_fall_slew", TableType::kRetainFallSlew},
     {"rise_constraint", TableType::kRiseConstrain},
     {"fall_constraint", TableType::kFallConstrain},
     {"output_current_rise", TableType::kRiseCurrent},
@@ -583,7 +587,10 @@ LibCCSTable::LibCCSTable(LibTable::TableType table_type) : _table_type(table_typ
 {
 }
 
-LibDelayTableModel::LibDelayTableModel(LibDelayTableModel&& other) noexcept : _tables(std::move(other._tables))
+LibDelayTableModel::LibDelayTableModel(LibDelayTableModel&& other) noexcept
+    : _tables(std::move(other._tables)),
+      _retaining_tables(std::move(other._retaining_tables)),
+      _current_tables(std::move(other._current_tables))
 {
 }
 
@@ -591,6 +598,8 @@ LibDelayTableModel& LibDelayTableModel::operator=(LibDelayTableModel&& rhs) noex
 {
   if (this != &rhs) {
     _tables = std::move(rhs._tables);
+    _retaining_tables = std::move(rhs._retaining_tables);
+    _current_tables = std::move(rhs._current_tables);
   }
 
   return *this;

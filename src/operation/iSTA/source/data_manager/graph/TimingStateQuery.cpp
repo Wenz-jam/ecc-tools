@@ -254,9 +254,23 @@ ClockPinValues clockPinValues(const Database& database, const std::string& pin, 
   return result;
 }
 
-bool TimingStateQuery::clockPathHasVariation(const std::string& pin_name, std::string_view clock_name, TransType transition,
-                                             std::optional<TransType> source) const
+const ClockPinValues& ClockPinValuesQuery::values(const std::string& pin, std::string_view clock, AnalysisType analysis, TransType transition,
+                                                 AnalysisType check, std::optional<TransType> source)
 {
+  if (_mode == CacheMode::kNone) {
+    _live = clockPinValues(_database, pin, clock, analysis, transition, check, source);
+    return _live;
+  }
+  const auto key = std::tuple{std::string_view(pin), clock, analysis, transition, check, source};
+  if (const auto found = _values.find(key); found != _values.end())
+    return found->second;
+  return _values.emplace(Key{pin, clock, analysis, transition, check, source},
+                         clockPinValues(_database, pin, clock, analysis, transition, check, source)).first->second;
+}
+
+double TimingStateQuery::clockPathBound(const std::string& pin_name, std::string_view clock_name, TransType transition, std::optional<TransType> source) const
+{
+  double bound = 0.;
   // Equal arrival at a leaf does not imply equal arrivals on its common prefix.
   // Inspect both selected early/late traces; flat ideal clocks keep one tag.
   for (auto mode : {AnalysisType::kMin, AnalysisType::kMax}) {
@@ -272,7 +286,7 @@ bool TimingStateQuery::clockPathHasVariation(const std::string& pin_name, std::s
       const auto early = state->arrival(AnalysisType::kMin, edge);
       const auto late = state->arrival(AnalysisType::kMax, edge);
       if (early && late && std::isfinite(*early) && std::isfinite(*late) && *early != *late)
-        return true;
+        bound = std::max(bound, std::abs(*late - *early));
       const auto predecessors = state->predecessor_vertex_map.find(mode);
       if (predecessors == state->predecessor_vertex_map.end() || !predecessors->second.contains(edge))
         break;
@@ -287,7 +301,93 @@ bool TimingStateQuery::clockPathHasVariation(const std::string& pin_name, std::s
         edge = edges->second.at(edge);
     }
   }
-  return false;
+  return bound;
+}
+
+bool TimingStateQuery::clockPathHasVariation(const std::string& pin_name, std::string_view clock_name, TransType transition,
+                                             std::optional<TransType> source) const
+{
+  return clockPathBound(pin_name, clock_name, transition, source) > 0.;
+}
+
+bool TimingStateQuery::canPrunePathStates() const
+{
+  const auto& sdc = _database.sdc();
+  // Local clock annotations still require exhaustive state propagation.
+  if (!sdc.clockPinConstraints().empty() || sdc.get_clock_map().empty() || _database.graph().endpoints().empty())
+    return false;
+  for (const auto& vertex : _database.graph().vertices())
+    for (const auto& [clock, state] : vertex.get_timing_point().get_clock_state_map())
+      for (auto mode : {AnalysisType::kMin, AnalysisType::kMax}) {
+        // Keep the local launch transition unique within a source-edge tag.
+        for (const auto& [source, wave] : state.waveforms)
+          if (wave.arrival(mode, TransType::kRise) && wave.arrival(mode, TransType::kFall))
+            return false;
+        for (auto edge : {TransType::kRise, TransType::kFall}) {
+          int count = 0;
+          for (const auto& [source, wave] : state.waveforms)
+            count += wave.arrival(mode, edge).has_value();
+          if (count > 1)
+            return false;
+        }
+      }
+  return true;
+}
+
+TimingStateQuery::PathStateGroup TimingStateQuery::pathStateGroup(const TimingPathState& state, const std::vector<int32_t>* progress) const
+{
+  const bool exceptions = !_database.sdc().get_path_exception_list().empty();
+  const auto start_class = exceptions ? state.exceptionStartClass() : 0;
+  // Direct/synthetic callers without forward classification remain separate.
+  return {state.group(), progress ? *progress : state.get_exception_state_list(), start_class,
+          exceptions && start_class == 0 ? state.get_start_point() : std::string{}};
+}
+
+bool TimingStateQuery::prunePathStates(TimingPoint& point, std::size_t remaining_arcs, const std::vector<std::string_view>* allowed_clocks) const
+{
+  bool pruned = false;
+  auto allowed = [&](const TimingPathState& state) {
+    return !allowed_clocks || std::find(allowed_clocks->begin(), allowed_clocks->end(), state.get_clock_name()) != allowed_clocks->end();
+  };
+  // isBetterArrival can retain a same-tag predecessor up to one tolerance
+  // behind the witness at every later merge. Cover the entire continuation,
+  // plus endpoint comparison/rounding, before discarding another launch tag.
+  const double margin = (static_cast<double>(remaining_arcs) + 4.) * kTimingTolerance;
+  for (auto& [mode, sources] : point.get_path_state_map())
+    for (auto& [source, edges] : sources)
+      for (auto& [edge, states] : edges) {
+        // A directly seeded state can carry a different slew. Its endpoint
+        // check need not match the physical slew of arriving states.
+        if (!states.empty() && std::any_of(states.begin(), states.end(), [&](const auto& item) {
+              return item.second.get_slew() != states.begin()->second.get_slew();
+            }))
+          continue;
+        std::map<PathStateGroup, double> witnesses;
+        for (const auto& [tag, state] : states) {
+          if (!allowed(state))
+            continue;
+          const double witness = state.get_arrival() + (mode == AnalysisType::kMax ? -state.clockPathBound() : state.clockPathBound());
+          if (!std::isfinite(witness))
+            continue;
+          auto [it, inserted] = witnesses.emplace(pathStateGroup(state), witness);
+          if (!inserted)
+            it->second = mode == AnalysisType::kMax ? std::max(it->second, witness) : std::min(it->second, witness);
+        }
+        for (auto it = states.begin(); it != states.end();) {
+          if (!allowed(it->second)) {
+            ++it;
+            continue;
+          }
+          const auto found = witnesses.find(pathStateGroup(it->second));
+          const double arrival = it->second.get_arrival();
+          if (found != witnesses.end() && (mode == AnalysisType::kMax ? found->second > arrival + margin : found->second < arrival - margin)) {
+            it = states.erase(it);
+            pruned = true;
+          } else
+            ++it;
+        }
+      }
+  return pruned;
 }
 
 double TimingStateQuery::roundTime(double time)

@@ -19,6 +19,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <vector>
 
 #include "Database.hpp"
@@ -40,6 +41,23 @@ struct ClockPinValues
 };
 ClockPinValues clockPinValues(const Database& database, const std::string& pin, std::string_view clock, AnalysisType analysis, TransType transition,
                               AnalysisType check = AnalysisType::kNone, std::optional<TransType> source = std::nullopt, const TimingPoint* point = nullptr);
+// Snapshot queries are scoped to a phase with fixed topology, waveforms and
+// constraints. Live references remain valid until the next values() call.
+class ClockPinValuesQuery
+{
+ public:
+  enum class CacheMode { kNone, kSnapshot };
+  explicit ClockPinValuesQuery(const Database& database, CacheMode mode = CacheMode::kNone) : _database(database), _mode(mode) {}
+  const ClockPinValues& values(const std::string& pin, std::string_view clock, AnalysisType analysis, TransType transition,
+                               AnalysisType check = AnalysisType::kNone, std::optional<TransType> source = std::nullopt);
+
+ private:
+  using Key = std::tuple<std::string, std::string, AnalysisType, TransType, AnalysisType, std::optional<TransType>>;
+  const Database& _database;
+  CacheMode _mode;
+  ClockPinValues _live;
+  std::map<Key, ClockPinValues, std::less<>> _values;
+};
 // Resolve reference-pin clocks from the propagated graph on each analysis;
 // keep the user's original clock-less I/O definition unchanged for write_sdc.
 std::vector<TimingIoDelay> resolveIoDelays(const Database& database, const std::vector<const TimingIoDelay*>& definitions);
@@ -61,6 +79,11 @@ class TimingStateQuery
                       std::optional<TransType> source = std::nullopt);
   bool clockPathHasVariation(const std::string& pin_name, std::string_view clock_name, TransType transition,
                              std::optional<TransType> source = std::nullopt) const;
+  double clockPathBound(const std::string& pin_name, std::string_view clock_name, TransType transition, std::optional<TransType> source = std::nullopt) const;
+  bool canPrunePathStates() const;
+  using PathStateGroup = std::tuple<TimingPathState::Group, std::vector<int32_t>, std::size_t, std::string>;
+  PathStateGroup pathStateGroup(const TimingPathState& state, const std::vector<int32_t>* progress = nullptr) const;
+  bool prunePathStates(TimingPoint& point, std::size_t remaining_arcs, const std::vector<std::string_view>* allowed_clocks = nullptr) const;
   double roundTime(double time);
   std::vector<TransType> getOutputTransTypeList(Arc& arc, AnalysisType analysis_type, TransType input_trans_type);
   double getArcDelay(Arc& arc, AnalysisType analysis_type, TransType input_trans_type);

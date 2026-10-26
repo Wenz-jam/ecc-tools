@@ -40,6 +40,11 @@ class ExceptionMatcher
   ExceptionMatcher(const Sdc& sdc, const Network& network) : _sdc(sdc), _network(network) {}
   std::vector<int32_t> initState(std::string_view start, std::string_view clock, TransType start_trans_type, AnalysisType analysis_type,
                                  TransType launch_transition) const;
+  std::vector<int> startSpecificity(std::string_view start, std::string_view clock) const;
+  bool matchesEndpointSelector(const ExceptionObjects& objects, std::string_view pin, std::string_view clock, bool start) const
+  {
+    return matchesEndpointObjects(objects, pin, clock, start);
+  }
   std::vector<int32_t> advanceState(const ExceptionThroughIndex& index, const std::vector<int32_t>& state_list, std::string_view pin_name, TransType trans_type,
                                     std::string_view source_pin = {}) const;
   std::string makePathStateTag(std::string_view clock, TransType launch_transition, const std::vector<int32_t>& exception_state_list,

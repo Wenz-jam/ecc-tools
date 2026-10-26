@@ -110,9 +110,22 @@ void testDisabledMultidriverFallback()
   db.network().pins()[source].set_is_port(true);
   db.liberty().set_nom_voltage(1.2);
   db.liberty().set_slew_derate_from_library(.5);
-  require(std::abs(wire.calcNetArcDelay(arc, AnalysisType::kMax, TransType::kRise, 1.) - 2.1875) < 1e-12
-              && std::abs(wire.calcNetArcSlew(arc, AnalysisType::kMax, TransType::kRise, 1.) - 2.75) < 1e-12,
-          "prescribed input port lost its source-library domain in balanced fallback");
+  // PT2018/PT2022 both preserve the port waveform across an unextracted
+  // port-to-PAD connection. A disabled PAD output must not turn the port
+  // into a physical cell driver in the main library's voltage domain.
+  for (bool driving_cell : {false, true}) {
+    TimingDrivingCell driver;
+    driver.set_cell_name("core");
+    driver.set_to_pin("Y");
+    for (auto mode : {AnalysisType::kMin, AnalysisType::kMax})
+      for (auto edge : {TransType::kRise, TransType::kFall}) {
+        if (driving_cell)
+          db.sdc().get_port_constraint_map()[source].set_driving_cell(mode, edge, driver);
+        require(wire.calcNetArcDelay(arc, mode, edge, 1.) == 0.
+                    && wire.calcNetArcSlew(arc, mode, edge, 1.) == 1.,
+                "unextracted port-to-PAD connection changed the port waveform");
+      }
+  }
 }
 
 void testDistributedVoltageDomains()
@@ -168,7 +181,30 @@ void testDistributedVoltageDomains()
               ("distributed receiver crossing lost driving-cell voltage domain: " + std::to_string(static_cast<int>(edge)) + " delay=" + std::to_string(delay)
                + " slew=" + std::to_string(response.get_load_slew_map().at(sink)))
                   .c_str());
-      require(response.get_load_slew_map().at(sink) < .6 * response.get_driver_slew(), "distributed receiver slew not measured at receiver voltage");
+      const auto& model = models.arnoldiModel(net, source, mode, edge);
+      const auto fitted = ArnoldiDelayCalculator{}.calculate(timing, edge, .1, model, config.adjust_driver_resistance);
+      require(fitted.has_value(), "receiver threshold reference has no driver");
+      // Wire R is 1e-6 kOhm, so use the independent lumped-RC closed form.
+      // A falling exponential does not scale slew linearly with voltage swing.
+      const double tau = fitted->drive_resistance * .05, ramp = fitted->driver_ramp;
+      auto crossing = [&](double threshold) {
+        double low = 0., high = ramp + 40. * tau;
+        for (int iteration = 0; iteration < 80; ++iteration) {
+          const double time = .5 * (low + high);
+          const double voltage = time < ramp ? 1. - (time + tau * std::expm1(-time / tau)) / ramp
+                                            : tau / ramp * (-std::expm1(-ramp / tau)) * std::exp(-(time - ramp) / tau);
+          if (voltage > threshold)
+            low = time;
+          else
+            high = time;
+        }
+        return .5 * (low + high);
+      };
+      const double ratio = 1.2 / 3.3;
+      const double expected_slew = edge == TransType::kRise ? (crossing(1. - .7 * ratio) - crossing(1. - .3 * ratio)) / .5
+                                                          : (crossing(.3 * ratio) - crossing(.7 * ratio)) / .5;
+      require(std::abs(response.get_load_slew_map().at(sink) - expected_slew) < 2e-6,
+              "distributed receiver slew disagrees with physical voltage crossings");
       const auto dmp_result = dmp.response(source, timing, mode, edge, .1, .05);
       require(dmp_result.get_is_valid(), "valid DMP fixture rejected");
       const double dmp_delay = dmp_result.get_wire_delay_map().at(sink);
@@ -252,7 +288,7 @@ void testShieldedLoadWithSlewLimitedDriver()
   const auto minimum = response.response(source, arc, AnalysisType::kMin, TransType::kRise, .1);
   const auto maximum = response.response(source, arc, AnalysisType::kMax, TransType::kRise, .1);
   require(minimum.get_is_valid() && maximum.get_is_valid(), "shielded response missing");
-  require(std::abs(minimum.get_load_slew_map().at(sink) - minimum.get_driver_slew()) < 1e-12, "default minimum analysis degraded slew across a resistive net");
+  require(minimum.get_load_slew_map().at(sink) > minimum.get_driver_slew(), "minimum slew copied an unadjusted driver");
   require(maximum.get_load_slew_map().at(sink) > maximum.get_driver_slew()
               && std::abs(minimum.get_wire_delay_map().at(sink) - maximum.get_wire_delay_map().at(sink)) < 1e-12,
           "minimum slew policy changed physical net delay or maximum slew");

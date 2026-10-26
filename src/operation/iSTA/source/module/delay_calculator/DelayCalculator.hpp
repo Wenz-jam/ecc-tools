@@ -41,7 +41,8 @@ class DelayCalculator
 {
  public:
   DelayCalculator(Database& database, const Config& config)
-      : _pin_capacitance(database),
+      : _database(database),
+        _pin_capacitance(database),
         _rc(database, _pin_capacitance),
         _load(database, _pin_capacitance, _rc),
         _models(database, config, _rc),
@@ -70,6 +71,12 @@ class DelayCalculator
   }
   void initialize(Arc& arc) { initializeArcTiming(arc); }
   void initialize(Graph& graph);
+  // Complete unvisited conditional variants after propagation, for SDF/export.
+  // Does not update the aggregate delays used by timing paths.
+  void completeCellArcDelays(Graph& graph);
+  // The same SDC electrical input drives both data and clock propagation.
+  double inputPortSlew(std::string pin, AnalysisType analysis, TransType edge);
+  std::optional<DelayResult> inputPortTiming(std::string& pin, AnalysisType analysis, TransType edge);
   double pinLoad(std::string pin, AnalysisType analysis, TransType edge) { return _load.pinLoad(pin, analysis, edge); }
   std::optional<DelayResult> arcDelay(Arc& arc, AnalysisType analysis, TransType input, TransType output, double slew,
                                       std::optional<double> output_slew_input = std::nullopt);
@@ -90,6 +97,7 @@ class DelayCalculator
   double calcCellArcDelay(Arc& arc, AnalysisType analysis_type);
   double calcCellArcDelay(Arc& arc, AnalysisType analysis_type, TransType input_trans_type);
   double calcArcDelay(Arc& arc, AnalysisType analysis_type, TransType input_trans_type, TransType output_trans_type, double input_slew);
+  Database& _database;
   PinCapacitanceCalculator _pin_capacitance;
   RcTreeAnalyzer _rc;
   LoadCalculator _load;

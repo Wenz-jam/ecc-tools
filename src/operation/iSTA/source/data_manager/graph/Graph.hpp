@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -58,7 +59,10 @@ class Graph
         _startpoints(other._startpoints),
         _endpoints(other._endpoints),
         _timing_order(other._timing_order),
-        _points(other._points)
+        _points(other._points),
+        _path_states_pruned(other._path_states_pruned),
+        _capture_required_clocks(other._capture_required_clocks),
+        _exhaustive_required(other._exhaustive_required)
   {
     // Vertices borrow timing points from this graph, including distinct inout
     // driver points. Copying containers must not retain the source pointers.
@@ -121,9 +125,19 @@ class Graph
     return arc.get_type() == ArcType::kCell ? driverPoint(arc.get_sink_pin()) : _points.at(arc.get_sink_pin());
   }
 
+  bool pathStatesPruned() const { return _path_states_pruned; }
+  void setPathStatesPruned(bool value) { _path_states_pruned = value; }
+  std::map<std::string, std::set<std::string>>& captureRequiredClocks() { return _capture_required_clocks; }
+  const std::map<std::string, std::set<std::string>>& captureRequiredClocks() const { return _capture_required_clocks; }
+  bool exhaustiveRequired() const { return _exhaustive_required; }
+  void setExhaustiveRequired(bool value) { _exhaustive_required = value; }
+
   // Clear propagated timing at both receiving and driving vertices.
   void clearTiming()
   {
+    _path_states_pruned = false;
+    _capture_required_clocks.clear();
+    _exhaustive_required = false;
     for (GraphVertex& vertex : _vertices) {
       TimingPoint& point = vertex.get_timing_point();
       point.set_arrival(-std::numeric_limits<double>::infinity());
@@ -152,6 +166,9 @@ class Graph
   std::vector<std::string> _endpoints;
   std::vector<std::string> _timing_order;
   std::map<std::string, TimingPoint> _points;
+  bool _path_states_pruned = false;
+  std::map<std::string, std::set<std::string>> _capture_required_clocks;
+  bool _exhaustive_required = false;
 };
 
 }  // namespace ista

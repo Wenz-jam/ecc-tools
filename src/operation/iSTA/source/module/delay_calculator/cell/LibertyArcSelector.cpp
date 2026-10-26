@@ -75,6 +75,12 @@ TransType LibertyArcSelector::getOutputTransType(TimingCellArc& timing_cell_arc,
 std::vector<TransType> LibertyArcSelector::getOutputTransTypeList(TimingCellArc& timing_cell_arc, TransType input_trans_type)
 {
   std::vector<TransType> output_trans_type_list;
+  if (timing_cell_arc.isThreeStateArc()) {
+    for (auto output : {TransType::kRise, TransType::kFall})
+      if (!cellCandidates(timing_cell_arc, input_trans_type, output).empty())
+        output_trans_type_list.push_back(output);
+    return output_trans_type_list;
+  }
   if (!isUnateArc(timing_cell_arc) || isTwoTypeSenseArcSet(timing_cell_arc) || timing_cell_arc.get_is_clock_arc()) {
     for (TransType output_trans_type : {TransType::kRise, TransType::kFall}) {
       if (isMatchTimingType(timing_cell_arc, output_trans_type)) {
@@ -97,11 +103,15 @@ std::vector<TimingArc*> LibertyArcSelector::cellCandidates(TimingCellArc& timing
   bool is_flip = input_trans_type != output_trans_type;
   std::vector<TimingArc*> candidate_arc_list;
   for (TimingArc& timing_arc : timing_cell_arc.get_timing_arc_list()) {
-    if (is_flip && isPositiveArc(timing_arc)) {
-      continue;
-    }
-    if (!is_flip && isNegativeArc(timing_arc)) {
-      continue;
+    if (timing_arc.isThreeStateArc()) {
+      const auto trigger = timing_arc.get_trigger_trans_type();
+      if (trigger != TransType::kNone && trigger != input_trans_type)
+        continue;
+    } else {
+      if (is_flip && isPositiveArc(timing_arc))
+        continue;
+      if (!is_flip && isNegativeArc(timing_arc))
+        continue;
     }
     if (!isMatchTimingType(timing_arc, output_trans_type)) {
       continue;

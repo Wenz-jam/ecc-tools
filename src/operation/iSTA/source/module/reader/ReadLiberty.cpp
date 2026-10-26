@@ -25,6 +25,23 @@
 
 namespace ista {
 namespace {
+ThreeStateEvent threeStateEvent(idb::LibArc* arc)
+{
+  using Type = idb::LibArc::TimingType;
+  switch (arc->get_timing_type()) {
+    case Type::kThreeStateEnable:
+    case Type::kThreeStateEnableRise:
+    case Type::kThreeStateEnableFall:
+      return ThreeStateEvent::kEnable;
+    case Type::kThreeStateDisable:
+    case Type::kThreeStateDisableRise:
+    case Type::kThreeStateDisableFall:
+      return ThreeStateEvent::kDisable;
+    default:
+      return ThreeStateEvent::kNone;
+  }
+}
+
 double nominalVoltage(idb::LibLibrary& library)
 {
   double scale = 1.;
@@ -374,7 +391,7 @@ void ReadLiberty::readCellArcs(LibertyCell& timing_cell, idb::LibArcSet* lib_arc
   idb::LibArc* lib_arc = lib_arc_set->front();
   if (isSdfDelayArc(lib_arc)) {
     TimingCellArc timing_cell_arc = readDelayArc(lib_arc_set);
-    timing_cell_arc.set_is_timing_graph_arc(lib_arc->isDelayArc());
+    timing_cell_arc.set_is_timing_graph_arc(lib_arc->isDelayArc() || timing_cell_arc.isThreeStateArc());
     timing_cell_arc.set_is_clear_preset_arc(lib_arc->isClearPresetArc());
     timing_cell.get_cell_arc_list().push_back(timing_cell_arc);
     if (lib_arc->isClearPresetArc()) {
@@ -459,6 +476,24 @@ std::vector<TimingArc> ReadLiberty::readArcs(idb::LibArcSet* lib_arc_set)
     TimingArc timing_arc = readArc(lib_arc.get());
     timing_arc.set_arc_idx(arc_idx++);
     timing_arc_list.push_back(timing_arc);
+    auto* model = dynamic_cast<idb::LibDelayTableModel*>(lib_arc->get_table_model());
+    if (!model)
+      continue;
+    TimingArc retaining = timing_arc;
+    retaining.setRetaining(true);
+    retaining.get_delay_table_map().clear();
+    retaining.get_slew_table_map().clear();
+    using Type = idb::LibTable::TableType;
+    for (const auto edge : {TransType::kRise, TransType::kFall}) {
+      if (auto* table = model->retainingTable(edge == TransType::kRise ? Type::kRetainingRise : Type::kRetainingFall))
+        retaining.get_delay_table_map()[edge] = readTable(table);
+      if (auto* table = model->retainingTable(edge == TransType::kRise ? Type::kRetainRiseSlew : Type::kRetainFallSlew))
+        retaining.get_slew_table_map()[edge] = readTable(table);
+    }
+    if (!retaining.get_delay_table_map().empty()) {
+      retaining.set_arc_idx(arc_idx++);
+      timing_arc_list.push_back(std::move(retaining));
+    }
   }
   return timing_arc_list;
 }
@@ -468,6 +503,7 @@ TimingArc ReadLiberty::readArc(idb::LibArc* lib_arc)
   TimingArc timing_arc;
   idb::LibLibrary* lib_library = lib_arc->get_owner_cell()->get_owner_lib();
   timing_arc.set_sense(arcSense(lib_arc));
+  timing_arc.setThreeStateEvent(threeStateEvent(lib_arc));
   timing_arc.set_when_expression(readLogicExpression(lib_arc->get_when()));
   timing_arc.set_trigger_trans_type(triggerTransition(lib_arc));
   timing_arc.set_check_trans_type(checkTransition(lib_arc));
@@ -486,6 +522,17 @@ TimingArc ReadLiberty::readArc(idb::LibArc* lib_arc)
   timing_arc.set_input_threshold_pct_fall(lib_library->get_input_threshold_pct_fall());
   timing_arc.set_output_threshold_pct_fall(lib_library->get_output_threshold_pct_fall());
   readArcTables(timing_arc, lib_arc);
+  // Liberty *_rise/*_fall restrict output lanes even if a producer provides
+  // an extra table. The control edge is independent of that output lane.
+  using Type = idb::LibArc::TimingType;
+  const auto type = lib_arc->get_timing_type();
+  if (type == Type::kThreeStateEnableRise || type == Type::kThreeStateDisableRise) {
+    timing_arc.get_delay_table_map().erase(TransType::kFall);
+    timing_arc.get_slew_table_map().erase(TransType::kFall);
+  } else if (type == Type::kThreeStateEnableFall || type == Type::kThreeStateDisableFall) {
+    timing_arc.get_delay_table_map().erase(TransType::kRise);
+    timing_arc.get_slew_table_map().erase(TransType::kRise);
+  }
   return timing_arc;
 }
 
@@ -605,6 +652,30 @@ TimingArcSense ReadLiberty::arcSense(idb::LibArc* lib_arc)
 
 TransType ReadLiberty::triggerTransition(idb::LibArc* lib_arc)
 {
+  const auto event = threeStateEvent(lib_arc);
+  if (event != ThreeStateEvent::kNone) {
+    using Sense = idb::LibArc::TimingSense;
+    switch (lib_arc->get_timing_sense()) {
+      case Sense::kPositiveUnate:
+        return TransType::kRise;
+      case Sense::kNegativeUnate:
+        return TransType::kFall;
+      case Sense::kNonUnate:
+        return TransType::kNone;
+      case Sense::kDefault: {
+        auto* output = lib_arc->get_owner_cell()->get_cell_port_or_port_bus(lib_arc->get_snk_port());
+        if (output != nullptr) {
+          const auto disabled = readLogicExpression(output->get_three_state_expr_str());
+          const auto low = disabled.evaluate_constant({{lib_arc->get_src_port(), false}});
+          const auto high = disabled.evaluate_constant({{lib_arc->get_src_port(), true}});
+          if (low && high && *low != *high)
+            return (*high == (event == ThreeStateEvent::kDisable)) ? TransType::kRise : TransType::kFall;
+        }
+        // A compound/unknown enable expression can admit either control edge.
+        return TransType::kNone;
+      }
+    }
+  }
   if (lib_arc->isFallingTriggerArc()) {
     return TransType::kFall;
   }

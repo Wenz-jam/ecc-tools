@@ -92,151 +92,92 @@ double RcTreeAnalyzer::nodeLoad(ParasiticNet& parasitic_net, std::string& node_n
   return node_load;
 }
 
-void RcTreeAnalyzer::analyze(ParasiticNet& parasitic_net, std::string& source_node_name, AnalysisType analysis_type, TransType trans_type)
+const RcTreeAnalyzer::RcTiming* RcTreeAnalyzer::timing(const std::string& net, AnalysisType analysis, TransType trans) const
 {
-  std::string& net_name = parasitic_net.get_net_name();
-  std::string& cached_root = _parasitic_root_map_cache[net_name][analysis_type][trans_type];
-  if (cached_root == source_node_name && !cached_root.empty()) {
-    return;
-  }
-  cached_root = source_node_name;
-  _parasitic_load_map_cache[net_name][analysis_type][trans_type].clear();
-  _parasitic_delay_map_cache[net_name][analysis_type][trans_type].clear();
-  _parasitic_impulse_map_cache[net_name][analysis_type][trans_type].clear();
-
-  if (_parasitic_resistor_map_cache.count(net_name) == 0) {
-    buildParasiticResistorMap(parasitic_net, _parasitic_resistor_map_cache[net_name]);
-  }
-  std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map = _parasitic_resistor_map_cache[net_name];
-
-  std::string parent_node_name;
-  std::set<std::string> load_visited_node_set;
-  updateParasiticLoadMap(parasitic_net, source_node_name, parent_node_name, resistor_map, load_visited_node_set, analysis_type, trans_type);
-
-  _parasitic_delay_map_cache[net_name][analysis_type][trans_type][source_node_name] = 0.0;
-  std::set<std::string> delay_visited_node_set;
-  updateParasiticDelayMap(parasitic_net, source_node_name, parent_node_name, resistor_map, delay_visited_node_set, analysis_type, trans_type);
-
-  std::map<std::string, double> load_delay_map;
-  std::set<std::string> load_delay_visited_node_set;
-  updateParasiticLoadDelayMap(parasitic_net, source_node_name, parent_node_name, resistor_map, load_delay_visited_node_set, analysis_type, trans_type,
-                              load_delay_map);
-
-  std::map<std::string, double> beta_map;
-  beta_map[source_node_name] = 0.0;
-  std::set<std::string> impulse_visited_node_set;
-  updateParasiticImpulseMap(parasitic_net, source_node_name, parent_node_name, resistor_map, impulse_visited_node_set, analysis_type, trans_type,
-                            load_delay_map, beta_map);
+  const auto n = _timing.find(net);
+  if (n == _timing.end())
+    return nullptr;
+  const auto a = n->second.find(analysis);
+  if (a == n->second.end())
+    return nullptr;
+  const auto t = a->second.find(trans);
+  return t == a->second.end() ? nullptr : &t->second;
 }
 
-double RcTreeAnalyzer::updateParasiticLoadMap(ParasiticNet& parasitic_net, std::string& node_name, std::string& parent_node_name,
-                                              std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map,
-                                              std::set<std::string>& visited_node_set, AnalysisType analysis_type, TransType trans_type)
+double RcTreeAnalyzer::load(const std::string& net, AnalysisType analysis, TransType trans, const std::string& node) const
 {
-  if (visited_node_set.count(node_name) > 0) {
-    return 0.0;
+  const auto* values = timing(net, analysis, trans);
+  if (values) {
+    const auto found = values->loads.find(node);
+    if (found != values->loads.end())
+      return found->second;
   }
-  visited_node_set.insert(node_name);
-
-  double subtree_load = nodeLoad(parasitic_net, node_name, analysis_type, trans_type);
-  if (parent_node_name.empty()) {
-    std::string driver_pin = pinName(node_name);
-    if (_database.network().pins().contains(driver_pin)) {
-      subtree_load -= _pin_capacitance.pinCapacitance(driver_pin, analysis_type, trans_type);
-    }
-  }
-  if (resistor_map.count(node_name) == 0) {
-    _parasitic_load_map_cache[parasitic_net.get_net_name()][analysis_type][trans_type][node_name] = subtree_load;
-    return subtree_load;
-  }
-
-  for (std::pair<std::string, double>& next_node_pair : resistor_map[node_name]) {
-    if (next_node_pair.first == parent_node_name) {
-      continue;
-    }
-    subtree_load += updateParasiticLoadMap(parasitic_net, next_node_pair.first, node_name, resistor_map, visited_node_set, analysis_type, trans_type);
-  }
-  _parasitic_load_map_cache[parasitic_net.get_net_name()][analysis_type][trans_type][node_name] = subtree_load;
-  return subtree_load;
+  return 0.;
 }
 
-void RcTreeAnalyzer::updateParasiticDelayMap(ParasiticNet& parasitic_net, std::string& node_name, std::string& parent_node_name,
-                                             std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map,
-                                             std::set<std::string>& visited_node_set, AnalysisType analysis_type, TransType trans_type)
+std::optional<double> RcTreeAnalyzer::delay(const std::string& net, AnalysisType analysis, TransType trans, const std::string& node) const
 {
-  if (visited_node_set.count(node_name) > 0) {
-    return;
+  const auto* values = timing(net, analysis, trans);
+  if (values) {
+    const auto found = values->delays.find(node);
+    if (found != values->delays.end())
+      return found->second;
   }
-  visited_node_set.insert(node_name);
-  if (resistor_map.count(node_name) == 0) {
-    return;
-  }
-
-  std::string& net_name = parasitic_net.get_net_name();
-  for (std::pair<std::string, double>& next_node_pair : resistor_map[node_name]) {
-    if (next_node_pair.first == parent_node_name || visited_node_set.count(next_node_pair.first) > 0) {
-      continue;
-    }
-    double node_delay = _parasitic_delay_map_cache[net_name][analysis_type][trans_type][node_name];
-    double next_node_load = _parasitic_load_map_cache[net_name][analysis_type][trans_type][next_node_pair.first];
-    _parasitic_delay_map_cache[net_name][analysis_type][trans_type][next_node_pair.first] = node_delay + next_node_pair.second * next_node_load * 1E-3;
-    updateParasiticDelayMap(parasitic_net, next_node_pair.first, node_name, resistor_map, visited_node_set, analysis_type, trans_type);
-  }
+  return std::nullopt;
 }
 
-double RcTreeAnalyzer::updateParasiticLoadDelayMap(ParasiticNet& parasitic_net, std::string& node_name, std::string& parent_node_name,
-                                                   std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map,
-                                                   std::set<std::string>& visited_node_set, AnalysisType analysis_type, TransType trans_type,
-                                                   std::map<std::string, double>& load_delay_map)
+std::optional<double> RcTreeAnalyzer::impulse(const std::string& net, AnalysisType analysis, TransType trans, const std::string& node) const
 {
-  if (visited_node_set.count(node_name) > 0) {
-    return 0.0;
+  const auto* values = timing(net, analysis, trans);
+  if (values) {
+    const auto found = values->impulses.find(node);
+    if (found != values->impulses.end())
+      return found->second;
   }
-  visited_node_set.insert(node_name);
-
-  double load_delay = nodeLoad(parasitic_net, node_name, analysis_type, trans_type)
-                      * _parasitic_delay_map_cache[parasitic_net.get_net_name()][analysis_type][trans_type][node_name];
-  if (resistor_map.count(node_name) == 0) {
-    load_delay_map[node_name] = load_delay;
-    return load_delay;
-  }
-
-  for (std::pair<std::string, double>& next_node_pair : resistor_map[node_name]) {
-    if (next_node_pair.first == parent_node_name) {
-      continue;
-    }
-    load_delay += updateParasiticLoadDelayMap(parasitic_net, next_node_pair.first, node_name, resistor_map, visited_node_set, analysis_type, trans_type,
-                                              load_delay_map);
-  }
-  load_delay_map[node_name] = load_delay;
-  return load_delay;
+  return std::nullopt;
 }
 
-void RcTreeAnalyzer::updateParasiticImpulseMap(ParasiticNet& parasitic_net, std::string& node_name, std::string& parent_node_name,
-                                               std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map,
-                                               std::set<std::string>& visited_node_set, AnalysisType analysis_type, TransType trans_type,
-                                               std::map<std::string, double>& load_delay_map, std::map<std::string, double>& beta_map)
+void RcTreeAnalyzer::analyze(ParasiticNet& net, std::string& root, AnalysisType analysis, TransType trans)
 {
-  if (visited_node_set.count(node_name) > 0) {
+  auto& values = _timing[net.get_net_name()][analysis][trans];
+  if (values.root == root && !root.empty())
     return;
+  values = RcTiming{};
+  auto& tree = rootedTree(net, root);
+  const auto count = tree.nodes.size();
+  std::vector<double> capacitance;
+  capacitance.reserve(count);
+  for (auto& node : tree.nodes)
+    capacitance.push_back(nodeLoad(net, node, analysis, trans));
+  auto loads = capacitance;
+  auto driver = pinName(root);
+  if (_database.network().pins().contains(driver)) {
+    loads[0] -= _pin_capacitance.pinCapacitance(driver, analysis, trans);
+    loads[0] += _pin_capacitance.driverCapacitance(driver, analysis, trans);
   }
-  visited_node_set.insert(node_name);
+  for (std::size_t node = count; node-- > 0;)
+    for (const auto child : tree.children[node])
+      loads[node] += loads[child];
 
-  std::string& net_name = parasitic_net.get_net_name();
-  if (resistor_map.count(node_name) > 0) {
-    for (std::pair<std::string, double>& next_node_pair : resistor_map[node_name]) {
-      if (next_node_pair.first == parent_node_name || visited_node_set.count(next_node_pair.first) > 0) {
-        continue;
-      }
-      beta_map[next_node_pair.first] = beta_map[node_name] + next_node_pair.second * load_delay_map[next_node_pair.first] * 1E-3;
-      updateParasiticImpulseMap(parasitic_net, next_node_pair.first, node_name, resistor_map, visited_node_set, analysis_type, trans_type, load_delay_map,
-                                beta_map);
-    }
+  std::vector<double> delays(count, 0.);
+  for (std::size_t node = 1; node < count; ++node)
+    delays[node] = delays[tree.parents[node]] + tree.resistances[node] * loads[node] * 1E-3;
+
+  std::vector<double> load_delays(count, 0.);
+  for (std::size_t node = count; node-- > 0;) {
+    load_delays[node] = capacitance[node] * delays[node];
+    for (const auto child : tree.children[node])
+      load_delays[node] += load_delays[child];
   }
-
-  double node_delay = _parasitic_delay_map_cache[net_name][analysis_type][trans_type][node_name];
-  double impulse = 2.0 * beta_map[node_name] - std::pow(node_delay, 2);
-  _parasitic_impulse_map_cache[net_name][analysis_type][trans_type][node_name] = std::max(0.0, impulse);
+  std::vector<double> beta(count, 0.);
+  for (std::size_t node = 0; node < count; ++node) {
+    if (node != 0)
+      beta[node] = beta[tree.parents[node]] + tree.resistances[node] * load_delays[node] * 1E-3;
+    values.loads.emplace(tree.nodes[node], loads[node]);
+    values.delays.emplace(tree.nodes[node], delays[node]);
+    values.impulses.emplace(tree.nodes[node], std::max(0., 2. * beta[node] - std::pow(delays[node], 2)));
+  }
+  values.root = root;
 }
 
 double RcTreeAnalyzer::totalLoad(ParasiticNet& parasitic_net, AnalysisType analysis_type, TransType trans_type)
@@ -291,59 +232,56 @@ std::string RcTreeAnalyzer::pinName(std::string& node_name)
   return node_name;
 }
 
-void RcTreeAnalyzer::buildTree(ParasiticNet& parasitic_net, std::string& source_node_name, AnalysisType analysis_type, TransType trans_type,
-                               std::vector<std::string>& node_name_list, std::vector<int32_t>& parent_idx_list, std::vector<double>& resistance_list,
-                               std::vector<double>& capacitance_list)
+RcTreeAnalyzer::RcTree& RcTreeAnalyzer::rootedTree(ParasiticNet& net, const std::string& root)
 {
-  std::string& net_name = parasitic_net.get_net_name();
-  if (_parasitic_resistor_map_cache.count(net_name) == 0) {
-    buildParasiticResistorMap(parasitic_net, _parasitic_resistor_map_cache[net_name]);
+  auto& tree = _trees[net.get_net_name()];
+  if (tree.root == root && !tree.nodes.empty())
+    return tree;
+  if (!_parasitic_resistor_map_cache.contains(net.get_net_name()))
+    buildParasiticResistorMap(net, _parasitic_resistor_map_cache[net.get_net_name()]);
+  const auto& resistors = _parasitic_resistor_map_cache.at(net.get_net_name());
+  tree = RcTree{};
+  tree.nodes.push_back(root);
+  tree.parents.push_back(-1);
+  tree.resistances.push_back(0.);
+  tree.children.emplace_back();
+  std::set<std::string> visited{root};
+  std::vector<std::pair<std::size_t, std::size_t>> stack{{0, 0}};
+  while (!stack.empty()) {
+    auto& [node, edge_index] = stack.back();
+    const auto edges = resistors.find(tree.nodes[node]);
+    if (edges == resistors.end() || edge_index == edges->second.size()) {
+      stack.pop_back();
+      continue;
+    }
+    const auto& [next, resistance] = edges->second[edge_index++];
+    if (!visited.insert(next).second)
+      continue;
+    const auto child = tree.nodes.size();
+    tree.children[node].push_back(child);
+    tree.nodes.push_back(next);
+    tree.parents.push_back(static_cast<int32_t>(node));
+    tree.resistances.push_back(resistance);
+    tree.children.emplace_back();
+    stack.emplace_back(child, 0);
   }
-  std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map = _parasitic_resistor_map_cache[net_name];
+  tree.root = root;
+  return tree;
+}
 
-  std::set<std::string> visited_node_set;
-  node_name_list.push_back(source_node_name);
-  parent_idx_list.push_back(-1);
-  resistance_list.push_back(0.0);
-  capacitance_list.push_back(parasitic_net.get_node_map()[source_node_name].get_capacitance());
-  visited_node_set.insert(source_node_name);
-
-  std::vector<std::size_t> stack_node_idx_list;
-  std::vector<std::size_t> stack_next_edge_idx_list;
-  stack_node_idx_list.push_back(0);
-  stack_next_edge_idx_list.push_back(0);
-  while (!stack_node_idx_list.empty()) {
-    std::size_t node_idx = stack_node_idx_list.back();
-    std::string& node_name = node_name_list[node_idx];
-    if (resistor_map.count(node_name) == 0) {
-      stack_node_idx_list.pop_back();
-      stack_next_edge_idx_list.pop_back();
-      continue;
-    }
-
-    std::vector<std::pair<std::string, double>>& edge_list = resistor_map[node_name];
-    std::size_t& edge_idx = stack_next_edge_idx_list.back();
-    if (edge_idx >= edge_list.size()) {
-      stack_node_idx_list.pop_back();
-      stack_next_edge_idx_list.pop_back();
-      continue;
-    }
-
-    std::pair<std::string, double>& next_node_pair = edge_list[edge_idx];
-    edge_idx++;
-    std::string& next_node_name = next_node_pair.first;
-    if (visited_node_set.count(next_node_name) > 0) {
-      continue;
-    }
-
-    visited_node_set.insert(next_node_name);
-    node_name_list.push_back(next_node_name);
-    parent_idx_list.push_back(static_cast<int32_t>(node_idx));
-    resistance_list.push_back(next_node_pair.second * 1E-3);
-    capacitance_list.push_back(nodeLoad(parasitic_net, next_node_name, analysis_type, trans_type));
-    stack_node_idx_list.push_back(node_name_list.size() - 1);
-    stack_next_edge_idx_list.push_back(0);
-  }
+void RcTreeAnalyzer::buildTree(ParasiticNet& net, std::string& root, AnalysisType analysis, TransType trans, std::vector<std::string>& names,
+                               std::vector<int32_t>& parents, std::vector<double>& resistances, std::vector<double>& capacitances)
+{
+  auto& tree = rootedTree(net, root);
+  names.insert(names.end(), tree.nodes.begin(), tree.nodes.end());
+  parents.insert(parents.end(), tree.parents.begin(), tree.parents.end());
+  for (const auto resistance : tree.resistances)
+    resistances.push_back(resistance * 1E-3);
+  // Arnoldi's source capacitance retains the receiver capacitance of an inout
+  // driver; preserve its original root formula separately from subtree loads.
+  capacitances.push_back(net.get_node_map()[root].get_capacitance() + _pin_capacitance.driverCapacitance(pinName(root), analysis, trans));
+  for (std::size_t node = 1; node < tree.nodes.size(); ++node)
+    capacitances.push_back(nodeLoad(net, tree.nodes[node], analysis, trans));
 }
 
 }  // namespace ista

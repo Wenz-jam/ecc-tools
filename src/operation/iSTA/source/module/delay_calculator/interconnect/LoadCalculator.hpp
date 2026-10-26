@@ -37,6 +37,7 @@ class LoadCalculator
 
  private:
   double netLoad(Net& net, const std::string& driver_pin, AnalysisType analysis_type, TransType output_trans_type);
+  double netPinLoad(Net& net, const std::string& driver_pin, AnalysisType analysis_type, TransType trans_type);
   double parasiticLoad(const std::string& driver_pin, ParasiticNet& parasitic_net, AnalysisType analysis_type, TransType trans_type);
   Database& _database;
   PinCapacitanceCalculator& _pin_capacitance;

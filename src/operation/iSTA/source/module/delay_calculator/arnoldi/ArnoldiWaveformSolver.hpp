@@ -59,6 +59,9 @@ class ArnoldiWaveformSolver
   static double rampTime(double pole, double ramp, double voltage);
   static double effectiveCapacitance(double driver_ramp, double drive_resistance, const ParasiticArnoldiPoleResidue& pole_residue,
                                      double effective_capacitance_time);
+  // Lumped capacitance whose ramp response reaches voltage at the given time.
+  // The passive source response bounds the solution by total_capacitance.
+  static std::optional<double> crossingCapacitance(double driver_ramp, double drive_resistance, double total_capacitance, double crossing_time, double voltage);
   static void crossingTime(double driver_ramp, const ParasiticArnoldiPoleResidue& pole_residue, std::size_t term_idx, double voltage, double& waveform_time);
   static void crossingTime(double driver_ramp, const ParasiticArnoldiPoleResidue& pole_residue, std::size_t term_idx, double upper_threshold,
                            double& upper_time, double mid_threshold, double& mid_time, double lower_threshold, double& lower_time);

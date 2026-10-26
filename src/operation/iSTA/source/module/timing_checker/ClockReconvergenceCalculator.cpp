@@ -40,7 +40,7 @@ double ClockReconvergenceCalculator::correction(const std::string& launch_pin, T
       const auto clock = _database.sdc().get_clock_map().find(std::string(name));
       if (clock == _database.sdc().get_clock_map().end() || clock->second.get_is_propagated())
         return false;
-      const auto values = clockPinValues(_database, pin, name, mode, edge, AnalysisType::kNone, source);
+      const auto& values = _clock_pin_values.values(pin, name, mode, edge, AnalysisType::kNone, source);
       const auto& sources = clock->second.get_source_list();
       return !values.propagated || (!values.propagated_pin.empty() && std::find(sources.begin(), sources.end(), values.propagated_pin) == sources.end());
     };
@@ -51,26 +51,81 @@ double ClockReconvergenceCalculator::correction(const std::string& launch_pin, T
   }
   AnalysisType launch_analysis_type = analysis_type;
   AnalysisType capture_analysis_type = getCaptureAnalysisType(analysis_type);
-  std::vector<ClockPathPoint> launch_clock_path = getClockPathPinList(launch_pin, launch_clock, launch_analysis_type, launch_trans_type, launch_source);
-  std::vector<ClockPathPoint> capture_clock_path = getClockPathPinList(capture_pin, capture_clock, capture_analysis_type, capture_trans_type, capture_source);
-  common_pin_name.clear();
   ClockPathPoint launch_common_pin;
   ClockPathPoint capture_common_pin;
-  std::size_t path_size = std::min(launch_clock_path.size(), capture_clock_path.size());
-  for (std::size_t i = 0; i < path_size; i++) {
-    if (launch_clock_path[i].vertex != capture_clock_path[i].vertex) {
-      break;
+  if (_cache_mode == CacheMode::kSnapshot) {
+    const auto& launch = indexedClockPath(launch_pin, launch_clock, launch_analysis_type, launch_trans_type, launch_source);
+    const auto& capture = indexedClockPath(capture_pin, capture_clock, capture_analysis_type, capture_trans_type, capture_source);
+    const auto depth = commonPrefixDepth(launch.prefix, capture.prefix);
+    if (depth) {
+      launch_common_pin = launch.points[depth - 1];
+      capture_common_pin = capture.points[depth - 1];
     }
-    launch_common_pin = launch_clock_path[i];
-    capture_common_pin = capture_clock_path[i];
-    common_pin_name = _database.graph().vertices()[launch_clock_path[i].vertex].get_pin_name();
+  } else {
+    const auto launch = getClockPathPinList(launch_pin, launch_clock, launch_analysis_type, launch_trans_type, launch_source);
+    const auto capture = getClockPathPinList(capture_pin, capture_clock, capture_analysis_type, capture_trans_type, capture_source);
+    for (std::size_t i = 0; i < std::min(launch.size(), capture.size()) && launch[i].vertex == capture[i].vertex; ++i) {
+      launch_common_pin = launch[i];
+      capture_common_pin = capture[i];
+    }
   }
+  if (launch_common_pin.vertex >= 0)
+    common_pin_name = _database.graph().vertices()[launch_common_pin.vertex].get_pin_name();
   if (common_pin_name.empty()) {
     return 0.0;
   }
   double launch_delay_delta = getClockCommonPathDelayDelta(launch_common_pin, launch_clock);
   double capture_delay_delta = getClockCommonPathDelayDelta(capture_common_pin, capture_clock);
   return std::min(launch_delay_delta, capture_delay_delta);
+}
+
+const ClockReconvergenceCalculator::IndexedClockPath& ClockReconvergenceCalculator::indexedClockPath(
+    const std::string& pin, std::string_view clock, AnalysisType analysis, TransType transition, std::optional<TransType> source)
+{
+  const auto key = std::tuple{std::string_view(pin), clock, analysis, transition, source};
+  if (const auto found = _clock_paths.find(key); found != _clock_paths.end())
+    return found->second;
+  if (_prefixes.empty())
+    _prefixes.emplace_back();  // Empty common prefix.
+  IndexedClockPath path{getClockPathPinList(pin, clock, analysis, transition, source)};
+  for (const auto& point : path.points) {
+    auto [entry, inserted] = _prefix_ids.try_emplace({path.prefix, point.vertex}, _prefixes.size());
+    if (inserted) {
+      PrefixNode node{_prefixes[path.prefix].depth + 1, {path.prefix}};
+      for (std::size_t level = 1; (node.depth >> level) != 0; ++level)
+        node.ancestors.push_back(ancestor(node.ancestors.back(), level - 1));
+      _prefixes.push_back(std::move(node));
+    }
+    path.prefix = entry->second;
+  }
+  return _clock_paths.emplace(ClockPathKey{pin, clock, analysis, transition, source}, std::move(path)).first->second;
+}
+
+std::size_t ClockReconvergenceCalculator::ancestor(std::size_t prefix, std::size_t level) const
+{
+  const auto& ancestors = _prefixes[prefix].ancestors;
+  return level < ancestors.size() ? ancestors[level] : 0;
+}
+
+std::size_t ClockReconvergenceCalculator::commonPrefixDepth(std::size_t launch, std::size_t capture) const
+{
+  if (_prefixes[launch].depth < _prefixes[capture].depth)
+    std::swap(launch, capture);
+  auto difference = _prefixes[launch].depth - _prefixes[capture].depth;
+  for (std::size_t level = 0; difference; ++level, difference >>= 1)
+    if (difference & 1)
+      launch = ancestor(launch, level);
+  if (launch == capture)
+    return _prefixes[launch].depth;
+  for (std::size_t level = _prefixes[launch].ancestors.size(); level-- > 0;) {
+    const auto left = ancestor(launch, level);
+    const auto right = ancestor(capture, level);
+    if (left != right) {
+      launch = left;
+      capture = right;
+    }
+  }
+  return _prefixes[ancestor(launch, 0)].depth;
 }
 
 double ClockReconvergenceCalculator::getClockCommonPathDelayDelta(const ClockPathPoint& common_pin, std::string_view clock_name)

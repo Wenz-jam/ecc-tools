@@ -180,9 +180,11 @@ void LogicSimulator::disableInsensitiveArcs()
     if (arc.get_is_clock_arc())
       continue;
     const auto output = cell->second.get_port_map().find(arc.get_library_sink_port());
-    if (output == cell->second.get_port_map().end() || output->second.get_function_expression().get_is_empty())
+    if (output == cell->second.get_port_map().end())
       continue;
-    if (!output->second.get_function_expression().is_sensitive_to(arc.get_library_source_port(), constantInputs(instance->second))) {
+    const auto& expression
+        = cell_arc != nullptr && cell_arc->isThreeStateArc() ? output->second.get_three_state_expression() : output->second.get_function_expression();
+    if (!expression.get_is_empty() && !expression.is_sensitive_to(arc.get_library_source_port(), values)) {
       arc.set_is_case_analysis_disable(true);
     }
   }

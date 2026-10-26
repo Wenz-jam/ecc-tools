@@ -38,27 +38,12 @@ class RcTreeAnalyzer
   void clear()
   {
     _parasitic_resistor_map_cache.clear();
-    _parasitic_load_map_cache.clear();
-    _parasitic_root_map_cache.clear();
-    _parasitic_delay_map_cache.clear();
-    _parasitic_impulse_map_cache.clear();
+    _trees.clear();
+    _timing.clear();
   }
-  double load(const std::string& net, AnalysisType analysis, TransType trans, const std::string& node)
-  {
-    return _parasitic_load_map_cache[net][analysis][trans][node];
-  }
-  std::optional<double> delay(const std::string& net, AnalysisType analysis, TransType trans, const std::string& node)
-  {
-    auto& values = _parasitic_delay_map_cache[net][analysis][trans];
-    auto found = values.find(node);
-    return found == values.end() ? std::nullopt : std::optional<double>(found->second);
-  }
-  std::optional<double> impulse(const std::string& net, AnalysisType analysis, TransType trans, const std::string& node)
-  {
-    auto& values = _parasitic_impulse_map_cache[net][analysis][trans];
-    auto found = values.find(node);
-    return found == values.end() ? std::nullopt : std::optional<double>(found->second);
-  }
+  double load(const std::string& net, AnalysisType analysis, TransType trans, const std::string& node) const;
+  std::optional<double> delay(const std::string& net, AnalysisType analysis, TransType trans, const std::string& node) const;
+  std::optional<double> impulse(const std::string& net, AnalysisType analysis, TransType trans, const std::string& node) const;
   bool hasDisabledDriver(const std::string& net, const std::string& source) const;
   double balancedDelay(ParasiticNet& net, const std::string& source, std::string& sink, AnalysisType analysis, TransType edge);
   double totalResistance(ParasiticNet& parasitic_net);
@@ -73,26 +58,30 @@ class RcTreeAnalyzer
 
  private:
   double nodeLoad(ParasiticNet& parasitic_net, std::string& node_name, AnalysisType analysis_type, TransType trans_type);
-  double updateParasiticLoadMap(ParasiticNet& parasitic_net, std::string& node_name, std::string& parent_node_name,
-                                std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map, std::set<std::string>& visited_node_set,
-                                AnalysisType analysis_type, TransType trans_type);
-  void updateParasiticDelayMap(ParasiticNet& parasitic_net, std::string& node_name, std::string& parent_node_name,
-                               std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map, std::set<std::string>& visited_node_set,
-                               AnalysisType analysis_type, TransType trans_type);
-  double updateParasiticLoadDelayMap(ParasiticNet& parasitic_net, std::string& node_name, std::string& parent_node_name,
-                                     std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map, std::set<std::string>& visited_node_set,
-                                     AnalysisType analysis_type, TransType trans_type, std::map<std::string, double>& load_delay_map);
-  void updateParasiticImpulseMap(ParasiticNet& parasitic_net, std::string& node_name, std::string& parent_node_name,
-                                 std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map, std::set<std::string>& visited_node_set,
-                                 AnalysisType analysis_type, TransType trans_type, std::map<std::string, double>& load_delay_map,
-                                 std::map<std::string, double>& beta_map);
+  // Node order and ordered children preserve the resistor-list DFS and the
+  // floating-point summation order. Topology is independent of slew and corner.
+  struct RcTree
+  {
+    std::string root;
+    std::vector<std::string> nodes;
+    std::vector<int32_t> parents;
+    std::vector<double> resistances;  // ohms, before numerical unit conversion
+    std::vector<std::vector<std::size_t>> children;
+  };
+  struct RcTiming
+  {
+    std::string root;
+    std::map<std::string, double> loads;
+    std::map<std::string, double> delays;
+    std::map<std::string, double> impulses;
+  };
+  RcTree& rootedTree(ParasiticNet& net, const std::string& root);
+  const RcTiming* timing(const std::string& net, AnalysisType analysis, TransType trans) const;
   void buildParasiticResistorMap(ParasiticNet& parasitic_net, std::map<std::string, std::vector<std::pair<std::string, double>>>& resistor_map);
   Database& _database;
   PinCapacitanceCalculator& _pin_capacitance;
   std::map<std::string, std::map<std::string, std::vector<std::pair<std::string, double>>>> _parasitic_resistor_map_cache;
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>> _parasitic_load_map_cache;
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::string>>> _parasitic_root_map_cache;
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>> _parasitic_delay_map_cache;
-  std::map<std::string, std::map<AnalysisType, std::map<TransType, std::map<std::string, double>>>> _parasitic_impulse_map_cache;
+  std::map<std::string, RcTree> _trees;
+  std::map<std::string, std::map<AnalysisType, std::map<TransType, RcTiming>>> _timing;
 };
 }  // namespace ista

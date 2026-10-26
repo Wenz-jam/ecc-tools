@@ -14,6 +14,7 @@
 //
 // See the Mulan PSL v2 for more details.
 // ***************************************************************************************
+#include "DataManager.hpp"
 #include "SdcCommand.hpp"
 #include "SdcTclCmd.hpp"
 #include "SetUnits.hpp"
@@ -32,6 +33,20 @@ template <typename Command>
 void registerCommand(SdcCommand& interpreter, const char* name)
 {
   interpreter.createCmd(name, &executeTclCommand<Command>);
+}
+
+template <typename Command>
+int executeConstraintCommand(ClientData data, Tcl_Interp* interp, int objc, Tcl_Obj* const objv[])
+{
+  if (DataManager::isInitialized())
+    STADM.getDatabase().sdc().markChanged();
+  return executeTclCommand<Command>(data, interp, objc, objv);
+}
+
+template <typename Command>
+void registerConstraintCommand(SdcCommand& interpreter, const char* name)
+{
+  interpreter.createCmd(name, &executeConstraintCommand<Command>);
 }
 
 void registerCollectionCommands(SdcCommand& interpreter)
@@ -73,43 +88,43 @@ void registerObjectQueryCommands(SdcCommand& interpreter)
 
 void registerClockConstraintCommands(SdcCommand& interpreter)
 {
-  registerCommand<TclCreateClock>(interpreter, "create_clock");
-  registerCommand<TclCreateGeneratedClock>(interpreter, "create_generated_clock");
-  registerCommand<TclSetClockGroups>(interpreter, "set_clock_groups");
-  registerCommand<TclSetClockLatency>(interpreter, "set_clock_latency");
-  registerCommand<TclRemoveClockLatency>(interpreter, "remove_clock_latency");
-  registerCommand<TclRemoveClockLatency>(interpreter, "unset_clock_latency");
-  registerCommand<TclSetClockTransition>(interpreter, "set_clock_transition");
-  registerCommand<TclSetClockUncertainty>(interpreter, "set_clock_uncertainty");
-  registerCommand<TclRemoveClockUncertainty>(interpreter, "remove_clock_uncertainty");
-  registerCommand<TclRemoveClockUncertainty>(interpreter, "unset_clock_uncertainty");
-  registerCommand<TclSetPropagatedClock>(interpreter, "set_propagated_clock");
-  registerCommand<TclRemovePropagatedClock>(interpreter, "remove_propagated_clock");
-  registerCommand<TclRemovePropagatedClock>(interpreter, "unset_propagated_clock");
+  registerConstraintCommand<TclCreateClock>(interpreter, "create_clock");
+  registerConstraintCommand<TclCreateGeneratedClock>(interpreter, "create_generated_clock");
+  registerConstraintCommand<TclSetClockGroups>(interpreter, "set_clock_groups");
+  registerConstraintCommand<TclSetClockLatency>(interpreter, "set_clock_latency");
+  registerConstraintCommand<TclRemoveClockLatency>(interpreter, "remove_clock_latency");
+  registerConstraintCommand<TclRemoveClockLatency>(interpreter, "unset_clock_latency");
+  registerConstraintCommand<TclSetClockTransition>(interpreter, "set_clock_transition");
+  registerConstraintCommand<TclSetClockUncertainty>(interpreter, "set_clock_uncertainty");
+  registerConstraintCommand<TclRemoveClockUncertainty>(interpreter, "remove_clock_uncertainty");
+  registerConstraintCommand<TclRemoveClockUncertainty>(interpreter, "unset_clock_uncertainty");
+  registerConstraintCommand<TclSetPropagatedClock>(interpreter, "set_propagated_clock");
+  registerConstraintCommand<TclRemovePropagatedClock>(interpreter, "remove_propagated_clock");
+  registerConstraintCommand<TclRemovePropagatedClock>(interpreter, "unset_propagated_clock");
 }
 
 void registerEnvironmentConstraintCommands(SdcCommand& interpreter)
 {
-  registerCommand<TclSetDrivingCell>(interpreter, "set_driving_cell");
-  registerCommand<TclSetInputDelay>(interpreter, "set_input_delay");
-  registerCommand<TclSetOutputDelay>(interpreter, "set_output_delay");
-  registerCommand<TclSetInputTransition>(interpreter, "set_input_transition");
-  registerCommand<TclSetLoad>(interpreter, "set_load");
-  registerCommand<TclSetMaxFanout>(interpreter, "set_max_fanout");
-  registerCommand<TclSetElectricalLimit>(interpreter, "set_max_transition");
-  registerCommand<TclSetElectricalLimit>(interpreter, "set_max_capacitance");
-  registerCommand<TclSetTimingDerate>(interpreter, "set_timing_derate");
-  registerCommand<TclSetCaseAnalysis>(interpreter, "set_case_analysis");
+  registerConstraintCommand<TclSetDrivingCell>(interpreter, "set_driving_cell");
+  registerConstraintCommand<TclSetInputDelay>(interpreter, "set_input_delay");
+  registerConstraintCommand<TclSetOutputDelay>(interpreter, "set_output_delay");
+  registerConstraintCommand<TclSetInputTransition>(interpreter, "set_input_transition");
+  registerConstraintCommand<TclSetLoad>(interpreter, "set_load");
+  registerConstraintCommand<TclSetMaxFanout>(interpreter, "set_max_fanout");
+  registerConstraintCommand<TclSetElectricalLimit>(interpreter, "set_max_transition");
+  registerConstraintCommand<TclSetElectricalLimit>(interpreter, "set_max_capacitance");
+  registerConstraintCommand<TclSetTimingDerate>(interpreter, "set_timing_derate");
+  registerConstraintCommand<TclSetCaseAnalysis>(interpreter, "set_case_analysis");
 }
 
 void registerPathExceptionCommands(SdcCommand& interpreter)
 {
-  registerCommand<TclSetFalsePath>(interpreter, "set_false_path");
-  registerCommand<TclSetMaxDelay>(interpreter, "set_max_delay");
-  registerCommand<TclSetMinDelay>(interpreter, "set_min_delay");
-  registerCommand<TclSetMulticyclePath>(interpreter, "set_multicycle_path");
-  registerCommand<TclResetPath>(interpreter, "reset_path");
-  registerCommand<TclResetPath>(interpreter, "unset_path_exceptions");
+  registerConstraintCommand<TclSetFalsePath>(interpreter, "set_false_path");
+  registerConstraintCommand<TclSetMaxDelay>(interpreter, "set_max_delay");
+  registerConstraintCommand<TclSetMinDelay>(interpreter, "set_min_delay");
+  registerConstraintCommand<TclSetMulticyclePath>(interpreter, "set_multicycle_path");
+  registerConstraintCommand<TclResetPath>(interpreter, "reset_path");
+  registerConstraintCommand<TclResetPath>(interpreter, "unset_path_exceptions");
 }
 
 }  // namespace

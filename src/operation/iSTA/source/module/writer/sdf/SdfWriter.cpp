@@ -276,7 +276,16 @@ void SdfWriter::outputSdfCellArcDelayMap(std::ostream& sdf_file, std::string& so
   for (std::pair<const SdfCellArcKey, SdfDelay>& cell_arc_delay_pair : cell_arc_delay_map) {
     std::string condition = cell_arc_delay_pair.first.condition;
     TransType input_trans_type = cell_arc_delay_pair.first.input_trans_type;
-    outputSdfCellArc(sdf_file, source_port_name, sink_port_name, condition, input_trans_type, cell_arc_delay_pair.second);
+    if (cell_arc_delay_pair.first.retaining) {
+      if (cell_arc_delay_map.contains({condition, input_trans_type, false}))
+        continue;
+      SdfDelay uncomputed_normal;
+      outputSdfCellArc(sdf_file, source_port_name, sink_port_name, condition, input_trans_type, uncomputed_normal, &cell_arc_delay_pair.second);
+      continue;
+    }
+    auto retain = cell_arc_delay_map.find({condition, input_trans_type, true});
+    outputSdfCellArc(sdf_file, source_port_name, sink_port_name, condition, input_trans_type, cell_arc_delay_pair.second,
+                     retain == cell_arc_delay_map.end() ? nullptr : &retain->second);
   }
 }
 
@@ -304,9 +313,9 @@ void SdfWriter::outputSdfOnlyCellArc(std::ostream& sdf_file, TimingCellArc& timi
 }
 
 void SdfWriter::outputSdfCellArc(std::ostream& sdf_file, std::string& source_port_name, std::string& sink_port_name, std::string& condition,
-                                 TransType input_trans_type, SdfDelay& sdf_delay)
+                                 TransType input_trans_type, SdfDelay& sdf_delay, SdfDelay* retaining)
 {
-  if (!_values.hasDelay(sdf_delay)) {
+  if (!_values.hasDelay(sdf_delay) && (!retaining || !_values.hasDelay(*retaining))) {
     return;
   }
   sdf_file << "    ";
@@ -320,7 +329,12 @@ void SdfWriter::outputSdfCellArc(std::ostream& sdf_file, std::string& source_por
     sdf_file << source_port_name;
   }
   sdf_file << " " << sink_port_name << " ";
-  _format.delay(sdf_file, sdf_delay);
+  if (retaining && _values.hasDelay(*retaining)) {
+    sdf_file << "(RETAIN ";
+    _format.delay(sdf_file, *retaining, true);
+    sdf_file << ") ";
+  }
+  _format.delay(sdf_file, sdf_delay, retaining != nullptr);
   sdf_file << ")";
   if (!condition.empty()) {
     sdf_file << ")";

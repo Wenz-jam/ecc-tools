@@ -14,7 +14,11 @@ struct SdfCellArcKey
   std::string condition;
   TransType input_trans_type = TransType::kNone;
 
-  bool operator<(const SdfCellArcKey& other) const { return std::tie(condition, input_trans_type) < std::tie(other.condition, other.input_trans_type); }
+  bool retaining = false;
+  bool operator<(const SdfCellArcKey& other) const
+  {
+    return std::tie(condition, input_trans_type, retaining) < std::tie(other.condition, other.input_trans_type, other.retaining);
+  }
 };
 
 using SdfCellArcDelayMap = std::map<SdfCellArcKey, SdfDelay>;
@@ -40,7 +44,7 @@ class SdfValueExtractor
   SdfCheckValues checkValues(Instance& instance, TimingCheckArc& check_arc, TimingArc& timing_arc, TransType transition);
 
  private:
-  SdfDelay timingArcDelay(Arc& arc, TimingArc& timing_arc, TransType input_trans_type);
+  SdfDelay timingArcDelay(Arc& arc, TimingArc& timing_arc, TransType input_trans_type, bool allow_aggregate);
   SdfDelay cellArcDelay(TimingCellArc& cell_arc, TimingArc& timing_arc, TransType input_trans_type);
   double checkDelay(Instance& instance, TimingCheckArc& check_arc, TimingArc& timing_arc, AnalysisType analysis_type, TransType transition);
   void adjustHoldDelay(Instance& instance, TimingCheckArc& check_arc, TimingArc& timing_arc, TransType transition, double& minimum, double& maximum);

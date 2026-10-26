@@ -14,6 +14,7 @@ namespace ista {
 struct PathCheck
 {
   double required = 0.0;
+  double required_before_round = 0.0;
   TimingCheckType type = TimingCheckType::kNone;
   double check_time = 0.0;
   double uncertainty = 0.0;
@@ -29,6 +30,9 @@ struct PathCheck
   std::string common_pin;
   std::optional<double> output_delay;
   bool level_sensitive = false;
+  // Preserve the second rounding step of a resolved multicycle adjustment.
+  bool has_required_adjustment = false;
+  double required_adjustment = 0.0;
 };
 
 // Borrows a propagated path only during synchronous PathSearcher.

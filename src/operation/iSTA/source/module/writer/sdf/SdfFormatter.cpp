@@ -81,7 +81,7 @@ std::string SdfFormatter::edgeName(TransType trans_type)
   return "posedge";
 }
 
-void SdfFormatter::delay(std::ostream& sdf_file, SdfDelay& sdf_delay)
+void SdfFormatter::delay(std::ostream& sdf_file, SdfDelay& sdf_delay, bool explicit_edges)
 {
   bool has_rise_delay = sdf_delay.get_rise_min_delay() || sdf_delay.get_rise_max_delay();
   bool has_fall_delay = sdf_delay.get_fall_min_delay() || sdf_delay.get_fall_max_delay();
@@ -97,6 +97,8 @@ void SdfFormatter::delay(std::ostream& sdf_file, SdfDelay& sdf_delay)
     double max_delay = sdf_delay.get_fall_max_delay() ? *sdf_delay.get_fall_max_delay() : min_delay;
     sdf_file << " ";
     triple(sdf_file, min_delay, max_delay);
+  } else if (explicit_edges) {
+    sdf_file << " ()";
   }
 }
 

@@ -1647,7 +1647,8 @@ unsigned LibertyReader::visitGroup(LibertyGroupStmt* group)
   const char* group_name = group->group_name;
 
   static const std::set<std::string> table_names
-      = {"cell_rise", "cell_fall", "rise_transition", "fall_transition", "rise_constraint", "fall_constraint"};
+      = {"cell_rise",       "cell_fall",      "rise_transition", "fall_transition",  "rise_constraint",
+         "fall_constraint", "retaining_rise", "retaining_fall",  "retain_rise_slew", "retain_fall_slew"};
   static const std::set<std::string> power_table_names = {"rise_power", "fall_power"};
 
   if (isEqual(group_name, "library")) {
@@ -2107,7 +2108,8 @@ unsigned LibertyReader::visitGroup(liberty_ast::LibGroup* group)
   const char* group_name = group->getGroupType();
 
   static const std::set<std::string> table_names
-      = {"cell_rise", "cell_fall", "rise_transition", "fall_transition", "rise_constraint", "fall_constraint"};
+      = {"cell_rise",       "cell_fall",      "rise_transition", "fall_transition",  "rise_constraint",
+         "fall_constraint", "retaining_rise", "retaining_fall",  "retain_rise_slew", "retain_fall_slew"};
   static const std::set<std::string> power_table_names = {"rise_power", "fall_power"};
 
   if (isEqual(group_name, "library")) {

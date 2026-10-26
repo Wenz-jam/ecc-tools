@@ -64,7 +64,7 @@ class SdfWriter
   void outputSdfOnlyCellArcList(std::ostream& sdf_file, Instance& instance);
   void outputSdfOnlyCellArc(std::ostream& sdf_file, TimingCellArc& timing_cell_arc);
   void outputSdfCellArc(std::ostream& sdf_file, std::string& source_port_name, std::string& sink_port_name, std::string& condition, TransType input_trans_type,
-                        SdfDelay& sdf_delay);
+                        SdfDelay& sdf_delay, SdfDelay* retaining = nullptr);
   void outputSdfTimingCheckList(std::ostream& sdf_file, Instance& instance);
   void outputSdfTimingCheck(std::ostream& sdf_file, Instance& instance, TimingCheckArc& timing_check_arc);
   void outputSdfEdgeTimingCheck(std::ostream& sdf_file, Instance& instance, TimingCheckArc& timing_check_arc, TimingArc& timing_arc, TransType data_trans_type);

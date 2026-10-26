@@ -28,6 +28,9 @@ class PinCapacitanceCalculator
   PinCapacitanceCalculator(const PinCapacitanceCalculator&) = delete;
   PinCapacitanceCalculator& operator=(const PinCapacitanceCalculator&) = delete;
   double pinCapacitance(std::string& pin_name, AnalysisType analysis_type, TransType trans_type);
+  // Capacitance at the source: an inout cell's input capacitance, or set_load
+  // on a top-level port. Both remain present while that terminal drives.
+  double driverCapacitance(const std::string& pin_name, AnalysisType analysis_type, TransType trans_type);
 
  private:
   Database& _database;
