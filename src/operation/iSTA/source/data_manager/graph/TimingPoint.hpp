@@ -78,6 +78,7 @@ class TimingPoint
     _clock_state_map.clear();
     _default_clock.clear();
   }
+  const auto& get_path_state_map() const { return _path_state_map; }
   // setter
   void set_arrival(const double arrival) { _arrival = arrival; }
   void set_required(const double required) { _required = required; }

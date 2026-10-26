@@ -50,7 +50,8 @@ void TimingAnalyzer::analyze()
   DataPropagator(database, _delay).propagate();
 
   {
-    PathChecker check(database, _delay);
+    // Clock topology/waveforms stay fixed throughout required/path analysis.
+    PathChecker check(database, _delay, ClockReconvergenceCalculator::CacheMode::kSnapshot);
     RequiredPropagator(database, check).propagate();
     PathAnalyzer(database, check).analyze();
   }

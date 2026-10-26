@@ -30,6 +30,9 @@ struct PathCheck
   std::string common_pin;
   std::optional<double> output_delay;
   bool level_sensitive = false;
+  // Preserve the second rounding step of a resolved multicycle adjustment.
+  bool has_required_adjustment = false;
+  double required_adjustment = 0.0;
 };
 
 // Borrows a propagated path only during synchronous PathSearcher.

@@ -137,6 +137,15 @@ const std::vector<std::string>& ExceptionThroughIndex::candidates(std::size_t ex
   return found == nets.end() ? empty : found->second;
 }
 
+std::vector<int> ExceptionMatcher::startSpecificity(std::string_view start, std::string_view clock) const
+{
+  std::vector<int> result;
+  result.reserve(_sdc.get_path_exception_list().size());
+  for (const auto& exception : _sdc.get_path_exception_list())
+    result.push_back(endpointSelectorSpecificity(_network, exception.get_from_objects(), start, clock, true, 1 << 6, 1 << 3));
+  return result;
+}
+
 std::vector<int32_t> ExceptionMatcher::initState(std::string_view start, std::string_view clock, TransType start_trans_type, AnalysisType analysis_type,
                                                  TransType launch_transition) const
 {

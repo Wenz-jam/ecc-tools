@@ -254,6 +254,20 @@ ClockPinValues clockPinValues(const Database& database, const std::string& pin, 
   return result;
 }
 
+const ClockPinValues& ClockPinValuesQuery::values(const std::string& pin, std::string_view clock, AnalysisType analysis, TransType transition,
+                                                 AnalysisType check, std::optional<TransType> source)
+{
+  if (_mode == CacheMode::kNone) {
+    _live = clockPinValues(_database, pin, clock, analysis, transition, check, source);
+    return _live;
+  }
+  const auto key = std::tuple{std::string_view(pin), clock, analysis, transition, check, source};
+  if (const auto found = _values.find(key); found != _values.end())
+    return found->second;
+  return _values.emplace(Key{pin, clock, analysis, transition, check, source},
+                         clockPinValues(_database, pin, clock, analysis, transition, check, source)).first->second;
+}
+
 double TimingStateQuery::clockPathBound(const std::string& pin_name, std::string_view clock_name, TransType transition, std::optional<TransType> source) const
 {
   double bound = 0.;
@@ -298,44 +312,10 @@ bool TimingStateQuery::clockPathHasVariation(const std::string& pin_name, std::s
 
 bool TimingStateQuery::canPrunePathStates() const
 {
-  // Start with the single-clock, single-capture contract. Exceptions and
-  // multi-capture reductions retain the complete state propagation algorithm.
   const auto& sdc = _database.sdc();
-  if (!sdc.get_path_exception_list().empty() || !sdc.clockPinConstraints().empty() || sdc.get_clock_map().size() != 1
-      || sdc.get_clock_map().begin()->second.edgeCount() != 2 || _database.graph().endpoints().empty())
+  // Local clock annotations still require exhaustive state propagation.
+  if (!sdc.clockPinConstraints().empty() || sdc.get_clock_map().empty() || _database.graph().endpoints().empty())
     return false;
-  for (const auto& endpoint : _database.graph().endpoints()) {
-    const auto& pin = _database.network().pins().at(endpoint);
-    if (pin.get_is_port()) {
-      const auto port = sdc.get_port_constraint_map().find(endpoint);
-      if (port != sdc.get_port_constraint_map().end())
-        for (auto mode : {AnalysisType::kMin, AnalysisType::kMax})
-          for (auto edge : {TransType::kRise, TransType::kFall})
-            if (port->second.get_output_delays(mode, edge).size() > 1)
-              return false;
-    } else {
-      const auto instance = _database.network().instances().find(pin.get_instance_name());
-      if (instance == _database.network().instances().end())
-        continue;
-      for (auto mode : {AnalysisType::kMin, AnalysisType::kMax})
-        for (auto edge : {TransType::kRise, TransType::kFall}) {
-          int count = 0;
-          for (const auto& arc : instance->second.get_check_arc_list()) {
-            const auto type = arc.get_check_type();
-            if (arc.get_data_port() != endpoint
-                || !(mode == AnalysisType::kMax ? type == TimingCheckType::kSetup || type == TimingCheckType::kRecovery
-                                                : type == TimingCheckType::kHold || type == TimingCheckType::kRemoval))
-              continue;
-            bool matches = arc.get_timing_arc_list().empty();
-            for (const auto& timing : arc.get_timing_arc_list())
-              matches |= timing.get_check_table_map().contains(edge);
-            count += matches;
-          }
-          if (count > 1)
-            return false;
-        }
-    }
-  }
   for (const auto& vertex : _database.graph().vertices())
     for (const auto& [clock, state] : vertex.get_timing_point().get_clock_state_map())
       for (auto mode : {AnalysisType::kMin, AnalysisType::kMax}) {
@@ -354,9 +334,21 @@ bool TimingStateQuery::canPrunePathStates() const
   return true;
 }
 
-bool TimingStateQuery::prunePathStates(TimingPoint& point, std::size_t remaining_arcs) const
+TimingStateQuery::PathStateGroup TimingStateQuery::pathStateGroup(const TimingPathState& state, const std::vector<int32_t>* progress) const
+{
+  const bool exceptions = !_database.sdc().get_path_exception_list().empty();
+  const auto start_class = exceptions ? state.exceptionStartClass() : 0;
+  // Direct/synthetic callers without forward classification remain separate.
+  return {state.group(), progress ? *progress : state.get_exception_state_list(), start_class,
+          exceptions && start_class == 0 ? state.get_start_point() : std::string{}};
+}
+
+bool TimingStateQuery::prunePathStates(TimingPoint& point, std::size_t remaining_arcs, const std::vector<std::string_view>* allowed_clocks) const
 {
   bool pruned = false;
+  auto allowed = [&](const TimingPathState& state) {
+    return !allowed_clocks || std::find(allowed_clocks->begin(), allowed_clocks->end(), state.get_clock_name()) != allowed_clocks->end();
+  };
   // isBetterArrival can retain a same-tag predecessor up to one tolerance
   // behind the witness at every later merge. Cover the entire continuation,
   // plus endpoint comparison/rounding, before discarding another launch tag.
@@ -364,17 +356,29 @@ bool TimingStateQuery::prunePathStates(TimingPoint& point, std::size_t remaining
   for (auto& [mode, sources] : point.get_path_state_map())
     for (auto& [source, edges] : sources)
       for (auto& [edge, states] : edges) {
-        std::map<TimingPathState::Group, double> witnesses;
+        // A directly seeded state can carry a different slew. Its endpoint
+        // check need not match the physical slew of arriving states.
+        if (!states.empty() && std::any_of(states.begin(), states.end(), [&](const auto& item) {
+              return item.second.get_slew() != states.begin()->second.get_slew();
+            }))
+          continue;
+        std::map<PathStateGroup, double> witnesses;
         for (const auto& [tag, state] : states) {
+          if (!allowed(state))
+            continue;
           const double witness = state.get_arrival() + (mode == AnalysisType::kMax ? -state.clockPathBound() : state.clockPathBound());
           if (!std::isfinite(witness))
             continue;
-          auto [it, inserted] = witnesses.emplace(state.group(), witness);
+          auto [it, inserted] = witnesses.emplace(pathStateGroup(state), witness);
           if (!inserted)
             it->second = mode == AnalysisType::kMax ? std::max(it->second, witness) : std::min(it->second, witness);
         }
         for (auto it = states.begin(); it != states.end();) {
-          const auto found = witnesses.find(it->second.group());
+          if (!allowed(it->second)) {
+            ++it;
+            continue;
+          }
+          const auto found = witnesses.find(pathStateGroup(it->second));
           const double arrival = it->second.get_arrival();
           if (found != witnesses.end() && (mode == AnalysisType::kMax ? found->second > arrival + margin : found->second < arrival - margin)) {
             it = states.erase(it);

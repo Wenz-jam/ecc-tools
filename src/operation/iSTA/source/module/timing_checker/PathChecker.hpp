@@ -22,6 +22,7 @@
 #include <utility>
 #include <vector>
 
+#include "ClockReconvergenceCalculator.hpp"
 #include "graph/TimingStateQuery.hpp"
 #include "path/PathEnd.hpp"
 
@@ -33,8 +34,12 @@ class DelayCalculator;
 class PathChecker
 {
  public:
-  PathChecker(Database& database, DelayCalculator& delay_calculator) : _database(database), _delay_calculator(delay_calculator), _query(database) {}
-  std::optional<PathEnd> checkPath(const TimingPathState& path, const std::string& end_point, AnalysisType analysis);
+  PathChecker(Database& database, DelayCalculator& delay_calculator,
+              ClockReconvergenceCalculator::CacheMode clock_cache = ClockReconvergenceCalculator::CacheMode::kNone)
+      : _database(database), _delay_calculator(delay_calculator), _query(database), _clock_pin_values(database, clock_cache), _reconvergence(database, clock_cache)
+  {
+  }
+  std::optional<PathEnd> checkPath(const TimingPathState& path, const std::string& end_point, AnalysisType analysis, bool include_reconvergence = true);
   double calcPathSlack(const TimingPathState& path, double required, AnalysisType analysis);
 
  private:
@@ -42,10 +47,13 @@ class PathChecker
   Database& _database;
   DelayCalculator& _delay_calculator;
   TimingStateQuery _query;
+  ClockPinValuesQuery _clock_pin_values;
+  ClockReconvergenceCalculator _reconvergence;
 
   PathCheck evaluateRegister(const TimingPathState& path, TimingCheckArc& arc, AnalysisType analysis, std::string_view capture_clock,
-                             std::size_t capture_index);
-  std::vector<PathCheck> evaluateOutput(const TimingPathState& path, const std::string& end_point, AnalysisType analysis, TransType data_transition);
+                             std::size_t capture_index, bool include_reconvergence);
+  std::vector<PathCheck> evaluateOutput(const TimingPathState& path, const std::string& end_point, AnalysisType analysis, TransType data_transition,
+                                        bool include_reconvergence);
   std::vector<TimingCheckArc*> getCheckArcs(const std::string& end_point, AnalysisType analysis);
   std::vector<std::string> getCaptureClockNames(const std::string& clock_pin);
   std::vector<TimingIoDelay> getOutputDelayList(const std::string& end_point, AnalysisType analysis, TransType transition);
@@ -60,10 +68,10 @@ class PathChecker
   double getClockUncertainty(std::string_view launch_clock, TransType launch_transition, std::string_view capture_clock, TransType capture_transition,
                              AnalysisType analysis, const std::string& capture_pin, std::optional<TransType> local = std::nullopt);
   double getClockReconvergencePessimism(const TimingPathState& path, PathCheck& check, AnalysisType analysis);
-  double calcPathRequiredTime(const std::string& end_point, const TimingPathState& path, AnalysisType analysis, const PathCheck& check);
+  double calcPathRequiredTime(const std::string& end_point, const TimingPathState& path, AnalysisType analysis, PathCheck& check);
   double calcPathDelayRequiredTime(const std::string& end_point, const TimingPathState& path, AnalysisType analysis, const TimingException& exception,
                                    const PathCheck& check);
-  double calcMulticycleRequiredTime(const TimingPathState& path, AnalysisType analysis, const ResolvedTimingExceptions& exceptions, const PathCheck& check);
+  double multicycleAdjustment(const TimingPathState& path, AnalysisType analysis, const ResolvedTimingExceptions& exceptions, const PathCheck& check);
   double exceptionClockShift(const TimingPathState& path, const PathCheck& check, bool use_end_clock, int steps, bool setup);
 };
 }  // namespace ista

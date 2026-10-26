@@ -40,6 +40,8 @@ class TimingPathState
   // Bound the correction by every common prefix, not just the leaf delta.
   double clockPathBound() const { return _clock_path_bound; }
   void setClockPathBound(double value) { _clock_path_bound = value; }
+  std::size_t exceptionStartClass() const { return _exception_start_class; }
+  void setExceptionStartClass(std::size_t value) { _exception_start_class = value; }
   using Group = std::tuple<std::string, TransType, bool, std::optional<std::size_t>>;
   Group group() const { return {_clock_name, _launch_clock_trans_type, _is_clock_source_path, _launch_clock_edge_index}; }
   // getter
@@ -91,6 +93,7 @@ class TimingPathState
   bool _is_clock_source_path = false;
   bool _preserve_crpr_path = false;
   double _clock_path_bound = std::numeric_limits<double>::infinity();
+  std::size_t _exception_start_class = 0;  // Zero means no classification yet.
   double _arrival = -std::numeric_limits<double>::infinity();
   double _slew = 0.0;
   double _launch_time = 0.0;

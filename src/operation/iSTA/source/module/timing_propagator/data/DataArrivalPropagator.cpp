@@ -20,11 +20,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "TransitionFilter.hpp"
+#include "../PathStatePruning.hpp"
 #include "network/Network.hpp"
 #include "sdc/ExceptionMatcher.hpp"
 
@@ -35,10 +38,61 @@ void DataArrivalPropagator::propagate()
   _through_index.rebuild(database.sdc(), database.network());
   bool prune = _path_query.canPrunePathStates();
   auto& graph = database.graph();
+  if (prune && !database.sdc().get_path_exception_list().empty()) {
+    const ExceptionMatcher matcher(database.sdc(), database.network());
+    std::map<std::pair<std::string, std::string>, std::size_t> starts;
+    std::map<std::vector<int>, std::size_t> classes;
+    for (auto& vertex : graph.vertices())
+      for (auto& [mode, sources] : vertex.get_timing_point().get_path_state_map())
+        for (auto& [source, edges] : sources)
+          for (auto& [edge, states] : edges)
+            for (auto& [tag, state] : states) {
+              const auto key = std::pair{state.get_start_point(), state.get_clock_name()};
+              auto found = starts.find(key);
+              if (found == starts.end()) {
+                const auto entry = classes.try_emplace(matcher.startSpecificity(key.first, key.second), classes.size() + 1);
+                found = starts.emplace(key, entry.first->second).first;
+              }
+              state.setExceptionStartClass(found->second);
+            }
+  }
+  graph.captureRequiredClocks().clear();
+  graph.setExhaustiveRequired(false);
+  std::set<std::string> clock_names;
+  if (prune)
+    for (const auto& vertex : graph.vertices())
+      for (const auto& [mode, sources] : vertex.get_timing_point().get_path_state_map())
+        for (const auto& [source, edges] : sources)
+          for (const auto& [edge, states] : edges)
+            for (const auto& [tag, state] : states)
+              clock_names.insert(state.get_clock_name());
+  const std::vector<std::string> clocks(clock_names.begin(), clock_names.end());
+  prune = prune && !clocks.empty();
   std::vector<std::size_t> remaining_arcs(graph.vertices().size());
+  std::vector<std::vector<bool>> reaches_safe(clocks.size(), std::vector<bool>(graph.vertices().size()));
+  auto reaches_unsafe = reaches_safe;
   if (prune) {
+    const PathStatePruning policy(database);
+    std::map<const TimingPoint*, std::vector<bool>> endpoints;
+    for (const auto& endpoint : graph.endpoints()) {
+      std::vector<bool> safe(clocks.size());
+      for (std::size_t clock = 0; clock < clocks.size(); ++clock) {
+        safe[clock] = policy.canPruneTo(endpoint, clocks[clock]);
+        if (safe[clock])
+          graph.captureRequiredClocks()[endpoint].insert(clocks[clock]);
+        else
+          graph.setExhaustiveRequired(true);
+      }
+      endpoints.emplace(&graph.points().at(endpoint), std::move(safe));
+    }
     std::vector<bool> visited(graph.vertices().size());
     for (auto vertex = graph.vertexOrder().rbegin(); vertex != graph.vertexOrder().rend() && prune; ++vertex) {
+      if (const auto endpoint = endpoints.find(&graph.vertices()[*vertex].get_timing_point()); endpoint != endpoints.end()) {
+        for (std::size_t clock = 0; clock < clocks.size(); ++clock) {
+          reaches_safe[clock][*vertex] = endpoint->second[clock];
+          reaches_unsafe[clock][*vertex] = !endpoint->second[clock];
+        }
+      }
       for (auto index : graph.vertices()[*vertex].get_outgoing_arc_list()) {
         auto& arc = graph.arcs()[index];
         if (_path_query.isDisableArc(arc) || _path_query.shouldStopDataPropagation(arc))
@@ -51,15 +105,27 @@ void DataArrivalPropagator::propagate()
           break;
         }
         remaining_arcs[*vertex] = std::max(remaining_arcs[*vertex], remaining_arcs[sink] + 1);
+        for (std::size_t clock = 0; clock < clocks.size(); ++clock) {
+          reaches_safe[clock][*vertex] = reaches_safe[clock][*vertex] || reaches_safe[clock][sink];
+          reaches_unsafe[clock][*vertex] = reaches_unsafe[clock][*vertex] || reaches_unsafe[clock][sink];
+        }
       }
       visited[*vertex] = true;
     }
   }
   database.graph().setPathStatesPruned(false);
+  std::vector<std::string_view> allowed_clocks;
+  allowed_clocks.reserve(clocks.size());
   for (int32_t vertex_idx : database.graph().vertexOrder()) {
     // All fanin states are complete here; no downstream predecessor borrows
     // them yet. Never erase a state after propagating its fanout.
-    if (prune && _path_query.prunePathStates(database.graph().vertices()[vertex_idx].get_timing_point(), remaining_arcs[vertex_idx]))
+    allowed_clocks.clear();
+    if (prune)
+      for (std::size_t clock = 0; clock < clocks.size(); ++clock)
+        if (reaches_safe[clock][vertex_idx] && !reaches_unsafe[clock][vertex_idx])
+          allowed_clocks.push_back(clocks[clock]);
+    if (!allowed_clocks.empty()
+        && _path_query.prunePathStates(database.graph().vertices()[vertex_idx].get_timing_point(), remaining_arcs[vertex_idx], &allowed_clocks))
       database.graph().setPathStatesPruned(true);
     for (std::size_t arc_idx : database.graph().vertices()[vertex_idx].get_outgoing_arc_list()) {
       if (_path_query.isDisableArc(database.graph().arcs()[arc_idx])) {
@@ -143,6 +209,9 @@ void DataArrivalPropagator::propagatePathStateArc(std::size_t arc_idx, AnalysisT
 
   TimingPoint& sink_point = database.graph().sinkPoint(arc);
   std::map<std::string, TimingPathState>& source_path_state_map = _path_query.getPathStateMap(source_point, analysis_type, source_type, input_trans_type);
+  // Arc delay depends on the analysis and transition pair, not the launch tag.
+  // Query lazily so arcs with only invalid/filtered states still do no work.
+  std::optional<double> shared_arc_delay;
   for (std::pair<const std::string, TimingPathState>& source_path_state_pair : source_path_state_map) {
     TimingPathState& source_path_state = source_path_state_pair.second;
     if (!_path_query.isFinite(source_path_state.get_arrival())) {
@@ -151,7 +220,9 @@ void DataArrivalPropagator::propagatePathStateArc(std::size_t arc_idx, AnalysisT
     if (source_path_state.get_is_clock_source_path() && arc.get_type() == ArcType::kNet
         && !database.sdc().clockAllowsNetArc(database.network(), source_path_state.get_clock_name(), arc.get_source_pin(), arc.get_sink_pin()))
       continue;
-    double arc_delay = _path_query.getDataArcDelay(arc, analysis_type, input_trans_type, output_trans_type);
+    if (!shared_arc_delay)
+      shared_arc_delay = _path_query.getDataArcDelay(arc, analysis_type, input_trans_type, output_trans_type);
+    const double arc_delay = *shared_arc_delay;
     double candidate_arrival = _path_query.roundTime(source_path_state.get_arrival() + arc_delay);
     const std::vector<int32_t> exception_state_list = ExceptionMatcher(database.sdc(), database.network())
                                                           .advanceState(_through_index, source_path_state.get_exception_state_list(), arc.get_sink_pin(),
